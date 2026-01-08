@@ -1,13 +1,7 @@
 {
   "version": 2,
-  "builds": [
-    { "src": "UDS/package.json", "use": "@vercel/next" }
-  ],
-  "probes": [],
-  "routes": [],
-  "installCommand": "cd UDS && npm install",
-  "buildCommand": "cd UDS && NEXT_USE_TURBOPACK=0 npm run build",
-  "outputDirectory": "UDS/.next",
+  "buildCommand": "NEXT_USE_TURBOPACK=0 npm run build",
+  "installCommand": "npm install",
   "github": {
     "silent": true
   }
