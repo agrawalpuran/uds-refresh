@@ -5,7 +5,7 @@ const path = require('path')
 let MONGODB_URI = process.env.MONGODB_URI
 if (!MONGODB_URI) {
   try {
-    const envPath = path.join(__dirname, '..', 'env.local')
+    const envPath = path.join(__dirname, '..', '.env.local')
     if (fs.existsSync(envPath)) {
       const envContent = fs.readFileSync(envPath, 'utf8')
       const mongoMatch = envContent.match(/MONGODB_URI=(.+)/)
