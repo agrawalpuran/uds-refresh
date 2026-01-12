@@ -14,7 +14,7 @@ let ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'default-encryption-key-chang
 
 if (!MONGODB_URI) {
   try {
-    const envPath = path.join(__dirname, '..', 'env.local')
+    const envPath = path.join(__dirname, '..', '.env.local')
     if (fs.existsSync(envPath)) {
       const envContent = fs.readFileSync(envPath, 'utf8')
       const mongoMatch = envContent.match(/MONGODB_URI=(.+)/)
@@ -27,7 +27,7 @@ if (!MONGODB_URI) {
       }
     }
   } catch (error) {
-    console.error('Could not read env.local file')
+    console.error('Could not read .env.local file')
   }
 }
 

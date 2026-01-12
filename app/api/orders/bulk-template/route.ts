@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 import connectDB from '@/lib/db/mongodb'
 import { getEmployeesByCompany } from '@/lib/db/data-access'
 import { getProductsForDesignation } from '@/lib/db/data-access'
@@ -241,25 +241,32 @@ export async function GET(request: NextRequest) {
       }
     ]
 
-    // ============================================================
-    // CREATE EXCEL WORKBOOK
-    // ============================================================
-    const workbook = XLSX.utils.book_new()
+    // Create Excel workbook
+    const workbook = new ExcelJS.Workbook()
 
     // Sheet 1: Employee Reference
-    const employeeSheet = XLSX.utils.json_to_sheet(employeeData)
-    XLSX.utils.book_append_sheet(workbook, employeeSheet, 'Employee Reference')
+    const employeeSheet = workbook.addWorksheet('Employee Reference')
+    if (employeeData.length > 0) {
+      employeeSheet.addRow(Object.keys(employeeData[0])) // headers
+      employeeData.forEach(row => employeeSheet.addRow(Object.values(row)))
+    }
 
     // Sheet 2: Product Reference
-    const productSheet = XLSX.utils.json_to_sheet(productData)
-    XLSX.utils.book_append_sheet(workbook, productSheet, 'Product Reference')
+    const productSheet = workbook.addWorksheet('Product Reference')
+    if (productData.length > 0) {
+      productSheet.addRow(Object.keys(productData[0])) // headers
+      productData.forEach(row => productSheet.addRow(Object.values(row)))
+    }
 
     // Sheet 3: Bulk Orders (input sheet)
-    const bulkOrdersSheet = XLSX.utils.json_to_sheet(bulkOrdersData)
-    XLSX.utils.book_append_sheet(workbook, bulkOrdersSheet, 'Bulk Orders')
+    const bulkOrdersSheet = workbook.addWorksheet('Bulk Orders')
+    if (bulkOrdersData.length > 0) {
+      bulkOrdersSheet.addRow(Object.keys(bulkOrdersData[0])) // headers
+      bulkOrdersData.forEach(row => bulkOrdersSheet.addRow(Object.values(row)))
+    }
 
     // Generate Excel buffer
-    const excelBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' })
+    const excelBuffer = await workbook.xlsx.writeBuffer()
 
     // Return Excel file
     return new NextResponse(excelBuffer, {

@@ -48,13 +48,14 @@ export async function GET(
         { error: 'warehouseRefId is required' },
         { status: 400 }
       )
-
     }
+
     if (!vendorId) {
       return NextResponse.json(
         { error: 'Vendor ID is required. Please ensure you are logged in as a vendor.' },
         { status: 401 }
       )
+    }
 
     const warehouse = await getVendorWarehouseById(warehouseRefId)
 
@@ -63,14 +64,15 @@ export async function GET(
         { error: 'Warehouse not found' },
         { status: 404 }
       )
+    }
 
     // Security: Ensure warehouse belongs to the authenticated vendor
-    }
     if (warehouse.vendorId !== vendorId) {
       return NextResponse.json(
         { error: 'Access denied. This warehouse does not belong to your vendor account.' },
         { status: 403 }
       )
+    }
 
     return NextResponse.json({ warehouse })
   } catch (error: any) {
@@ -133,6 +135,7 @@ export async function PUT(
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
     const vendorId = getVendorIdFromRequest(request)
 
     if (!warehouseRefId) {
@@ -191,6 +194,7 @@ export async function PUT(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -200,6 +204,7 @@ export async function PUT(
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -209,6 +214,7 @@ export async function PUT(
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -243,6 +249,7 @@ export async function DELETE(
         { error: 'Vendor ID is required. Please ensure you are logged in as a vendor.' },
         { status: 401 }
       )
+    }
 
     // Verify warehouse exists and belongs to vendor
     const existingWarehouse = await getVendorWarehouseById(warehouseRefId)
@@ -251,13 +258,14 @@ export async function DELETE(
         { error: 'Warehouse not found' },
         { status: 404 }
       )
-
     }
+
     if (existingWarehouse.vendorId !== vendorId) {
       return NextResponse.json(
         { error: 'Access denied. This warehouse does not belong to your vendor account.' },
         { status: 403 }
       )
+    }
 
     await deleteVendorWarehouse(warehouseRefId)
 

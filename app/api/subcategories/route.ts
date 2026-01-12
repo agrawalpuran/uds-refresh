@@ -224,16 +224,14 @@ export async function POST(request: NextRequest) {
     // Validate companyId from authenticated user context
     let validatedCompanyId: string
     try {
-    }
-    const authContext = await validateAndGetCompanyId(request, companyId)
+      const authContext = await validateAndGetCompanyId(request, companyId)
       validatedCompanyId = authContext.companyId
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
         { status: 401 }
       )
-    
-    // Get company - use string ID
+    }
     const Company = mongoose.model('Company')
     const company = await Company.findOne({ id: validatedCompanyId })
     
@@ -264,7 +262,7 @@ export async function POST(request: NextRequest) {
     const existing = await Subcategory.findOne({
       parentCategoryId: parentCategory.id,
       companyId: company.id,
-      name: { $regex: new RegExp(`^${name.trim()$`, 'i') }
+      name: { $regex: new RegExp(`^${name.trim()}$`, 'i') }
     })
     
     if (existing) {
@@ -272,8 +270,7 @@ export async function POST(request: NextRequest) {
         { error: 'Subcategory with this name already exists for this category and company' },
         { status: 409 }
       )
-    
-    // Generate unique ID
+    }
     }
     let subcategoryId = 600001
     while (await Subcategory.findOne({ id: subcategoryId.toString() })) {
@@ -315,6 +312,7 @@ export async function POST(request: NextRequest) {
         { error: 'Subcategory with this name already exists for this category and company' },
         { status: 409 }
       )
+    }
     
     return NextResponse.json(
       { error: error.message || 'Failed to create subcategory' },
@@ -361,12 +359,13 @@ export async function PUT(request: NextRequest) {
       const authContext = await validateAndGetCompanyId(request)
       // Compare string IDs directly
       const subcategoryCompanyId = String(subcategory.companyId)
-    }
-    if (subcategoryCompanyId !== authContext.companyId) {
+      
+      if (subcategoryCompanyId !== authContext.companyId) {
         return NextResponse.json(
           { error: 'Forbidden: Subcategory does not belong to your company' },
           { status: 403 }
         )
+      }
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },
@@ -390,6 +389,7 @@ export async function PUT(request: NextRequest) {
           { error: 'Subcategory with this name already exists for this category and company' },
           { status: 409 }
         )
+      }
       
       subcategory.name = trimmedName
     }
@@ -489,12 +489,13 @@ export async function DELETE(request: NextRequest) {
       const authContext = await validateAndGetCompanyId(request)
       // Compare string IDs directly
       const subcategoryCompanyId = String(subcategory.companyId)
-    }
-    if (subcategoryCompanyId !== authContext.companyId) {
+      
+      if (subcategoryCompanyId !== authContext.companyId) {
         return NextResponse.json(
           { error: 'Forbidden: Subcategory does not belong to your company' },
           { status: 403 }
         )
+      }
     } catch (error: any) {
       return NextResponse.json(
         { error: error.message || 'Unauthorized' },

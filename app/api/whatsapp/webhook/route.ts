@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   let body: any = {}
   let whatsappNumber: string | undefined
   let messageText: string = ''
-  let messageId: string = `msg_${Date.now()`
+  let messageId: string = `msg_${Date.now()}`
   
   try {
     // Step 1: Read request body safely (can only be read once in Next.js)
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
       // Process in background - don't await (use Promise without await)
       processMessage(whatsappNumber, messageText)
         .then((responseText) => {
-          console.log(`[WhatsApp Webhook] ✅ Response generated: ${responseText.substring(0, 50)...`)
+          console.log(`[WhatsApp Webhook] ✅ Response generated: ${responseText.substring(0, 50)}...`)
           return sendWhatsAppMessage(whatsappNumber, responseText)
         })
         .then((sendResult) => {
@@ -164,8 +164,6 @@ export async function POST(request: NextRequest) {
         }
       }
     )
-  }
-
   } catch (error: any) {
     console.error(`[API] Error in POST handler:`, error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
