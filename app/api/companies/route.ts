@@ -101,7 +101,8 @@ export async function GET(request: Request) {
     const companies = await getAllCompanies()
     return NextResponse.json(companies)
   } catch (error: any) {
-    console.error('API Error:', error)
+    console.error('API Error:', error)}
+  }
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     const isConnectionError = errorMessage.includes('Mongo') || 
@@ -123,7 +124,7 @@ export async function GET(request: Request) {
       return NextResponse.json(
         { error: errorMessage },
         { status: 400 }
-      )
+      )}
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -282,7 +283,7 @@ export async function PATCH(request: Request) {
     }
     }
   } catch (error: any) {
-    console.error('API Error:', error)
+    console.error('API Error:', error) }
     // Return appropriate status code based on error type
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     const isConnectionError = errorMessage.includes('Mongo') || 
@@ -304,7 +305,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json(
         { error: errorMessage },
         { status: 400 }
-      )
+      ) }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -321,7 +322,8 @@ export async function PATCH(request: Request) {
       { status: 500 }
     )
 }
-
+      
+    
 export async function POST(request: Request) {
   try {
     // Parse JSON body with error handling

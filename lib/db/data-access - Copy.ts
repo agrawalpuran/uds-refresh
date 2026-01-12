@@ -1187,6 +1187,7 @@ export async function createProduct(productData: {
   await connectDB()
   
   // Generate unique 6-digit numeric product ID (starting from 200001)
+  let nextProductId = 200001
   const existingProducts = await Uniform.find({})
     .sort({ id: -1 })
     .limit(1)
@@ -1421,12 +1422,15 @@ export async function createProduct(productData: {
     .populate('vendorId', 'id name')
     .lean() as any
   
-    // Fallback: try to use the created product directly
-    await newProduct.populate('vendorId', 'id name')
-    return toPlainObject(newProduct)
+  if (created) {
     return toPlainObject(created)
   }
   
+  // Fallback: try to use the created product directly
+  await newProduct.populate('vendorId', 'id name')
+  return toPlainObject(newProduct)
+}
+
 export async function updateProduct(
   productId: string,
   updateData: {
@@ -1644,8 +1648,7 @@ export async function deleteProduct(productId: string): Promise<void> {
     product._id })
   
   // Delete the product
-  await Uniform.deleteOne({ _id: 
-    product._id })
+  await Uniform.deleteOne({ _id: product._id })
 }
 
 export async function getProductById(productId: string): Promise<any | null> {
@@ -1819,6 +1822,7 @@ export async function createVendor(vendorData: {
   
   // Generate next 6-digit numeric vendor ID
   // Find the highest existing vendor ID
+  let nextVendorId = 100001
   const existingVendors = await Vendor.find({})
     .sort({ id: -1 })
     .limit(1)
@@ -2001,6 +2005,7 @@ export async function createCompany(companyData: {
   }
   
   // Generate next 6-digit numeric company ID (starting from 100001)
+  let nextCompanyId = 100001
   const existingCompanies = await Company.find({})
     .sort({ id: -1 })
     .limit(1)
@@ -2124,6 +2129,7 @@ export async function createLocation(locationData: {
   }
   
   // Generate next 6-digit numeric location ID (starting from 400001)
+  let nextLocationId = 400001
   const existingLocations = await Location.find({})
     .sort({ id: -1 })
     .limit(1)
@@ -2335,6 +2341,7 @@ export async function updateLocation(
         if ((location as any).companyId) {
           // (location as any).companyId is an ObjectId (not populated), so fetch the company
           const locationCompany = await Company.findOne({ id: String((location as any).companyId) }).select('id').lean() as any
+          if (locationCompany) {
             locationCompanyId = (locationCompany as any).id
           }
         }
@@ -2354,10 +2361,16 @@ export async function updateLocation(
             } else {
               // Populated but id field missing - try to fetch by string ID
               const employeeCompany = await Company.findOne({ id: String((newAdmin.companyId as any).id || newAdmin.companyId) }).select('id').lean() as any
+              if (employeeCompany && employeeCompany.id) {
+                employeeCompanyId = employeeCompany.id
+              }
             }
           } else if (typeof newAdmin.companyId === 'string') {
             // Not populated: string ID - fetch company
             const employeeCompany = await Company.findOne({ id: newAdmin.companyId }).select('id').lean() as any
+            if (employeeCompany && employeeCompany.id) {
+              employeeCompanyId = employeeCompany.id
+            }
           }
         }
         
@@ -2426,6 +2439,9 @@ export async function updateLocation(
     .populate('adminId', 'id employeeId firstName lastName email')
     .lean() as any
   
+  return toPlainObject(populated)
+}
+
 /**
  * Delete location
  * @param locationId Location ID
@@ -2906,6 +2922,7 @@ export async function createBranch(branchData: {
   }
   
   // Generate next 6-digit numeric branch ID
+  let nextBranchId = 200001
   const existingBranches = await Branch.find({})
     .sort({ id: -1 })
     .limit(1)
@@ -3968,7 +3985,7 @@ export async function getBranchByAdminEmail(email: string): Promise<any | null> 
         }
       }
     }
-  
+  }
   
   if (!employee) {
     return null
@@ -3980,8 +3997,9 @@ export async function getBranchByAdminEmail(email: string): Promise<any | null> 
     .populate('companyId', 'id name')
     .lean() as any
   
+  if (!branch) {
     return null
-  } 
+  }
   
   return toPlainObject(branch)
 }
@@ -4345,7 +4363,8 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
           // It's a company ID string (like '100004'), need to look up the company
           const Company = require('../models/Company').default
           const company = await Company.findOne({ id: 
-    (location as any).companyId }).select('_id').lean() as any
+            (location as any).companyId }).select('_id').lean() as any
+          if (company) {
             companyObjectId = company._id
           }
         }
@@ -4354,7 +4373,7 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
     
     if (!companyObjectId) {
       console.warn(`[getEmployeesByLocation] Location has no valid companyId, cannot filter employees. Location companyId:`, 
-    (location as any).companyId)
+        (location as any).companyId)
       return []
     }
     
@@ -4404,9 +4423,11 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
         }))
       )
     }
+  }
   
   // Decrypt employee fields (required since we use .lean())
   // CRITICAL: Include 'location' in sensitiveFields for Company Admin - they need to see decrypted locations
+  const { decrypt } = require('../utils/encryption')
   const decryptedEmployees = employees.map((e: any) => {
     if (!e) return null
     const sensitiveFields = ['email', 'mobile', 'address', 'firstName', 'lastName', 'designation', 'location']
@@ -5298,7 +5319,6 @@ export async function getEmployeeById(employeeId: string): Promise<any | null> {
           console.warn(`[getEmployeeById] Error converting companyId:`, error)
         }
       }
-      }
     } else if (typeof plainEmployee.companyId === 'string' && /^[0-9a-fA-F]{24}$/.test(plainEmployee.companyId)) {
       const db = mongoose.connection.db
        if (!db) {
@@ -5315,13 +5335,13 @@ export async function getEmployeeById(employeeId: string): Promise<any | null> {
       }
     }
   }
-  try{return plainEmployee;}
   
+    return plainEmployee
   } catch (error: any) {
     console.error('[getEmployeeById] Error:', error.message)
     return null
   }
-
+}
 
 export async function getEmployeeByPhone(phone: string): Promise<any | null> {
   await connectDB()
@@ -5406,6 +5426,7 @@ export async function getEmployeeByPhone(phone: string): Promise<any | null> {
           .populate('locationId', 'id name address city state pincode')
           .lean() as any
         
+        if (employee) {
           console.log(`[getEmployeeByPhone] ✅ Found employee with phone variation: ${phoneVar.substring(0, 5)}...`)
           break // Found employee, stop searching
         }
@@ -5419,6 +5440,7 @@ export async function getEmployeeByPhone(phone: string): Promise<any | null> {
         .populate('locationId', 'id name address city state pincode')
         .lean() as any
       
+      if (employee) {
         console.log(`[getEmployeeByPhone] ✅ Found employee with Mongoose query (variation: ${phoneVar.substring(0, 5)}...)`)
         break // Found employee, stop searching
       }
@@ -5575,6 +5597,7 @@ export async function getEmployeesByCompany(companyId: string): Promise<any[]> {
   
   console.log(`[getEmployeesByCompany] Looking up company with id: ${companyId}`)
   const company = await Company.findOne({ id: companyId }).select('_id id name').lean() as any
+  if (!company) {
     console.warn(`[getEmployeesByCompany] Company not found with id: ${companyId}`)
     return []
   }
@@ -6007,6 +6030,7 @@ export async function createEmployee(employeeData: {
   let employeeId = employeeData.employeeId
   if (!employeeId) {
     // Find the highest existing employee ID
+    let nextEmployeeId = 300001
     const existingEmployees = await Employee.find({})
       .sort({ id: -1 })
       .limit(1)
@@ -6064,6 +6088,7 @@ export async function createEmployee(employeeData: {
   // If not found with encrypted email, also check by decrypting all emails (fallback)
   if (!existingByEmail) {
     const allEmployees = await Employee.find({}).select('email').lean() as any
+    for (const emp of allEmployees) {
       if (emp.email && typeof emp.email === 'string') {
         try {
           const { decrypt } = require('../utils/encryption')
@@ -6321,6 +6346,7 @@ export async function updateEmployee(
     employee._id } })
           .select('email')
           .lean() as any
+        for (const emp of allEmployees) {
           if (emp.email && typeof emp.email === 'string') {
             try {
               const decryptedEmail = decrypt(emp.email)
@@ -6371,6 +6397,7 @@ export async function updateEmployee(
         .populate('companyId', 'id name')
         .lean() as any
       
+      if (!location) {
         console.warn(`[updateEmployee] Location not found: ${updateData.locationId}`);
         return null // Return null instead of throwing - let API route handle 404
       }
@@ -6386,13 +6413,15 @@ export async function updateEmployee(
           } else if (employee.companyId._id) {
             // Populated but no id field - fetch company
             const empCompany = await Company.findById(
-    employee.companyId._id).select('id').lean() as any
+              employee.companyId._id).select('id').lean() as any
+            if (empCompany) {
               employeeCompanyId = String(empCompany.id).trim()
             }
           }
         } else if (typeof employee.companyId === 'string' || employee.companyId instanceof mongoose.Types.ObjectId) {
           // ObjectId string or ObjectId - fetch company
           const empCompany = await Company.findById(employee.companyId).select('id').lean() as any
+          if (empCompany) {
             employeeCompanyId = String(empCompany.id).trim()
           }
         }
@@ -6866,6 +6895,7 @@ export async function getOrdersByLocation(locationId: string): Promise<any[]> {
     .select('_id employeeId id')
     .lean() as any
   
+  if (locationEmployees.length === 0) {
     return []
   }
 
@@ -6884,6 +6914,7 @@ export async function getOrdersByLocation(locationId: string): Promise<any[]> {
   // Fetch vendor names for all unique vendorIds
   const vendorIds = [...new Set(orders.map((o: any) => o.vendorId).filter(Boolean))]
   const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean() as any
+  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
 
   return orders.map((o: any) => {
     const plain = toPlainObject(o)
@@ -6969,10 +7000,9 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
       .sort({ orderDate: -1 })
       .lean() as any
     
-      console.log(`[getOrdersByVendor] Found ${legacyOrders.length} approved legacy order(s) with ObjectId vendorId (after Company Admin approval filter)`)
-      console.log(`[getOrdersByVendor] ⚠️ These orders should be migrated to use numeric vendorId`)
-      orders = legacyOrders
-    }
+    console.log(`[getOrdersByVendor] Found ${legacyOrders.length} approved legacy order(s) with ObjectId vendorId (after Company Admin approval filter)`)
+    console.log(`[getOrdersByVendor] ⚠️ These orders should be migrated to use numeric vendorId`)
+    orders = legacyOrders
   }
   
   if (orders.length === 0) {
@@ -7354,6 +7384,7 @@ export async function getOrdersByEmployee(employeeId: string): Promise<any[]> {
     ]
   }).select('_id employeeId id').lean()
   
+  if (!employee) {
     return []
   }
 
@@ -8113,8 +8144,7 @@ export async function validateBulkOrderItemSubcategoryEligibility(
 
   // Check for subcategory-based eligibility - use string ID
   const subcategoryEligibilities = await DesignationSubcategoryEligibility.find({
-    companyId: 
-    company.id,
+    companyId: company.id,
     designationId: normalizedDesignation,
     gender: genderFilter,
     status: 'active'
@@ -8122,6 +8152,7 @@ export async function validateBulkOrderItemSubcategoryEligibility(
     .populate('subCategoryId', 'id name')
     .lean() as any
 
+  if (subcategoryEligibilities.length === 0) {
     return { valid: false, error: `No eligibility defined for designation "${normalizedDesignation}". Employee cannot order any products.` }
   }
 
@@ -8136,20 +8167,20 @@ export async function validateBulkOrderItemSubcategoryEligibility(
 
   // Find product - use string ID only
   const product = await Uniform.findOne({ id: productId }).select('id').lean() as any
+  if (!product) {
     return { valid: false, error: `Invalid product ID: ${productId}` }
   }
 
   // Check if product is mapped to any eligible subcategory - use string IDs
   const productMappings = await ProductSubcategoryMapping.find({
-    productId: 
-    product.id,
+    productId: product.id,
     subCategoryId: { $in: eligibleSubcategoryIds },
-    companyId: 
-    company.id
+    companyId: company.id
   })
     .populate('subCategoryId', 'id name')
     .lean() as any
 
+  if (productMappings.length === 0) {
     // Try to get product name for better error message - use string ID
     let productName = productId
     try {
@@ -8315,6 +8346,7 @@ export async function createOrder(orderData: {
     // If not an admin, check if employee order is enabled
     if (!isAdmin && !location) {
       const company = await Company.findById(companyIdObjectId).select('enableEmployeeOrder').lean() as any
+      if (!company) {
         throw new Error('Employee orders are currently disabled for your company. Please contact your administrator.')
       }
     }
@@ -8938,13 +8970,14 @@ export async function createOrder(orderData: {
     isFirstOrder = false
 
     // Populate and add to results
-  const populatedOrder = await Order.findById(order._id)
-    .populate('employeeId', 'id firstName lastName email')
-    .populate('companyId', 'id name')
-    .populate('items.uniformId', 'id name')
+    const populatedOrder = await Order.findById(order._id)
+      .populate('employeeId', 'id firstName lastName email')
+      .populate('companyId', 'id name')
+      .populate('items.uniformId', 'id name')
       .populate('vendorId', 'id name')
-    .lean() as any
+      .lean() as any
 
+    createdOrders.push(toPlainObject(populatedOrder))
   }
 
   // If only one order was created, return it directly
@@ -9249,13 +9282,13 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     // Legacy approval flow (no PR workflow)
     console.log(`[approveOrder] Processing legacy approval for order ${orderId}`)
   
-  const canApprove = await canApproveOrders(adminEmail, company.id)
-  if (!canApprove) {
-    throw new Error(`User ${adminEmail} does not have permission to approve orders`)
-  }
-  
-  // Update order status
-  order.status = 'Awaiting fulfilment'
+    const canApprove = await canApproveOrders(adminEmail, company.id)
+    if (!canApprove) {
+      throw new Error(`User ${adminEmail} does not have permission to approve orders`)
+    }
+    
+    // Update order status
+    order.status = 'Awaiting fulfilment'
   }
   
   await order.save()
@@ -9274,6 +9307,7 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     // vendorId is now a string (6-digit numeric), not ObjectId
     if (typeof vendorIdValue === 'string' && /^\d{6}$/.test(vendorIdValue)) {
       const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean() as any
+      if (vendor) {
         vendorName = (vendor as any).name
       }
     }
@@ -9569,6 +9603,7 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
       // vendorId is now a string (6-digit numeric), not ObjectId
       if (typeof vendorIdValue === 'string' && /^\d{6}$/.test(vendorIdValue)) {
         const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean() as any
+        if (vendor) {
           vendorName = (vendor as any).name
         }
       }
@@ -9623,6 +9658,7 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
       // vendorId is now a string (6-digit numeric), not ObjectId
       if (typeof vendorIdValue === 'string' && /^\d{6}$/.test(vendorIdValue)) {
         const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean() as any
+        if (vendor) {
           vendorName = (vendor as any).name
         }
       }
@@ -9638,63 +9674,64 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     // Legacy approval flow (no PR workflow)
     console.log(`[approveOrderByParentId] Processing legacy approval for parent order ${parentOrderId}`)
   
-  const canApprove = await canApproveOrders(adminEmail, company.id)
-  if (!canApprove) {
-    throw new Error(`User ${adminEmail} does not have permission to approve orders`)
-  }
-  
-  // CRITICAL FIX: Approve ALL child orders (including those that skipped approval)
-  // This ensures all vendor orders are synchronized to "Awaiting fulfilment" status
-  // and are visible to vendors after parent approval
-  console.log(`[approveOrderByParentId] 🔄 Updating all child orders to 'Awaiting fulfilment' status...`)
-  
-  let updatedCount = 0
-  for (const childOrder of childOrders) {
-    const previousStatus = childOrder.status
-    if (childOrder.status === 'Awaiting approval' || childOrder.status === 'Awaiting fulfilment') {
-      childOrder.status = 'Awaiting fulfilment'
-      await childOrder.save()
-      updatedCount++
-      console.log(`[approveOrderByParentId] ✅ Updated order ${childOrder.id}: ${previousStatus} → Awaiting fulfilment`)
-      console.log(`[approveOrderByParentId]    Vendor: ${(childOrder as any).vendorName || 'N/A'} (${childOrder.vendorId?.toString() || 'N/A'})`)
-    } else {
-      console.log(`[approveOrderByParentId] ⚠️ Skipping order ${childOrder.id} (status: ${previousStatus}, not awaiting approval/fulfilment)`)
+    const canApprove = await canApproveOrders(adminEmail, company.id)
+    if (!canApprove) {
+      throw new Error(`User ${adminEmail} does not have permission to approve orders`)
     }
-  }
-  
-  console.log(`[approveOrderByParentId] ✅ Updated ${updatedCount} of ${childOrders.length} child order(s)`)
-  
-  // CRITICAL: Verify all orders were updated correctly
-  const verifyOrders = await Order.find({ parentOrderId: parentOrderId }).select('id status vendorId vendorName').lean() as any
-  verifyOrders.forEach((order: any, idx: number) => {
-    console.log(`[approveOrderByParentId]   ${idx + 1}. ${order.id}: status=${order.status}, vendorId=${order.vendorId?.toString() || 'N/A'}, vendorName=${(order as any).vendorName || 'N/A'}`)
-  })
-  
-  // Return the first order as representative
-  const populatedOrder = await Order.findById(firstOrder._id)
-    .populate('employeeId', 'id firstName lastName email')
-    .populate('companyId', 'id name')
-    .populate('items.uniformId', 'id name')
-    .lean() as any
-  
-  // Manually fetch vendor information if vendorId exists
-  let vendorName = null
-  if (populatedOrder && (populatedOrder as any).vendorId) {
-    const vendorIdValue = (populatedOrder as any).vendorId
-    // vendorId is now a string (6-digit numeric), not ObjectId
-    if (typeof vendorIdValue === 'string' && /^\d{6}$/.test(vendorIdValue)) {
-      const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean() as any
-        vendorName = (vendor as any).name
+    
+    // CRITICAL FIX: Approve ALL child orders (including those that skipped approval)
+    // This ensures all vendor orders are synchronized to "Awaiting fulfilment" status
+    // and are visible to vendors after parent approval
+    console.log(`[approveOrderByParentId] 🔄 Updating all child orders to 'Awaiting fulfilment' status...`)
+    
+    let updatedCount = 0
+    for (const childOrder of childOrders) {
+      const previousStatus = childOrder.status
+      if (childOrder.status === 'Awaiting approval' || childOrder.status === 'Awaiting fulfilment') {
+        childOrder.status = 'Awaiting fulfilment'
+        await childOrder.save()
+        updatedCount++
+        console.log(`[approveOrderByParentId] ✅ Updated order ${childOrder.id}: ${previousStatus} → Awaiting fulfilment`)
+        console.log(`[approveOrderByParentId]    Vendor: ${(childOrder as any).vendorName || 'N/A'} (${childOrder.vendorId?.toString() || 'N/A'})`)
+      } else {
+        console.log(`[approveOrderByParentId] ⚠️ Skipping order ${childOrder.id} (status: ${previousStatus}, not awaiting approval/fulfilment)`)
       }
     }
-  }
-  
-  const result = toPlainObject(populatedOrder)
-  if (vendorName) {
-    (result as any).vendorName = vendorName
-  }
-  
-  return result
+    
+    console.log(`[approveOrderByParentId] ✅ Updated ${updatedCount} of ${childOrders.length} child order(s)`)
+    
+    // CRITICAL: Verify all orders were updated correctly
+    const verifyOrders = await Order.find({ parentOrderId: parentOrderId }).select('id status vendorId vendorName').lean() as any
+    verifyOrders.forEach((order: any, idx: number) => {
+      console.log(`[approveOrderByParentId]   ${idx + 1}. ${order.id}: status=${order.status}, vendorId=${order.vendorId?.toString() || 'N/A'}, vendorName=${(order as any).vendorName || 'N/A'}`)
+    })
+    
+    // Return the first order as representative
+    const populatedOrder = await Order.findById(firstOrder._id)
+      .populate('employeeId', 'id firstName lastName email')
+      .populate('companyId', 'id name')
+      .populate('items.uniformId', 'id name')
+      .lean() as any
+    
+    // Manually fetch vendor information if vendorId exists
+    let vendorName = null
+    if (populatedOrder && (populatedOrder as any).vendorId) {
+      const vendorIdValue = (populatedOrder as any).vendorId
+      // vendorId is now a string (6-digit numeric), not ObjectId
+      if (typeof vendorIdValue === 'string' && /^\d{6}$/.test(vendorIdValue)) {
+        const vendor = await Vendor.findOne({ id: vendorIdValue }).select('id name').lean() as any
+        if (vendor) {
+          vendorName = (vendor as any).name
+        }
+      }
+    }
+    
+    const result = toPlainObject(populatedOrder)
+    if (vendorName) {
+      (result as any).vendorName = vendorName
+    }
+    
+    return result
   }
 }
 
@@ -10596,6 +10633,7 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
         .populate('uniformId', 'id name')
         .lean() as any
       
+      if (!returnRequest) {
         console.warn(`[updateOrderStatus] ⚠️ Return request not found:`, returnRequestId)
         // For replacement orders, missing return request is critical
         throw new Error(`Return request ${returnRequestId} not found for replacement order ${orderId}`)
@@ -11269,6 +11307,7 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
   await connectDB()
   
   const company = await Company.findOne({ id: companyId }).select('_id id name enable_pr_po_workflow require_company_admin_po_approval').lean() as any
+  if (!company) {
     return []
   }
   
@@ -11343,9 +11382,10 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
       .populate('vendorId', 'id name')
       .lean() as any
     
+    const allChildOrdersPlain = allChildOrders.map((o: any) => toPlainObject(o))
     
     for (const order of allChildOrdersPlain) {
-    if (order.parentOrderId) {
+      if (order.parentOrderId) {
       if (!orderMap.has(order.parentOrderId)) {
         orderMap.set(order.parentOrderId, [])
       }
@@ -11423,6 +11463,7 @@ export async function getPendingApprovalsForSiteAdmin(
     const Location = require('../models/Location').default
     const locationDoc = await Location.findOne({ id: 
     location.id }).select('_id').lean() as any
+    if (locationDoc) {
       locationId = locationDoc._id
     }
   }
@@ -12019,6 +12060,7 @@ export async function getApprovedPRsForSiteAdmin(
     const Location = require('../models/Location').default
     const locationDoc = await Location.findOne({ id: 
     location.id }).select('_id').lean() as any
+    if (locationDoc) {
       locationId = locationDoc._id
     }
   }
@@ -12035,6 +12077,7 @@ export async function getApprovedPRsForSiteAdmin(
     .select('_id id employeeId')
     .lean() as any
   
+  if (employees.length === 0) {
     console.log(`[getApprovedPRsForSiteAdmin] No employees found for location: ${location.id}`)
     return []
   }
@@ -12477,10 +12520,10 @@ export async function createPurchaseOrderFromPRs(
                   const product = await Uniform.findOne({ id: firstItem.productId }).lean() as any
                   if (product && product._id) {
                     const productVendorLink = await ProductVendor.findOne({ 
-                      productId: 
-    product._id 
+                      productId: product._id 
                     }).populate('vendorId', 'id name').lean()
                     
+                    if (productVendorLink && productVendorLink.vendorId) {
                       const vendorObj = productVendorLink.vendorId as any
                       const extractedVendorId = vendorObj.id || String(vendorObj._id)
                       if (/^\d{6}$/.test(String(extractedVendorId))) {
@@ -12529,7 +12572,7 @@ export async function createPurchaseOrderFromPRs(
       
       // List available vendors for debugging
       const sampleVendors = await Vendor.find({}, 'id name _id').limit(5).lean() as any
-        sampleVendors.map((v: any) => `id=${v.id}, _id=${v._id?.toString()}, name=${v.name}`))
+      console.log('Available vendors:', sampleVendors.map((v: any) => `id=${v.id}, _id=${v._id?.toString()}, name=${v.name}`))
       
       throw new Error(`Vendor not found for order ${order.id}. Vendor ID: ${vendorIdValue}`)
     }
@@ -13002,8 +13045,10 @@ export async function updatePRShipmentStatus(
   let vendorName = null
   if (updatedPR && updatedPR.vendorId) {
     const vendor = await Vendor.findOne({ id: updatedPR.vendorId }).select('id name').lean() as any
+    if (vendor) {
       vendorName = (vendor as any).name
     }
+  }
   }
   
   const result = toPlainObject(updatedPR)
@@ -13279,8 +13324,10 @@ export async function updatePRDeliveryStatus(
   let vendorName = null
   if (updatedPR && updatedPR.vendorId) {
     const vendor = await Vendor.findOne({ id: updatedPR.vendorId }).select('id name').lean() as any
+    if (vendor) {
       vendorName = (vendor as any).name
     }
+  }
   }
   
   const result = toPlainObject(updatedPR)
@@ -13672,6 +13719,7 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
       .populate('vendorId', 'id name')
       .lean() as any
     
+    const allChildOrdersPlain = allChildOrders.map((o: any) => toPlainObject(o))
     
     for (const order of allChildOrdersPlain) {
       if (order.parentOrderId) {
@@ -13682,7 +13730,7 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
       }
     }
   }
-  
+
   const groupedOrders: any[] = []
   
   for (const [parentOrderId, splitOrders] of orderMap.entries()) {
@@ -13733,20 +13781,22 @@ export async function getPendingReturnRequestCount(companyId: string): Promise<n
   await connectDB()
   
   const company = await Company.findOne({ id: companyId }).select('_id id').lean() as any
+  if (!company) {
     // Try with _id if companyId looks like ObjectId
     if (companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
       const companyById = await Company.findById(companyId).select('_id id').lean() as any
-      return await ReturnRequest.countDocuments({
-        companyId: (companyById as any)._id,
-        status: 'REQUESTED',
-      })
+      if (companyById) {
+        return await ReturnRequest.countDocuments({
+          companyId: (companyById as any)._id,
+          status: 'REQUESTED',
+        })
+      }
     }
     return 0
   }
   
   const count = await ReturnRequest.countDocuments({
-    companyId: 
-    company._id,
+    companyId: company._id,
     status: 'REQUESTED',
   })
   
@@ -13795,9 +13845,11 @@ export async function markFeedbackAsViewed(companyId: string, adminEmail: string
   await connectDB()
   
   const company = await Company.findOne({ id: companyId }).select('_id id').lean() as any
+  if (!company) {
     // Try with _id if companyId looks like ObjectId
     if (companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
       const companyById = await Company.findById(companyId).select('_id id').lean() as any
+      if (!companyById) {
         throw new Error(`Company not found: ${companyId}`)
       }
       
@@ -13823,8 +13875,7 @@ export async function markFeedbackAsViewed(companyId: string, adminEmail: string
   // Mark all unread feedback for this company as viewed
   await ProductFeedback.updateMany(
     {
-      companyId: 
-    company._id,
+      companyId: company._id,
       $or: [
         { viewedAt: { $exists: false } },
         { viewedAt: null }
@@ -13909,20 +13960,22 @@ export async function getNewInvoiceCount(companyId: string): Promise<number> {
   await connectDB()
   
   const company = await Company.findOne({ id: companyId }).select('_id id').lean() as any
+  if (!company) {
     // Try with _id if companyId looks like ObjectId
     if (companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
       const companyById = await Company.findById(companyId).select('_id id').lean() as any
-      return await Invoice.countDocuments({
-        companyId: (companyById as any)._id,
-        invoiceStatus: 'RAISED'
-      })
+      if (companyById) {
+        return await Invoice.countDocuments({
+          companyId: (companyById as any)._id,
+          invoiceStatus: 'RAISED'
+        })
+      }
     }
     return 0
   }
   
   const count = await Invoice.countDocuments({
-    companyId: 
-    company._id,
+    companyId: company._id,
     invoiceStatus: 'RAISED'
   })
   
@@ -16045,8 +16098,7 @@ export async function getDesignationEligibilityByDesignation(
 
   // DesignationProductEligibility.designation is now PLAINTEXT (encryption removed)
   // Employee.designation is ENCRYPTED (employee PII)
-  // Strategy: Decrypt 
-    employee.designation, then match with plaintext eligibility.designation
+  // Strategy: Decrypt employee.designation, then match with plaintext eligibility.designation
   
   const { decrypt } = require('../utils/encryption')
   
@@ -16135,7 +16187,7 @@ export async function getDesignationEligibilityByDesignation(
         }
       }
     }
-  }
+
 
   return eligibility || null
 }
@@ -17676,6 +17728,7 @@ export async function getProductFeedback(
         .sort({ createdAt: -1 })
         .lean() as any
       
+      return feedback.map((f: any) => toPlainObject(f))
     }
   }
   
@@ -17716,6 +17769,7 @@ export async function getProductFeedback(
     // If companyId is an ObjectId string, try to find the company by _id and get its id
     if (companyId && typeof companyId === 'string' && mongoose.Types.ObjectId.isValid(companyId) && companyId.length === 24) {
       const companyForIdConversion = await Company.findById(companyId).select('id').lean() as any
+      if (companyForIdConversion) {
         companyId = (companyForIdConversion as any).id
         console.log(`[getProductFeedback] Converted ObjectId companyId to string ID: ${companyId}`)
       }
@@ -17979,10 +18033,8 @@ export async function getProductFeedback(
     delete query.companyId
     
     console.log(`[getProductFeedback] ✅ Location Admin query built with $or:`, {
-      location: 
-    location.id,
-      locationName: 
-    location.name,
+      location: location.id,
+      locationName: location.name,
       employeeCount: employeeIds.length,
       companyId: (companyForLocationAdmin as any).id,
       companyIdNum: companyIdNum,
@@ -18081,6 +18133,7 @@ export async function getProductFeedback(
       .populate('companyId', 'id name')
       .lean() as any
     
+    if (specificFeedbackCheck) {
       console.log(`[getProductFeedback] 🔍 SPECIFIC FEEDBACK CHECK - Found feedback ORD-1765652961649-4ZMRWCRMB-100001:`, {
         _id: specificFeedbackCheck._id?.toString(),
         orderId: specificFeedbackCheck.orderId,
@@ -18134,10 +18187,8 @@ export async function getProductFeedback(
     // Location Admin specific debugging
     if (isLocationAdminUser && location) {
       console.log(`[getProductFeedback] 🔍 Location Admin query results:`, {
-        locationId: 
-    location.id,
-        locationName: 
-    location.name,
+        locationId: location.id,
+        locationName: location.name,
         feedbackCount: feedback.length,
         feedbackOrderIds: feedback.map((f: any) => f.orderId).slice(0, 5),
         feedbackEmployees: feedback.slice(0, 3).map((f: any) => ({
@@ -18190,6 +18241,7 @@ export async function getProductFeedback(
         .populate('companyId', 'id name')
         .lean() as any
       
+      if (missingFeedbackCheck) {
         const queryCompanyId = query.companyId?.toString() || (query.$or && query.$or[0]?.companyId?.toString())
         const queryCompanyIdNum = query.$or && query.$or[1]?.companyIdNum
         
@@ -18358,6 +18410,7 @@ export async function getProductFeedback(
             console.log(`[getProductFeedback] 🔍 DEBUG: Strategy 1 failed, trying individual queries...`)
             for (const orderId of orderIds.slice(0, 2)) { // Test first 2
               const testOrder = await Order.findOne({ id: orderId }).select('id vendorId').lean() as any
+              if (testOrder) {
                 console.log(`[getProductFeedback] 🔍 DEBUG: Found order with direct findOne:`, {
                   searchedId: orderId,
                   foundId: (testOrder as any).id,
@@ -18372,7 +18425,7 @@ export async function getProductFeedback(
                   .select('id vendorId')
                   .limit(3)
                   .lean() as any
-                  similarOrders.map((o: any) => ({ id: o.id, hasVendorId: !!o.vendorId })))
+                console.log('Similar orders:', similarOrders.map((o: any) => ({ id: o.id, hasVendorId: !!o.vendorId })))
               }
             }
           }
@@ -18484,6 +18537,7 @@ export async function getProductFeedback(
                   // Try findById first
                   let vendor = await Vendor.findById(vendorObjectId).select('id name').lean()
                   
+                  if (vendor) {
                     individualVendors.push(vendor)
                     console.log(`[getProductFeedback] 🔍 DEBUG: ✅ Found vendor ${vendorObjectId} with findById: ${vendor.name || 'no name'}`)
                   } else {
@@ -18491,12 +18545,14 @@ export async function getProductFeedback(
                     const vendorIdStr = vendorObjectId.toString()
                     vendor = await Vendor.findOne({ _id: vendorIdStr }).select('id name').lean()
                     
+                    if (vendor) {
                       individualVendors.push(vendor)
                       console.log(`[getProductFeedback] 🔍 DEBUG: ✅ Found vendor ${vendorIdStr} with findOne(_id as string): ${vendor.name || 'no name'}`)
                     } else {
                       // Try finding by id field (not _id)
                       vendor = await Vendor.findOne({ id: vendorIdStr }).select('id name').lean()
                       
+                      if (vendor) {
                         individualVendors.push(vendor)
                         console.log(`[getProductFeedback] 🔍 DEBUG: ✅ Found vendor ${vendorIdStr} with findOne(id field): ${vendor.name || 'no name'}`)
                       } else {
@@ -18713,6 +18769,7 @@ export async function getProductFeedback(
                               
                               // Try to find this vendor
                               const productVendor = await Vendor.findById(productVendorIdStr).select('id name').lean() as any
+                              if (productVendor) {
                                 fb.vendorId = {
                                   _id: (productVendor as any)._id,
                                   id: (productVendor as any).id,
@@ -19562,6 +19619,7 @@ async function generateReturnRequestId(): Promise<string> {
     .select('returnRequestId')
     .lean() as any
   
+  if (!lastRequest || !lastRequest.returnRequestId) {
     return '600001'
   }
   
@@ -19971,6 +20029,7 @@ export async function createReturnRequest(requestData: {
   
   // Get uniform - use string ID
   const uniform = await Uniform.findOne({ id: String(orderItem.uniformId) }).lean() as any
+  if (!uniform) {
     throw new Error('Uniform product not found')
   }
   
@@ -19993,6 +20052,7 @@ export async function createReturnRequest(requestData: {
         { _id: order.companyId }
       ]
     }).select('id').lean() as any
+    if (company) {
       companyIdStr = company.id
     } else {
       throw new Error('Company not found for return request')
@@ -20046,6 +20106,7 @@ export async function getReturnRequestsByEmployee(employeeId: string): Promise<a
     ],
   }).select('_id employeeId id').lean()
   
+  if (!employee) {
     return []
   }
   
@@ -20054,8 +20115,7 @@ export async function getReturnRequestsByEmployee(employeeId: string): Promise<a
   // Find return requests
   const returnRequests = await ReturnRequest.find({
     $or: [
-      { employeeId: 
-    employee._id },
+      { employeeId: employee._id },
       { employeeIdNum: employeeIdNum },
     ],
   })
@@ -20065,6 +20125,7 @@ export async function getReturnRequestsByEmployee(employeeId: string): Promise<a
     .sort({ createdAt: -1 })
     .lean() as any
   
+  return returnRequests.map((rr: any) => toPlainObject(rr))
 }
 
 /**
@@ -20076,12 +20137,13 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
   // Find company - try multiple formats for robustness
   let company = await Company.findOne({ id: companyId }).select('_id id').lean()
   
-    // Try with _id if companyId looks like ObjectId
-    if (companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
-      company = await Company.findById(companyId).select('_id id').lean() as any
-    // Try as numeric ID (if companyId is a number string)
-    if (!company && !isNaN(Number(companyId))) {
-      company = await Company.findOne({ id: Number(companyId) }).select('_id id').lean() as any
+  // Try with _id if companyId looks like ObjectId
+  if (!company && companyId && companyId.length === 24 && /^[0-9a-fA-F]{24}$/.test(companyId)) {
+    company = await Company.findById(companyId).select('_id id').lean() as any
+  }
+  // Try as numeric ID (if companyId is a number string)
+  if (!company && !isNaN(Number(companyId))) {
+    company = await Company.findOne({ id: Number(companyId) }).select('_id id').lean() as any
   }
   
   if (!company) {
@@ -20129,6 +20191,7 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
             .sort({ vendorName: 1 }) // Sort by vendor name for consistency (same as validateReturnEligibility)
             .lean() as any
           
+          if (childOrders.length > 0) {
             // This is a parent order with child orders - find which child contains the item
             let currentIndex = 0
             for (const childOrder of childOrders) {
@@ -20142,6 +20205,7 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
                 } else if (childOrder.vendorId) {
                   // vendorId is a string ID, fetch vendor name
                   const vendor = await Vendor.findOne({ id: String(childOrder.vendorId) }).select('name').lean() as any
+                  if (vendor) {
                     vendorName = vendor.name
                   }
                 }
@@ -20159,6 +20223,7 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
             } else if (originalOrder.vendorId) {
               // vendorId is an ObjectId, fetch vendor name
               const vendor = await Vendor.findById(originalOrder.vendorId).select('name').lean() as any
+              if (vendor) {
                 vendorName = vendor.name
               }
             }
@@ -20175,6 +20240,7 @@ export async function getReturnRequestsByCompany(companyId: string, status?: str
             } else if (originalOrder.vendorId) {
               // vendorId is an ObjectId, fetch vendor name
               const vendor = await Vendor.findById(originalOrder.vendorId).select('name').lean() as any
+              if (vendor) {
                 vendorName = vendor.name
               }
             }
@@ -20269,12 +20335,13 @@ export async function approveReturnRequest(
   
   // Now populate for full details
   let originalOrder = await Order.findOne({ id: originalOrderRaw.id })
-        .populate('employeeId', 'id employeeId firstName lastName email')
-        .populate('companyId', 'id name')
+    .populate('employeeId', 'id employeeId firstName lastName email')
+    .populate('companyId', 'id name')
     .populate('vendorId', 'id name')
-        .lean() as any
+    .lean() as any
   
-    // Fallback to raw order if populate fails
+  // Fallback to raw order if populate fails
+  if (!originalOrder) {
     originalOrder = originalOrderRaw
   }
   
@@ -20817,6 +20884,7 @@ export async function getPOsEligibleForGRN(vendorId: string): Promise<any[]> {
     .sort({ po_date: -1 })
     .lean() as any
   
+  if (pos.length === 0) {
     return []
   }
   
@@ -20935,6 +21003,7 @@ export async function createGRNByVendor(
     .populate('companyId', 'id name')
     .lean() as any
   
+  if (pos.length === 0) {
     throw new Error(`PO not found: ${poNumber} for vendor ${vendorId}`)
   }
   
@@ -20965,6 +21034,7 @@ export async function createGRNByVendor(
     .select('id pr_number items deliveryStatus')
     .lean() as any
   
+  if (prs.length === 0) {
     throw new Error(`No PRs found for PO ${poNumber}`)
   }
   
@@ -21157,9 +21227,6 @@ export async function getGRNsRaisedByVendors(companyId?: string): Promise<any[]>
     .select('id name')
     .lean() as any
   
-    .select('id name')
-    .lean() as any
-  
   const companyMap = new Map(companies.map((c: any) => [c.id, c.name]))
   
   // Get PO dates for all GRNs
@@ -21216,9 +21283,6 @@ export async function getGRNsPendingAcknowledgment(companyId?: string): Promise<
   const companyIds = [...new Set(grns.map((g: any) => g.companyId).filter(Boolean))]
   
   const vendors = await Vendor.find({ id: { $in: vendorIds } })
-    .select('id name')
-    .lean() as any
-  
     .select('id name')
     .lean() as any
   
@@ -21280,11 +21344,13 @@ export async function acknowledgeGRN(
   let companyName = null
   if (updatedGRN && (updatedGRN as any).vendorId) {
     const vendor = await Vendor.findOne({ id: (updatedGRN as any).vendorId }).select('id name').lean() as any
+    if (vendor) {
       vendorName = (vendor as any).name
     }
   }
   if (updatedGRN && (updatedGRN as any).companyId) {
     const company = await Company.findOne({ id: (updatedGRN as any).companyId }).select('id name').lean() as any
+    if (company) {
       companyName = (company as any).name
     }
   }
@@ -21340,11 +21406,13 @@ export async function approveGRN(
   let companyName = null
   if (updatedGRN && (updatedGRN as any).vendorId) {
     const vendor = await Vendor.findOne({ id: (updatedGRN as any).vendorId }).select('id name').lean() as any
+    if (vendor) {
       vendorName = (vendor as any).name
     }
   }
   if (updatedGRN && (updatedGRN as any).companyId) {
     const company = await Company.findOne({ id: (updatedGRN as any).companyId }).select('id name').lean() as any
+    if (company) {
       companyName = (company as any).name
     }
   }
@@ -21646,6 +21714,7 @@ export async function approveInvoice(
   
   // Return updated invoice with vendor and company names
   const updatedInvoice = await Invoice.findById(invoice._id).lean() as any
+  const result = toPlainObject(updatedInvoice)
   
   const vendor = await Vendor.findOne({ id: invoice.vendorId }).select('id name').lean() as any
   
