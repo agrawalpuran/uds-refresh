@@ -1,5 +1,5 @@
 # PowerShell script to push changes to GitHub
-# Repository: https://github.com/agrawalpuran/uds-refactor
+# Repository: https://github.com/agrawalpuran/uds
 # Usage: .\push-to-github.ps1 [commit-message]
 # Example: .\push-to-github.ps1 "Fix ObjectId casting issues"
 
@@ -7,13 +7,14 @@ param(
     [string]$CommitMessage = "Update project files"
 )
 
-# Remote name for the refactor repository
-$RemoteName = "refactor"
+# Remote name for the repository
+$RemoteName = "origin"
 $BranchName = "main"
+$RepoUrl = "https://github.com/agrawalpuran/uds"
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "GitHub Push Script" -ForegroundColor Cyan
-Write-Host "Repository: https://github.com/agrawalpuran/uds-refactor" -ForegroundColor Cyan
+Write-Host "Repository: $RepoUrl" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -41,7 +42,7 @@ git push -u $RemoteName $BranchName
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`nSuccessfully pushed to GitHub!" -ForegroundColor Green
-    Write-Host "   Repository: https://github.com/agrawalpuran/uds-refactor" -ForegroundColor Green
+    Write-Host "   Repository: $RepoUrl" -ForegroundColor Green
     Write-Host "   Branch: $BranchName" -ForegroundColor Green
 } else {
     Write-Host "Push failed. Trying alternative method..." -ForegroundColor Red
