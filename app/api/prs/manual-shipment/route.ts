@@ -97,16 +97,33 @@ export async function POST(request: Request) {
           continue
         }
 
-        // Validate vendor authorization
-        if (order.vendorId !== vendorId) {
-          errors.push(`Vendor ${vendorId} is not authorized for PR ${prData.prNumber}`)
+        // Validate vendor authorization - handle both ObjectId and string comparisons
+        const orderVendorId = order.vendorId?.toString() || order.vendorId
+        const requestVendorId = vendorId?.toString() || vendorId
+        if (orderVendorId !== requestVendorId) {
+          errors.push(`Vendor ${vendorId} is not authorized for PR ${prData.prNumber} (order vendorId: ${orderVendorId})`)
           continue
         }
 
-        // Validate PR is in correct status (unified_pr_status only - legacy pr_status removed)
-        if (order.unified_pr_status !== 'LINKED_TO_PO') {
-          errors.push(`PR ${prData.prNumber} is not in LINKED_TO_PO status (current: ${order.unified_pr_status || 'N/A'})`)
-          continue
+        // Check if this is a replacement order
+        const isReplacementOrder = order.orderType === 'REPLACEMENT' || !!order.returnRequestId
+        
+        // Validate status based on order type
+        if (isReplacementOrder) {
+          // Replacement orders should be in approved status or similar (not Dispatched/Delivered)
+          const validReplacementStatuses = ['Approved', 'Processing', 'Pending', 'APPROVED', 'PROCESSING', 'PENDING']
+          const currentStatus = order.status || order.orderStatus
+          if (currentStatus && ['Dispatched', 'Delivered', 'DISPATCHED', 'DELIVERED', 'Cancelled', 'CANCELLED'].includes(currentStatus)) {
+            errors.push(`Replacement order ${prData.prNumber} already in ${currentStatus} status`)
+            continue
+          }
+          console.log(`[Manual Shipment] Processing REPLACEMENT order ${prData.prNumber} (status: ${currentStatus})`)
+        } else {
+          // Regular PRs must be in LINKED_TO_PO status
+          if (order.unified_pr_status !== 'LINKED_TO_PO') {
+            errors.push(`PR ${prData.prNumber} is not in LINKED_TO_PO status (current: ${order.unified_pr_status || 'N/A'})`)
+            continue
+          }
         }
 
         // Generate shipment ID
@@ -132,12 +149,14 @@ export async function POST(request: Request) {
         }
 
         // Create shipment record with all available fields
-        const shipmentData = {
+        const shipmentData: any = {
           shipmentId,
-          prNumber: prData.prNumber,
+          prNumber: isReplacementOrder ? undefined : prData.prNumber,
           poNumber: poNumber || undefined,
           vendorId: String(vendorId),
           shipmentMode: 'MANUAL' as const,
+          // For replacement orders, store the order ID
+          orderId: isReplacementOrder ? prData.prId : undefined,
           // Manual shipment fields
           modeOfTransport: prData.modeOfTransport,
           dispatchedDate,
@@ -166,23 +185,42 @@ export async function POST(request: Request) {
 
         const shipment = await Shipment.create(shipmentData)
 
-        // Update PR shipment status using existing function
-        // This ensures consistency with automatic shipment flow
-        await updatePRShipmentStatus(
-          prData.prId,
-          {
-            shipperName: 'Vendor',
-            carrierName: prData.courierServiceProvider || undefined,
-            modeOfTransport: orderModeOfTransport,
-            trackingNumber: prData.shipmentNumber || undefined,
-            dispatchedDate,
-            itemDispatchedQuantities: order.items.map((item: any, idx: number) => ({
-              itemIndex: idx,
-              dispatchedQuantity: item.quantity || 0,
-            })),
-          },
-          String(vendorId)
-        )
+        // Update order status based on order type
+        if (isReplacementOrder) {
+          // For replacement orders, update order status directly to Dispatched
+          await Order.findOneAndUpdate(
+            { id: prData.prId },
+            {
+              $set: {
+                status: 'Dispatched',
+                orderStatus: 'Dispatched',
+                dispatchedDate,
+                modeOfTransport: orderModeOfTransport,
+                trackingNumber: prData.shipmentNumber || undefined,
+                carrierName: prData.courierServiceProvider || undefined,
+              }
+            }
+          )
+          console.log(`[Manual Shipment] ✅ Updated replacement order ${prData.prId} to Dispatched`)
+        } else {
+          // Update PR shipment status using existing function
+          // This ensures consistency with automatic shipment flow
+          await updatePRShipmentStatus(
+            prData.prId,
+            {
+              shipperName: 'Vendor',
+              carrierName: prData.courierServiceProvider || undefined,
+              modeOfTransport: orderModeOfTransport,
+              trackingNumber: prData.shipmentNumber || undefined,
+              dispatchedDate,
+              itemDispatchedQuantities: order.items?.map((item: any, idx: number) => ({
+                itemIndex: idx,
+                dispatchedQuantity: item.quantity || 0,
+              })) || [],
+            },
+            String(vendorId)
+          )
+        }
 
         createdShipments.push({
           shipmentId: shipment.shipmentId,
