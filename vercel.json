@@ -1,7 +1,8 @@
 {
   "version": 2,
-  "buildCommand": "NEXT_USE_TURBOPACK=0 npm run build",
+  "buildCommand": "next build",
   "installCommand": "npm install",
+  "framework": "nextjs",
   "github": {
     "silent": true
   }
