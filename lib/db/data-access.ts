@@ -22885,27 +22885,39 @@ export async function getReturnRequestsByEmployee(employeeId: string): Promise<a
 export async function getReturnRequestsByCompany(companyId: string, status?: string): Promise<any[]> {
   await connectDB()
   
-  // Find company - try multiple formats for robustness
-  const company = await Company.findOne({ id: companyId }).select('_id id').lean()
+  // ReturnRequest stores companyId as STRING (numeric ID like "100001"), not ObjectId
+  // So we need to query by the string company ID directly
   
-  if (!company) {
-    console.error(`[getReturnRequestsByCompany] Company not found for companyId: ${companyId}`)
-    return []
+  // Handle ObjectId input - convert to numeric company ID
+  const isObjectId = /^[a-f0-9]{24}$/i.test(companyId)
+  let targetCompanyId = companyId
+  
+  if (isObjectId) {
+    // Look up the company by ObjectId to get its numeric ID
+    const { ObjectId } = require('mongodb')
+    const company = await Company.findOne({ _id: new ObjectId(companyId) }).select('id').lean()
+    if (company && company.id) {
+      targetCompanyId = String(company.id)
+      console.log(`[getReturnRequestsByCompany] Converted ObjectId ${companyId} to numeric ID: ${targetCompanyId}`)
+    } else {
+      console.error(`[getReturnRequestsByCompany] Company not found for ObjectId: ${companyId}`)
+      return []
+    }
   }
   
+  // Build query - ReturnRequest.companyId is stored as STRING
   const query: any = {
-    companyId: company._id,
+    companyId: targetCompanyId,
   }
   
   if (status) {
     query.status = status
   }
   
-  // Find return requests
+  console.log(`[getReturnRequestsByCompany] Querying with companyId: ${targetCompanyId}, status: ${status || 'all'}`)
+  
+  // Find return requests - note: populate won't work since these are string IDs, not ObjectId refs
   const returnRequests = await ReturnRequest.find(query)
-    .populate('employeeId', 'id firstName lastName email')
-    .populate('companyId', 'id name')
-    .populate('uniformId', 'id name')
     .sort({ createdAt: -1 })
     .lean()
   
