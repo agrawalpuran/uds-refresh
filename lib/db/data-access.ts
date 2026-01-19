@@ -137,13 +137,46 @@ async function convertCompanyIdToNumericId(companyIdObjectId: any): Promise<stri
     // Convert to string if it's an ObjectId
     const companyIdStr = companyIdObjectId.toString()
     
-    // Check if it's already a numeric ID (6 digits)
-    if (/^[A-Za-z0-9_-]{1,50}$/.test(companyIdStr)) {
+    // Check if it's a MongoDB ObjectId (24 hex characters)
+    // ObjectIds MUST be looked up to get the numeric company ID
+    const isObjectId = /^[a-f0-9]{24}$/i.test(companyIdStr)
+    
+    // Check if it's already a numeric ID (like 100001, 100002, etc.)
+    // Numeric IDs are typically 6-digit numbers
+    const isNumericId = /^\d{5,7}$/.test(companyIdStr)
+    
+    if (isNumericId) {
+      console.log(`[convertCompanyIdToNumericId] ✅ Already a numeric ID: ${companyIdStr}`)
       return companyIdStr
     }
     
-    // For non-numeric IDs, look up the company by string ID
-    console.log(`[convertCompanyIdToNumericId] 🔍 Looking up company with ID: ${companyIdStr}`)
+    // If it's an ObjectId, look up the company by _id to get numeric ID
+    if (isObjectId) {
+      console.log(`[convertCompanyIdToNumericId] 🔍 Looking up company by ObjectId: ${companyIdStr}`)
+      const { ObjectId } = require('mongodb')
+      const companyDoc = await db.collection('companies').findOne({
+        _id: new ObjectId(companyIdStr)
+      })
+      
+      if (companyDoc && companyDoc.id) {
+        console.log(`[convertCompanyIdToNumericId] ✅ Found company, numeric ID: ${companyDoc.id}`)
+        return String(companyDoc.id)
+      }
+      
+      if (!companyDoc) {
+        console.error(`[convertCompanyIdToNumericId] ❌ Company not found for ObjectId: ${companyIdStr}`)
+        return null
+      }
+      
+      if (!companyDoc.id) {
+        console.error(`[convertCompanyIdToNumericId] ❌ Company found but missing 'id' field!`)
+        console.error(`   Company name: ${companyDoc.name || 'N/A'}`)
+        return null
+      }
+    }
+    
+    // For other string IDs (legacy), look up the company by string ID field
+    console.log(`[convertCompanyIdToNumericId] 🔍 Looking up company with string ID: ${companyIdStr}`)
     const companyDoc = await db.collection('companies').findOne({
       id: companyIdStr
     })
