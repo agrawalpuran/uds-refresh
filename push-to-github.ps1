@@ -1,5 +1,5 @@
 # PowerShell script to push changes to GitHub
-# Repository: https://github.com/agrawalpuran/uds
+# Repository: https://github.com/agrawalpuran/uds-refresh
 # Usage: .\push-to-github.ps1 [commit-message]
 # Example: .\push-to-github.ps1 "Fix ObjectId casting issues"
 
@@ -10,7 +10,7 @@ param(
 # Remote name for the repository
 $RemoteName = "origin"
 $BranchName = "main"
-$RepoUrl = "https://github.com/agrawalpuran/uds"
+$RepoUrl = "https://github.com/agrawalpuran/uds-refresh"
 
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "GitHub Push Script" -ForegroundColor Cyan
