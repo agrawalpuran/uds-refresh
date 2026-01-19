@@ -3205,6 +3205,29 @@ export async function getAllLocations(): Promise<any[]> {
 export async function getCompanyById(companyId: string | number): Promise<any | null> {
   await connectDB()
   
+  const selectFields = 'id name logo website primaryColor secondaryColor showPrices allowPersonalPayments allowPersonalAddressDelivery enableEmployeeOrder allowLocationAdminViewFeedback allowEligibilityConsumptionReset enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po enable_site_admin_approval require_company_admin_approval adminId createdAt updatedAt'
+  
+  let company = null
+  const companyIdStr = String(companyId)
+  
+  // Check if it's a MongoDB ObjectId (24 hex characters)
+  const isObjectId = /^[a-f0-9]{24}$/i.test(companyIdStr)
+  
+  // If it's an ObjectId, look up by _id first
+  if (isObjectId) {
+    console.log(`[getCompanyById] Looking up company by ObjectId: ${companyIdStr}`)
+    const { ObjectId } = require('mongodb')
+    company = await Company.findOne({ _id: new ObjectId(companyIdStr) })
+      .select(selectFields)
+      .populate('adminId', 'id employeeId firstName lastName email')
+      .lean()
+    
+    if (company) {
+      console.log(`[getCompanyById] ✅ Found company by ObjectId: ${company.id} (${company.name})`)
+      return toPlainObject(company)
+    }
+  }
+  
   // Convert companyId to number if it's a string representation of a number
   let numericCompanyId: number | null = null
   if (typeof companyId === 'string') {
@@ -3216,12 +3239,10 @@ export async function getCompanyById(companyId: string | number): Promise<any | 
     numericCompanyId = companyId
   }
   
-  // Find company by numeric ID first (since company.id is now numeric)
-  // Explicitly select all fields including enableEmployeeOrder, allowLocationAdminViewFeedback, allowEligibilityConsumptionReset, and workflow fields
-  let company = null
+  // Find company by numeric ID (since company.id is now numeric)
   if (numericCompanyId !== null) {
     company = await Company.findOne({ id: numericCompanyId })
-      .select('id name logo website primaryColor secondaryColor showPrices allowPersonalPayments allowPersonalAddressDelivery enableEmployeeOrder allowLocationAdminViewFeedback allowEligibilityConsumptionReset enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po enable_site_admin_approval require_company_admin_approval adminId createdAt updatedAt')
+      .select(selectFields)
       .populate('adminId', 'id employeeId firstName lastName email')
       .lean()
   }
@@ -3229,7 +3250,7 @@ export async function getCompanyById(companyId: string | number): Promise<any | 
   // If not found by numeric ID, try as string ID (for backward compatibility)
   if (!company && typeof companyId === 'string') {
     company = await Company.findOne({ id: companyId })
-      .select('id name logo website primaryColor secondaryColor showPrices allowPersonalPayments allowPersonalAddressDelivery enableEmployeeOrder allowLocationAdminViewFeedback allowEligibilityConsumptionReset enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po enable_site_admin_approval require_company_admin_approval adminId createdAt updatedAt')
+      .select(selectFields)
       .populate('adminId', 'id employeeId firstName lastName email')
       .lean()
   }
@@ -4231,7 +4252,25 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
     return false
   }
   
-  const company = await Company.findOne({ id: companyId })
+  // Handle ObjectId or numeric/string companyId
+  const isObjectId = /^[a-f0-9]{24}$/i.test(companyId)
+  let company = null
+  
+  if (isObjectId) {
+    // Look up by _id if it's an ObjectId
+    const { ObjectId } = require('mongodb')
+    company = await Company.findOne({ _id: new ObjectId(companyId) })
+  } else {
+    // Look up by numeric/string id
+    const numericId = Number(companyId)
+    if (!isNaN(numericId) && isFinite(numericId)) {
+      company = await Company.findOne({ id: numericId })
+    }
+    if (!company) {
+      company = await Company.findOne({ id: companyId })
+    }
+  }
+  
   if (!company) {
     console.warn('[isCompanyAdmin] Company not found:', companyId)
     return false
