@@ -1,0 +1,736 @@
+{
+  "timestamp": "2026-01-15T19:05:26.617Z",
+  "mode": "DRY_RUN",
+  "prsDeleted": 12,
+  "prsRepaired": 3,
+  "ordersRepaired": 0,
+  "shipmentsRepaired": 59,
+  "orphanPOsDeleted": 61,
+  "orphanGRNsDeleted": 0,
+  "orphanInvoicesDeleted": 0,
+  "details": {
+    "deletedPRs": [
+      {
+        "id": "ORD-1767264009429-6I5LNZPN4-100001",
+        "pr_number": "3443493",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767264184429-R1CY18RIY-100001",
+        "pr_number": "01012600001",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767264229393-LY2961SKF-100003",
+        "pr_number": "01012600001",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767272284742-ST7E07N8Y-100001",
+        "pr_number": "01012026100002",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767283150715-K27L2PZ8O-100001",
+        "pr_number": "777777777",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767336840968-5RLOKTXBW-100001",
+        "pr_number": "23232323",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767336868539-L0CKWWMZQ-100001",
+        "pr_number": "23232323",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767336892036-OQ3QZRWTL-100003",
+        "pr_number": "56565656",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767342961314-2VGLVI0QQ-100003",
+        "pr_number": "098765432",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767343806183-01MINRKOL-100001",
+        "pr_number": "0-98123456",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767352715401-I3XDWCDL8-100002",
+        "pr_number": "100100100",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      },
+      {
+        "id": "ORD-1767459231643-P6GJGRPG9-100001",
+        "pr_number": "888888",
+        "status": "Delivered",
+        "pr_status": "PO_CREATED"
+      }
+    ],
+    "repairedPRs": [
+      {
+        "id": "ORD-1767336868539-L0CKWWMZQ-100002",
+        "pr_number": "23232323",
+        "before": {
+          "pr_status": "PO_CREATED",
+          "dispatchStatus": "SHIPPED",
+          "deliveryStatus": "NOT_DELIVERED"
+        },
+        "after": {
+          "pr_status": "DRAFT",
+          "dispatchStatus": null,
+          "deliveryStatus": null
+        }
+      },
+      {
+        "id": "ORD-1767336892036-OQ3QZRWTL-100002",
+        "pr_number": "56565656",
+        "before": {
+          "pr_status": "PO_CREATED",
+          "dispatchStatus": "SHIPPED",
+          "deliveryStatus": "NOT_DELIVERED"
+        },
+        "after": {
+          "pr_status": "DRAFT",
+          "dispatchStatus": null,
+          "deliveryStatus": null
+        }
+      },
+      {
+        "id": "ORD-1767453507617-G9XS3ZOB5-100001",
+        "pr_number": "62737829",
+        "before": {
+          "pr_status": "PO_CREATED",
+          "dispatchStatus": "SHIPPED",
+          "deliveryStatus": "NOT_DELIVERED"
+        },
+        "after": {
+          "pr_status": "DRAFT",
+          "dispatchStatus": null,
+          "deliveryStatus": null
+        }
+      }
+    ],
+    "repairedOrders": [],
+    "repairedShipments": [
+      {
+        "shipmentId": "7545974478",
+        "prNumber": "87654567",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "7547406301",
+        "prNumber": "87612345",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "7547895838",
+        "prNumber": "87612345",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "7589207850",
+        "prNumber": "666778889",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "7589933948",
+        "prNumber": "12345678",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "7591749999",
+        "prNumber": "777777",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHIP_MK15Q3RWXY",
+        "prNumber": "1111111",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHIP_MK15W55RWG",
+        "prNumber": "1111111",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "7617620785",
+        "prNumber": "1111111",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHIP_MK17EE3XEV",
+        "prNumber": "2121212121",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHIP_MK1C1W8SUV",
+        "prNumber": "13481348",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "7627966872",
+        "prNumber": "13481348",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHIP_MK1DCCN8OB",
+        "prNumber": "22222222",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHIP_MK1E4COYJM",
+        "prNumber": "9999999999",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "7676919011",
+        "prNumber": "123123123",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "7677001834",
+        "prNumber": "55555555",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MK2J5XUWF19",
+        "prNumber": "PR-ICICI-CHN-1767683590694-002",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "7700379061",
+        "prNumber": "PR-ICICI-CHN-1767683590694-002",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MK2J5XX15IQ",
+        "prNumber": "PR-ICICI-CHN-1767683590694-001",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MK2M6GQNMUI",
+        "prNumber": "ICICI-CHN-PR-987542",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "7705442384",
+        "prNumber": "ICICI-CHN-PR-987542",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MK2M6GT4GT0",
+        "prNumber": "ICICI-CHN-PR-7654312",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "7705442465",
+        "prNumber": "ICICI-CHN-PR-7654312",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MK2M6GULRUN",
+        "prNumber": "ICICI-CHN-PR-445567",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "7705442515",
+        "prNumber": "ICICI-CHN-PR-445567",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MK3T7OAKDGV",
+        "prNumber": "88765678",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "7777724465",
+        "prNumber": "88765678",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MK3Z9J24VS1",
+        "prNumber": "ICICI-PR-364576",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "7787886643",
+        "prNumber": "ICICI-PR-364576",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MK3Z9JEJIIA",
+        "prNumber": "PR-TEST-100004-1767690109315-001",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "7787887022",
+        "prNumber": "PR-TEST-100004-1767690109315-001",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MK3Z9JYGTYI",
+        "prNumber": "PR-TEST-100004-1767688892246-001",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "7787888137",
+        "prNumber": "PR-TEST-100004-1767688892246-001",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MKCJLPBBZV1",
+        "prNumber": "ICICI-CHN-012345",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "8305777330",
+        "prNumber": "ICICI-CHN-012345",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MKCL5T3EPKS",
+        "prNumber": "ICICI-CHN-0987123",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "8308393878",
+        "prNumber": "ICICI-CHN-0987123",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MKCMJYVKIJ7",
+        "prNumber": "1123786",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MKDG553XCLX",
+        "prNumber": "PR-TEST-100004-1768358681062-002",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "8360430973",
+        "prNumber": "PR-TEST-100004-1768358681062-002",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MKDG5598ZLW",
+        "prNumber": "PR-TEST-100004-1768358681062-001",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "8360431083",
+        "prNumber": "PR-TEST-100004-1768358681062-001",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MKDGV52F5BN",
+        "prNumber": "PR-TEST-100004-1768320387690-003",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "8361643916",
+        "prNumber": "PR-TEST-100004-1768320387690-003",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MKDGV57LT2X",
+        "prNumber": "PR-TEST-100004-1768320387690-002",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "8361644083",
+        "prNumber": "PR-TEST-100004-1768320387690-002",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MKDJSEPT2QL",
+        "prNumber": "PR-Puran",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "8366555291",
+        "prNumber": "PR-Puran",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MKDLUCL7B3S",
+        "prNumber": "PR-TEST-100004-1768320387690-001",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "8370005076",
+        "prNumber": "PR-TEST-100004-1768320387690-001",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MKDLUCP2H7K",
+        "prNumber": "PR112233",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "8370005202",
+        "prNumber": "PR112233",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MKDMCFTE8HD",
+        "prNumber": "PR-TEST-100004-1768370337071-006",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MKDMCFWC1G9",
+        "prNumber": "PR-TEST-100004-1768370337071-005",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      },
+      {
+        "shipmentId": "SHM_MKE2CRQG51P",
+        "prNumber": "Puran-1401-2026",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHIP_MKE6ZUWD8S",
+        "prNumber": "PR-TEST-100004-1768403767950-001",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "8405534067",
+        "prNumber": "PR-TEST-100004-1768403767950-001",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MKFC2CVS786",
+        "prNumber": "PR-TEST-100004-1768474434795-005",
+        "before": "CREATED",
+        "after": "DELIVERED"
+      },
+      {
+        "shipmentId": "SHM_MKFC2CYMG50",
+        "prNumber": "PR-TEST-100004-1768474434795-004",
+        "before": "CREATED",
+        "after": "IN_TRANSIT"
+      }
+    ],
+    "deletedPOs": [
+      {
+        "id": "PO-100004-1767263252899-1WVS4K",
+        "client_po_number": "34567890"
+      },
+      {
+        "id": "PO-100004-1767263674277-JZT2XE",
+        "client_po_number": "4324343"
+      },
+      {
+        "id": "PO-100004-1767263712114-109712",
+        "client_po_number": "43243431"
+      },
+      {
+        "id": "PO-100004-1767264098810-TL1C20",
+        "client_po_number": "890123"
+      },
+      {
+        "id": "PO-100004-1767265156594-FAROD9",
+        "client_po_number": "0101202690000001"
+      },
+      {
+        "id": "PO-100004-1767265711528-IS1847",
+        "client_po_number": "342435908382"
+      },
+      {
+        "id": "PO-100004-1767272444405-JHFJWB",
+        "client_po_number": "01012026900002"
+      },
+      {
+        "id": "PO-100004-1767283271789-6EYN2N",
+        "client_po_number": "98765342"
+      },
+      {
+        "id": "PO-100004-1767337115169-BLEXM2",
+        "client_po_number": "89898989"
+      },
+      {
+        "id": "PO-100004-1767337623132-C8PJ5O",
+        "client_po_number": "6767676767"
+      },
+      {
+        "id": "PO-100004-1767337623184-I34MMF",
+        "client_po_number": "6767676767"
+      },
+      {
+        "id": "PO-100004-1767337623256-0ICN6U",
+        "client_po_number": "6767676767"
+      },
+      {
+        "id": "PO-100004-1767343291962-SYYOJQ",
+        "client_po_number": "9988776655"
+      },
+      {
+        "id": "PO-100004-1767348900118-5UAWQL",
+        "client_po_number": "009988776"
+      },
+      {
+        "id": "PO-100004-1767352789449-YHORV6",
+        "client_po_number": "200200200"
+      },
+      {
+        "id": "PO-100004-1767453646058-ZLJLRS",
+        "client_po_number": "94309234"
+      },
+      {
+        "id": "PO-100004-1767459553688-R7DBYT",
+        "client_po_number": "999999999"
+      },
+      {
+        "id": "PO-100004-1767536556274-RBJ81D",
+        "client_po_number": "35435432"
+      },
+      {
+        "id": "PO-100004-1767547267618-SZJYQS",
+        "client_po_number": "000099988"
+      },
+      {
+        "id": "PO-100004-1767548929575-CG55MV",
+        "client_po_number": "656454332"
+      },
+      {
+        "id": "PO-100004-1767589741829-AX9JNV",
+        "client_po_number": "0986753"
+      },
+      {
+        "id": "PO-100004-1767589741856-O934W6",
+        "client_po_number": "0986753"
+      },
+      {
+        "id": "PO-100004-1767589805222-98YJLQ",
+        "client_po_number": "786756342"
+      },
+      {
+        "id": "PO-100004-1767589805251-SR7QZI",
+        "client_po_number": "786756342"
+      },
+      {
+        "id": "PO-100004-1767589862617-VGOC2K",
+        "client_po_number": "090909877654"
+      },
+      {
+        "id": "PO-100004-1767589862643-98KS8P",
+        "client_po_number": "090909877654"
+      },
+      {
+        "id": "PO-100004-1767593741480-J3RRBH",
+        "client_po_number": "09876543"
+      },
+      {
+        "id": "PO-100004-1767604064705-PZRNB7",
+        "client_po_number": "123409876"
+      },
+      {
+        "id": "PO-100004-1767604064728-7QBDU0",
+        "client_po_number": "123409876"
+      },
+      {
+        "id": "PO-100004-1767609484785-MBOZ5N",
+        "client_po_number": "66666666"
+      },
+      {
+        "id": "PO-100004-1767615329018-SI72YR",
+        "client_po_number": "2221212121"
+      },
+      {
+        "id": "PO-100004-1767617285434-WLN8TJ",
+        "client_po_number": "222333444555"
+      },
+      {
+        "id": "PO-100004-1767627818187-T2U196",
+        "client_po_number": "00000000"
+      },
+      {
+        "id": "PO-100004-1767628475382-0FT4YM",
+        "client_po_number": "333333333"
+      },
+      {
+        "id": "PO-100004-1767629382159-YZ3N8A",
+        "client_po_number": "888888888"
+      },
+      {
+        "id": "PO-100004-1767676818841-JBRWK6",
+        "client_po_number": "3211321321"
+      },
+      {
+        "id": "PO-100004-1767683613674-VRWCST",
+        "client_po_number": "ICICI-CHN-12345678"
+      },
+      {
+        "id": "PO-100004-1767687111295-4HM4AG",
+        "client_po_number": "ICICI-CHN-PO-098765"
+      },
+      {
+        "id": "PO-100004-1767687111352-HZIPSK",
+        "client_po_number": "ICICI-CHN-PO-098765"
+      },
+      {
+        "id": "PO-100004-1767687130582-K96IG9",
+        "client_po_number": "ICICI-CHN-PO-1234598"
+      },
+      {
+        "id": "PO-100004-1767777680463-P8EVP6",
+        "client_po_number": "ICICI-PO-321123"
+      },
+      {
+        "id": "PO-100004-1767787446571-GXWI2L",
+        "client_po_number": "ICICI-PO09865123"
+      },
+      {
+        "id": "PO-100004-1768303562595-VDFDDW",
+        "client_po_number": "PO-ICICI-CHN-4455612"
+      },
+      {
+        "id": "PO-100004-1768304132262-DYDXG5",
+        "client_po_number": "PO-ICICI-CHN-4455612"
+      },
+      {
+        "id": "PO-100004-1768304147827-34VJBV",
+        "client_po_number": "PO-ICICI-CHN-4455612"
+      },
+      {
+        "id": "PO-100004-1768304190008-4DQS3Y",
+        "client_po_number": "PO-ICICI-CHN-4455612"
+      },
+      {
+        "id": "PO-100004-1768304501408-OIG8XI",
+        "client_po_number": "PO-ICICI-CHN-4455612"
+      },
+      {
+        "id": "PO-100004-1768304649417-84GD42",
+        "client_po_number": "PO-ICICI-CHN-4455612"
+      },
+      {
+        "id": "PO-100004-1768308359588-SG7D7U",
+        "client_po_number": "PO-ICICI-CHN-4455613"
+      },
+      {
+        "id": "PO-100004-1768310683948-L07044",
+        "client_po_number": "11234000"
+      },
+      {
+        "id": "PO-100004-1768359464165-G0OTJT",
+        "client_po_number": "PO009988112"
+      },
+      {
+        "id": "PO-100004-1768361606122-D3JOPN",
+        "client_po_number": "PO99999999"
+      },
+      {
+        "id": "PO-100004-1768366534490-BPPUBT",
+        "client_po_number": "PO-Puran"
+      },
+      {
+        "id": "PO-100004-1768369967710-YC5FRG",
+        "client_po_number": "PO-Puran-new"
+      },
+      {
+        "id": "PO-100004-1768370820870-IRSZHJ",
+        "client_po_number": "Puran-14Jan1136"
+      },
+      {
+        "id": "PO-100004-1768397518046-CAH2G5",
+        "client_po_number": "PO-Puran-14012026"
+      },
+      {
+        "id": "PO-100004-1768403843344-HDLYW4",
+        "client_po_number": "PO-Puran-14jan2047"
+      },
+      {
+        "id": "PO-100004-1768412772104-UA34R3",
+        "client_po_number": "PO9032123"
+      },
+      {
+        "id": "PO-100004-1768413019877-0XOLNN",
+        "client_po_number": "P09432343"
+      },
+      {
+        "id": "PO-100004-1768474469328-VLZY73",
+        "client_po_number": "PURAN-15011624"
+      },
+      {
+        "id": "PO-100004-1768474469374-00JEW9",
+        "client_po_number": "PURAN-15011624"
+      }
+    ],
+    "deletedGRNs": [],
+    "deletedInvoices": []
+  }
+}

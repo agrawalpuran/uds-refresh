@@ -1,0 +1,71 @@
+[
+  {
+    "_id": "6942773350a2f9b1515291a3",
+    "id": "VEND-INV-1765963571230-NLKUG",
+    "vendorId": "100001",
+    "productId": "200001",
+    "sizeInventory": {
+      "S": 100,
+      "M": 103,
+      "L": 98,
+      "XL": 97,
+      "XXL": 61
+    },
+    "totalStock": 459,
+    "lowInventoryThreshold": {
+      "S": 20,
+      "M": 20,
+      "L": 20,
+      "XL": 20,
+      "XXL": 20
+    },
+    "createdAt": "2025-12-17T09:26:11.270Z",
+    "updatedAt": "2026-01-07T12:11:43.555Z",
+    "__v": 0,
+    "_original_id": "6942773350a2f9b1515291a3",
+    "_backup_timestamp": "2026-01-15T07:26:01.506Z"
+  },
+  {
+    "_id": "6942776e50a2f9b1515291cb",
+    "id": "VEND-INV-1765963630074-P4EUU",
+    "vendorId": "100003",
+    "productId": "200005",
+    "sizeInventory": {
+      "26": 50,
+      "28": 50,
+      "30": 50,
+      "32": 46,
+      "34": 50,
+      "36": 0
+    },
+    "totalStock": 246,
+    "lowInventoryThreshold": {
+      "26": 5,
+      "28": 5,
+      "30": 5,
+      "32": 5,
+      "34": 5
+    },
+    "createdAt": "2025-12-17T09:27:10.100Z",
+    "updatedAt": "2026-01-06T05:22:10.624Z",
+    "__v": 0,
+    "_original_id": "6942776e50a2f9b1515291cb",
+    "_backup_timestamp": "2026-01-15T07:26:01.506Z"
+  },
+  {
+    "_id": "695e26a582ef90e47299250f",
+    "id": "VEND-INV-1767777957203-Z6AKH",
+    "vendorId": "100001",
+    "productId": "200005",
+    "sizeInventory": {
+      "26": 0
+    },
+    "totalStock": 0,
+    "lowInventoryThreshold": {},
+    "createdAt": "2026-01-07T09:25:57.204Z",
+    "updatedAt": "2026-01-07T09:25:57.232Z",
+    "__v": 0,
+    "_original_id": "695e26a582ef90e47299250f",
+    "_backup_timestamp": "2026-01-15T07:26:01.506Z"
+  }
+]

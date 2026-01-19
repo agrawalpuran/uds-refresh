@@ -1,0 +1,82 @@
+[
+  {
+    "_id": "694646552530f52ca3960438",
+    "whatsappNumber": "+919538247700",
+    "state": "CHECK_STATUS",
+    "cart": [],
+    "lastActivity": "2025-12-20T07:24:15.788Z",
+    "createdAt": "2025-12-20T06:46:45.585Z",
+    "updatedAt": "2025-12-20T07:24:15.789Z",
+    "__v": 0,
+    "employeeId": "300031",
+    "context": {}
+  },
+  {
+    "_id": "6946471f2530f52ca396049e",
+    "whatsappNumber": "+919845154070",
+    "state": "ORDER_SELECT_ITEM",
+    "cart": [],
+    "lastActivity": "2025-12-20T07:05:07.580Z",
+    "createdAt": "2025-12-20T06:50:07.728Z",
+    "updatedAt": "2025-12-20T07:05:07.581Z",
+    "__v": 0,
+    "context": {
+      "eligibleProducts": [
+        {
+          "id": "200003",
+          "name": "Formal Shirt- Female",
+          "category": "shirt",
+          "price": 1299,
+          "sizes": [
+            "XS",
+            "S",
+            "M",
+            "L",
+            "XL"
+          ]
+        },
+        {
+          "id": "200005",
+          "name": "Formal Pants - Female",
+          "category": "pant",
+          "price": 1599,
+          "sizes": [
+            "26",
+            "28",
+            "30",
+            "32",
+            "34"
+          ]
+        },
+        {
+          "id": "200007",
+          "name": "Heels - Female",
+          "category": "shoe",
+          "price": 2799,
+          "sizes": [
+            "5",
+            "6",
+            "7",
+            "8",
+            "9"
+          ]
+        },
+        {
+          "id": "200008",
+          "name": "Sneakers - Unisex",
+          "category": "shoe",
+          "price": 2299,
+          "sizes": [
+            "6",
+            "7",
+            "8",
+            "9",
+            "10",
+            "11"
+          ]
+        }
+      ]
+    },
+    "employeeId": "300032"
+  }
+]

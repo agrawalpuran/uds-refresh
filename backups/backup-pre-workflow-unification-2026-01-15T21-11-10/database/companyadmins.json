@@ -1,0 +1,19 @@
+[
+  {
+    "_id": "694a904290cc60300b07bc8e",
+    "companyId": "100004",
+    "employeeId": "300021",
+    "canApproveOrders": true,
+    "createdAt": "2025-12-23T12:51:14.348Z",
+    "updatedAt": "2025-12-23T12:51:14.348Z",
+    "id": "07bc8e"
+  },
+  {
+    "_id": "695fada695142f4e3a385517",
+    "id": "700001",
+    "companyId": "100001",
+    "employeeId": "300001",
+    "createdAt": "2026-01-08T13:14:14.354Z",
+    "updatedAt": "2026-01-08T13:14:14.354Z"
+  }
+]

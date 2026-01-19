@@ -1,0 +1,1700 @@
+{
+  "timestamp": "2026-01-15T19:15:01.391Z",
+  "mode": "LIVE",
+  "totalPRsFound": 77,
+  "prsReset": 77,
+  "poLinkagesCleared": 0,
+  "shipmentFlagsCleared": 73,
+  "details": [
+    {
+      "id": "ORD-1767264009429-6I5LNZPN4-100001",
+      "pr_number": "3443493",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767264184429-R1CY18RIY-100001",
+      "pr_number": "01012600001",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767264229393-LY2961SKF-100003",
+      "pr_number": "01012600001",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767272284742-ST7E07N8Y-100001",
+      "pr_number": "01012026100002",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767283150715-K27L2PZ8O-100001",
+      "pr_number": "777777777",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767336840968-5RLOKTXBW-100001",
+      "pr_number": "23232323",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767336840968-5RLOKTXBW-100002",
+      "pr_number": "23232323",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767336868539-L0CKWWMZQ-100002",
+      "pr_number": "23232323",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767336868539-L0CKWWMZQ-100001",
+      "pr_number": "23232323",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767336892036-OQ3QZRWTL-100003",
+      "pr_number": "56565656",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767336892036-OQ3QZRWTL-100002",
+      "pr_number": "56565656",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767342961314-2VGLVI0QQ-100003",
+      "pr_number": "098765432",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767343806183-01MINRKOL-100001",
+      "pr_number": "0-98123456",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767352715401-I3XDWCDL8-100002",
+      "pr_number": "100100100",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767453507617-G9XS3ZOB5-100001",
+      "pr_number": "62737829",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767459231643-P6GJGRPG9-100001",
+      "pr_number": "888888",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767535343019-5E915JICS-100001",
+      "pr_number": "87654567",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767547145511-CGXLX0QZ5-100001",
+      "pr_number": "87612345",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767547200862-7YE2BC7LG-100001",
+      "pr_number": "87612345",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767548888352-IRZZAKFRY-100003",
+      "pr_number": "666778889",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767589607950-IEW8GDKTH-100003",
+      "pr_number": "12345678",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767589607950-IEW8GDKTH-100002",
+      "pr_number": "12345678",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767589767669-E2AQDHWHN-100003",
+      "pr_number": "777777",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767589767669-E2AQDHWHN-100001",
+      "pr_number": "777777",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767589831023-3TRYB4ZOS-100001",
+      "pr_number": "342312345",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767589831023-3TRYB4ZOS-100002",
+      "pr_number": "342312345",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767593714970-E9E5DMIFN-100001",
+      "pr_number": "11111",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767604026174-IIRS1H0M2-100001",
+      "pr_number": "1230987",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767604026174-IIRS1H0M2-100002",
+      "pr_number": "1230987",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767609462020-FHFYTTTPZ-100001",
+      "pr_number": "55555555",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767615298028-82A9TJN4V-100001",
+      "pr_number": "2121212121",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767617213878-NJXVIJ12L-100001",
+      "pr_number": "1111111",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767627637534-QE7A5IBDQ-100001",
+      "pr_number": "13481348",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767628431528-LVRD8DG51-100001",
+      "pr_number": "22222222",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767629348006-6JSYMH69A-100003",
+      "pr_number": "9999999999",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767676743438-KM8JKQL7O-100003",
+      "pr_number": "123123123",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767682619073-1",
+      "pr_number": "PR-ICICI-CHN-1767682619073-001",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767682619073-2",
+      "pr_number": "PR-ICICI-CHN-1767682619073-002",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767683021896-1",
+      "pr_number": "PR-ICICI-CHN-1767683021896-001",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767683021896-2",
+      "pr_number": "PR-ICICI-CHN-1767683021896-002",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767683590694-1",
+      "pr_number": "PR-ICICI-CHN-1767683590694-001",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767683590694-2",
+      "pr_number": "PR-ICICI-CHN-1767683590694-002",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767686491864-9M3AGIGVU-100001",
+      "pr_number": "ICICI-CHN-PR-445567",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767686791546-HRWG0V1US-100001",
+      "pr_number": "ICICI-CHN-PR-7654312",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767686793173-91KU04ACI-100001",
+      "pr_number": "ICICI-CHN-PR-987542",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767686793173-91KU04ACI-100003",
+      "pr_number": "ICICI-CHN-PR-987542",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767688331029-0TC234E43-100001",
+      "pr_number": "45567676",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767688892533-DXNL8YSPL-100001",
+      "pr_number": "PR-TEST-100004-1767688892246-001",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767690109493-Y5F3MR6CP-100001",
+      "pr_number": "PR-TEST-100004-1767690109315-001",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767776629922-NRMJTVQBB-100001",
+      "pr_number": "88765678",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767786031686-TJME45M7U-100001",
+      "pr_number": "PR112233",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1767787302767-OUM5FXOW7-100001",
+      "pr_number": "ICICI-PR-364576",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768295151720-VPX7AO659-100001",
+      "pr_number": "ICICI-CHN-012345",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768308300716-3R3D6GV2G-100001",
+      "pr_number": "ICICI-CHN-0987123",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768310642245-14BV3SC9I-100001",
+      "pr_number": "1123786",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768320388041-2PXHF96FF-100001",
+      "pr_number": "PR-TEST-100004-1768320387690-001",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768320388588-Q7SCG2D50-100001",
+      "pr_number": "PR-TEST-100004-1768320387690-002",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768320389076-BVETCVC38-100001",
+      "pr_number": "PR-TEST-100004-1768320387690-003",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768358681201-LCPYSTNRF-100001",
+      "pr_number": "PR-TEST-100004-1768358681062-001",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768358681385-9RPOWHZ6H-100001",
+      "pr_number": "PR-TEST-100004-1768358681062-002",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768365213785-J1KF2JLFX-100001",
+      "pr_number": "PR-Puran",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768370337347-FYO2GQ1CJ-100001",
+      "pr_number": "PR-TEST-100004-1768370337071-001",
+      "before": {
+        "pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "unified_pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "status": "Awaiting approval",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768370337795-TP62ZANAC-100001",
+      "pr_number": "PR-TEST-100004-1768370337071-002",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768370338198-E4WU8V7FA-100001",
+      "pr_number": "PR-TEST-100004-1768370337071-003",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768370338695-LY23ONP76-100001",
+      "pr_number": "PR-TEST-100004-1768370337071-004",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768370339532-K8X56DUAT-100001",
+      "pr_number": "PR-TEST-100004-1768370337071-005",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768370340139-HEZ6YA7SS-100001",
+      "pr_number": "PR-TEST-100004-1768370337071-006",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768397431145-CQ9EXX8BF-100001",
+      "pr_number": "Puran-1401-2026",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768403768253-4TKXRRGVE-100001",
+      "pr_number": "PR-TEST-100004-1768403767950-001",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768474435049-OT63A47SH-100001",
+      "pr_number": "PR-TEST-100004-1768474434795-001",
+      "before": {
+        "pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "unified_pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "status": "Awaiting approval",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768474435436-W50VKW7GK-100001",
+      "pr_number": "PR-TEST-100004-1768474434795-002",
+      "before": {
+        "pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "unified_pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "status": "Awaiting approval",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768474435436-W50VKW7GK-100002",
+      "pr_number": "PR-TEST-100004-1768474434795-002",
+      "before": {
+        "pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "unified_pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "status": "Awaiting approval",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768474435857-LA7Y5QV9S-100002",
+      "pr_number": "PR-TEST-100004-1768474434795-003",
+      "before": {
+        "pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "unified_pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "status": "Awaiting approval",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768474435857-LA7Y5QV9S-100001",
+      "pr_number": "PR-TEST-100004-1768474434795-003",
+      "before": {
+        "pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "unified_pr_status": "PENDING_COMPANY_ADMIN_APPROVAL",
+        "status": "Awaiting approval",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768474436260-1157L45NH-100001",
+      "pr_number": "PR-TEST-100004-1768474434795-004",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Dispatched",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768474436566-EI1CO4I3M-100001",
+      "pr_number": "PR-TEST-100004-1768474434795-005",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Delivered",
+        "dispatchStatus": "SHIPPED",
+        "deliveryStatus": "DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    },
+    {
+      "id": "ORD-1768474436566-EI1CO4I3M-100002",
+      "pr_number": "PR-TEST-100004-1768474434795-005",
+      "before": {
+        "pr_status": "PO_CREATED",
+        "unified_pr_status": "LINKED_TO_PO",
+        "status": "Awaiting fulfilment",
+        "dispatchStatus": "AWAITING_FULFILMENT",
+        "deliveryStatus": "NOT_DELIVERED"
+      },
+      "after": {
+        "pr_status": "DRAFT",
+        "unified_pr_status": "DRAFT",
+        "status": "Awaiting approval",
+        "unified_status": "PENDING_APPROVAL",
+        "dispatchStatus": null,
+        "deliveryStatus": null,
+        "po_number": null,
+        "po_id": null,
+        "client_po_number": null
+      }
+    }
+  ],
+  "posDeleted": 61,
+  "grnsDeleted": 14,
+  "invoicesDeleted": 8,
+  "shipmentsDeleted": 60
+}

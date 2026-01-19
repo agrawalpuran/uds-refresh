@@ -1,0 +1,52 @@
+{
+  "timestamp": "2026-01-15T18:55:27.665Z",
+  "mode": "DRY_RUN",
+  "summary": {
+    "totalNeedUpdate": 0,
+    "totalWillRepair": 0,
+    "totalWillSkip": 0
+  },
+  "entities": {
+    "orders": {
+      "total": 0,
+      "willRepair": 0,
+      "willSkip": 0,
+      "details": []
+    },
+    "prs": {
+      "total": 0,
+      "willRepair": 0,
+      "willSkip": 0,
+      "details": [],
+      "statusDistribution": {}
+    },
+    "pos": {
+      "total": 0,
+      "willRepair": 0,
+      "willSkip": 0,
+      "details": [],
+      "statusDistribution": {}
+    },
+    "shipments": {
+      "total": 0,
+      "willRepair": 0,
+      "willSkip": 0,
+      "details": [],
+      "statusDistribution": {}
+    },
+    "grns": {
+      "total": 0,
+      "willRepair": 0,
+      "willSkip": 0,
+      "details": [],
+      "statusDistribution": {}
+    },
+    "invoices": {
+      "total": 0,
+      "willRepair": 0,
+      "willSkip": 0,
+      "details": [],
+      "statusDistribution": {}
+    }
+  }
+}

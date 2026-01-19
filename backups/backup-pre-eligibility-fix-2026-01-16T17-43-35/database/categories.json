@@ -1,0 +1,67 @@
+[
+  {
+    "_id": "694b971cd7d251036c7bb8e2",
+    "id": "500001",
+    "name": "Shirt",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2025-12-24T07:32:44.353Z",
+    "updatedAt": "2025-12-24T07:32:44.353Z"
+  },
+  {
+    "_id": "694b971cd7d251036c7bb8e3",
+    "id": "500002",
+    "name": "Pant",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2025-12-24T07:32:44.363Z",
+    "updatedAt": "2025-12-24T07:32:44.363Z"
+  },
+  {
+    "_id": "694b971cd7d251036c7bb8e4",
+    "id": "500003",
+    "name": "Shoe",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2025-12-24T07:32:44.369Z",
+    "updatedAt": "2025-12-24T07:32:44.369Z"
+  },
+  {
+    "_id": "694b971cd7d251036c7bb8e5",
+    "id": "500004",
+    "name": "Blazer",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2025-12-24T07:32:44.375Z",
+    "updatedAt": "2025-12-24T07:46:17.518Z"
+  },
+  {
+    "_id": "694b971cd7d251036c7bb8e6",
+    "id": "500005",
+    "name": "Accessories",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2025-12-24T07:32:44.382Z",
+    "updatedAt": "2025-12-24T08:14:52.815Z"
+  },
+  {
+    "_id": "6954d6afd0c9bc7a5d420698",
+    "id": "500006",
+    "name": "Stationary",
+    "isSystemCategory": false,
+    "status": "inactive",
+    "createdAt": "2025-12-31T07:54:23.595Z",
+    "updatedAt": "2025-12-31T07:54:40.991Z",
+    "__v": 0
+  },
+  {
+    "_id": "6954d6ddd0c9bc7a5d4206b5",
+    "id": "500007",
+    "name": "Office Stationary",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2025-12-31T07:55:09.205Z",
+    "updatedAt": "2025-12-31T07:55:09.205Z",
+    "__v": 0
+  }
+]

@@ -8,13 +8,15 @@ import {
   getCompanyByAdminEmail, 
   isCompanyAdmin, 
   getPendingApprovals, 
+  getPendingSiteAdminApprovalCount,
   approveOrder,
   bulkApproveOrders,
   canApproveOrders,
   getCompanyById,
   createPurchaseOrder,
   getApprovedOrdersForCompanyAdmin,
-  getPOCreatedOrdersForCompanyAdmin
+  getPOCreatedOrdersForCompanyAdmin,
+  getRejectedOrdersForCompanyAdmin
 } from '@/lib/data-mongodb'
 // Data masking removed for Company Admin - they should see all employee information unmasked
 
@@ -30,6 +32,7 @@ export default function CompanyApprovalsPage() {
   const [loading, setLoading] = useState(true)
   const [accessDenied, setAccessDenied] = useState(false)
   const [canApprove, setCanApprove] = useState(false)
+  const [pendingSiteAdminCount, setPendingSiteAdminCount] = useState<{ count: number; message: string }>({ count: 0, message: '' })
   const [bulkApproving, setBulkApproving] = useState(false)
   const [companyPrimaryColor, setCompanyPrimaryColor] = useState<string>('#f76b1c')
   const [companySecondaryColor, setCompanySecondaryColor] = useState<string>('#f76b1c')
@@ -168,17 +171,19 @@ export default function CompanyApprovalsPage() {
           }
           
           // Load all tab data in parallel
-          const [pending, approved, poCreated] = await Promise.all([
+          const [pending, approved, poCreated, rejected, siteAdminPendingCount] = await Promise.all([
             getPendingApprovals(targetCompanyId),
             getApprovedOrdersForCompanyAdmin(targetCompanyId),
-            getPOCreatedOrdersForCompanyAdmin(targetCompanyId)
+            getPOCreatedOrdersForCompanyAdmin(targetCompanyId),
+            getRejectedOrdersForCompanyAdmin(targetCompanyId),
+            getPendingSiteAdminApprovalCount(targetCompanyId)
           ])
           
           setPendingOrders(pending)
           setApprovedOrders(approved)
           setPOCreatedOrders(poCreated)
-          // Rejected orders - TODO: implement when rejection flow is added
-          setRejectedOrders([])
+          setRejectedOrders(rejected)
+          setPendingSiteAdminCount(siteAdminPendingCount)
         } catch (error: any) {
           // Suppress expected errors (404, 401, 403)
           const isExpectedError = error?.message?.includes('404') || 
@@ -323,15 +328,17 @@ export default function CompanyApprovalsPage() {
   const reloadData = async () => {
     if (!companyId) return
     try {
-      const [pending, approved, poCreated] = await Promise.all([
+      const [pending, approved, poCreated, siteAdminPendingCount] = await Promise.all([
         getPendingApprovals(companyId),
         getApprovedOrdersForCompanyAdmin(companyId),
-        getPOCreatedOrdersForCompanyAdmin(companyId)
+        getPOCreatedOrdersForCompanyAdmin(companyId),
+        getPendingSiteAdminApprovalCount(companyId)
       ])
       
       setPendingOrders(pending)
       setApprovedOrders(approved)
       setPOCreatedOrders(poCreated)
+      setPendingSiteAdminCount(siteAdminPendingCount)
     } catch (error) {
       console.error('Error reloading data:', error)
     }
@@ -563,6 +570,20 @@ export default function CompanyApprovalsPage() {
               {activeTab === 'poCreated' && 'No purchase orders have been created yet.'}
               {activeTab === 'rejected' && 'No orders have been rejected.'}
             </p>
+            {/* Show pending site admin approval message if applicable */}
+            {activeTab === 'pending' && pendingSiteAdminCount.count > 0 && (
+              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div className="flex items-center justify-center space-x-2">
+                  <Clock className="h-5 w-5 text-yellow-600" />
+                  <p className="text-yellow-800 font-medium">
+                    {pendingSiteAdminCount.message}
+                  </p>
+                </div>
+                <p className="text-yellow-600 text-sm mt-2">
+                  These orders need to be reviewed and approved by Location/Site Admins before they appear here.
+                </p>
+              </div>
+            )}
           </div>
         ) : activeTab === 'pending' ? (
           <div className="space-y-6">
@@ -872,6 +893,43 @@ export default function CompanyApprovalsPage() {
                                       <span>{new Date(order.orderDate).toLocaleDateString()}</span>
                                     </div>
                                   </div>
+                                  {/* PR and Delivery Status Badges */}
+                                  <div className="flex flex-wrap gap-2 mt-2">
+                                    {order.unified_pr_status && (
+                                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                        order.unified_pr_status === 'PENDING_COMPANY_ADMIN_APPROVAL' || order.unified_pr_status === 'SITE_ADMIN_APPROVED'
+                                          ? 'bg-yellow-100 text-yellow-800'
+                                          : order.unified_pr_status === 'COMPANY_ADMIN_APPROVED' || order.unified_pr_status === 'LINKED_TO_PO'
+                                          ? 'bg-blue-100 text-blue-800'
+                                          : order.unified_pr_status === 'IN_SHIPMENT' || order.unified_pr_status === 'PARTIALLY_DELIVERED'
+                                          ? 'bg-purple-100 text-purple-800'
+                                          : order.unified_pr_status === 'FULLY_DELIVERED'
+                                          ? 'bg-emerald-100 text-emerald-800'
+                                          : 'bg-gray-100 text-gray-800'
+                                      }`}>
+                                        PR: {order.unified_pr_status.replace(/_/g, ' ')}
+                                      </span>
+                                    )}
+                                    {order.unified_status && (
+                                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                        order.unified_status === 'DELIVERED'
+                                          ? 'bg-emerald-100 text-emerald-800'
+                                          : order.unified_status === 'DISPATCHED'
+                                          ? 'bg-purple-100 text-purple-800'
+                                          : order.unified_status === 'IN_FULFILMENT'
+                                          ? 'bg-indigo-100 text-indigo-800'
+                                          : order.unified_status === 'APPROVED'
+                                          ? 'bg-blue-100 text-blue-800'
+                                          : order.unified_status === 'PENDING_APPROVAL'
+                                          ? 'bg-yellow-100 text-yellow-800'
+                                          : order.unified_status === 'CANCELLED'
+                                          ? 'bg-red-100 text-red-800'
+                                          : 'bg-gray-100 text-gray-800'
+                                      }`}>
+                                        Delivery: {order.unified_status.replace(/_/g, ' ')}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                               {canApprove && (
@@ -1055,6 +1113,39 @@ export default function CompanyApprovalsPage() {
                           <Calendar className="h-4 w-4" />
                           <span>PR Date: {new Date(order.pr_date).toLocaleDateString()}</span>
                         </div>
+                      )}
+                    </div>
+                    {/* PR and Delivery Status Badges */}
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {order.unified_pr_status && (
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          order.unified_pr_status === 'LINKED_TO_PO'
+                            ? 'bg-blue-100 text-blue-800'
+                            : order.unified_pr_status === 'IN_SHIPMENT' || order.unified_pr_status === 'PARTIALLY_DELIVERED'
+                            ? 'bg-purple-100 text-purple-800'
+                            : order.unified_pr_status === 'FULLY_DELIVERED'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          PR: {order.unified_pr_status.replace(/_/g, ' ')}
+                        </span>
+                      )}
+                      {order.unified_status && (
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          order.unified_status === 'DELIVERED'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : order.unified_status === 'DISPATCHED'
+                            ? 'bg-purple-100 text-purple-800'
+                            : order.unified_status === 'IN_FULFILMENT'
+                            ? 'bg-indigo-100 text-indigo-800'
+                            : order.unified_status === 'APPROVED'
+                            ? 'bg-blue-100 text-blue-800'
+                            : order.unified_status === 'CANCELLED'
+                            ? 'bg-red-100 text-red-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          Delivery: {order.unified_status.replace(/_/g, ' ')}
+                        </span>
                       )}
                     </div>
                     {order.purchaseOrders && order.purchaseOrders.length > 0 && (

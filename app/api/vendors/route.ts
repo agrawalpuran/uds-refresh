@@ -14,11 +14,19 @@ export async function GET(request: Request) {
     if (email) {
       // CRITICAL: Sanitize and validate email before querying
       const sanitizedEmail = email.trim()
-      console.log(`[API /vendors] Looking up vendor by email: ${sanitizedEmail}`)
+      // Check if this is a role-check (returns 200 with null instead of 404)
+      const roleCheck = searchParams.get('roleCheck') === 'true'
+      
+      console.log(`[API /vendors] Looking up vendor by email: ${sanitizedEmail}${roleCheck ? ' (role check)' : ''}`)
       
       try {
         const vendor = await getVendorByEmail(sanitizedEmail)
         if (!vendor) {
+          // For role checks, return 200 with null instead of 404
+          // This prevents browser console from logging 404 errors
+          if (roleCheck) {
+            return NextResponse.json(null)
+          }
           console.log(`[API /vendors] Vendor not found for email: ${sanitizedEmail}`)
           return NextResponse.json({ error: 'Vendor not found with this email' }, { status: 404 })
         }
@@ -268,4 +276,3 @@ export async function PUT(request: Request) {
     )
   }
 }
-``

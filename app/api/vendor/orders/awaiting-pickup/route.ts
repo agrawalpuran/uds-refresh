@@ -4,6 +4,8 @@ import Shipment from '@/lib/models/Shipment'
 import ShipmentPickup from '@/lib/models/ShipmentPickup'
 import Order from '@/lib/models/Order'
 import VendorWarehouse from '@/lib/models/VendorWarehouse'
+import Employee from '@/lib/models/Employee'
+import Company from '@/lib/models/Company'
 
 /**
  * GET /api/vendor/orders/awaiting-pickup
@@ -17,6 +19,7 @@ import VendorWarehouse from '@/lib/models/VendorWarehouse'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -27,17 +30,17 @@ export async function GET(request: Request) {
         { error: 'Vendor ID is required' },
         { status: 400 }
       )
+    }
 
     await connectDB()
 
     // Find all API shipments for this vendor with AWB
-    }
     const shipments = await Shipment.find({
       vendorId: vendorId,
       shipmentMode: 'API',
       $or: [
-        { courierAwbNumber: { $exists: true, $ne: null, $ne: '' } },
-        { trackingNumber: { $exists: true, $ne: null, $ne: '' } },
+        { courierAwbNumber: { $exists: true, $nin: [null, ''] } },
+        { trackingNumber: { $exists: true, $nin: [null, ''] } },
       ],
     })
       .sort({ createdAt: -1 })
@@ -163,7 +166,6 @@ export async function GET(request: Request) {
     }, { status: 200 })
   } catch (error: any) {
     console.error('[API /vendor/orders/awaiting-pickup] Error:', error)
-    console.error('[API /vendor/orders/awaiting-pickup] Error:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -204,5 +206,3 @@ export async function GET(request: Request) {
     )
   }
 }
-
-

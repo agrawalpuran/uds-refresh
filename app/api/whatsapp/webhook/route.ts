@@ -18,9 +18,8 @@ import { sendWhatsAppMessage } from '@/lib/whatsapp/message-sender'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
-export async function POST(request: NextRequest) {
-  try {
 
+export async function POST(request: NextRequest) {
   // CRITICAL: Always return 200 immediately to prevent Error 11200
   // Process asynchronously - never block the response
   
@@ -116,7 +115,7 @@ export async function POST(request: NextRequest) {
       processMessage(whatsappNumber, messageText)
         .then((responseText) => {
           console.log(`[WhatsApp Webhook] ✅ Response generated: ${responseText.substring(0, 50)}...`)
-          return sendWhatsAppMessage(whatsappNumber, responseText)
+          return sendWhatsAppMessage(whatsappNumber!, responseText)
         })
         .then((sendResult) => {
           if (sendResult.success) {
@@ -164,43 +163,8 @@ export async function POST(request: NextRequest) {
         }
       }
     )
-  } catch (error: any) {
-    console.error(`[API] Error in POST handler:`, error)
-    const errorMessage = error?.message || error?.toString() || 'Internal server error'
-    
-    // Return 400 for validation/input errors
-    if (errorMessage.includes('required') ||
-        errorMessage.includes('invalid') ||
-        errorMessage.includes('missing') ||
-        errorMessage.includes('Invalid JSON')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 400 }
-      )
-    
-    // Return 404 for not found errors
-    if (errorMessage.includes('not found') || 
-        errorMessage.includes('Not found') || 
-        errorMessage.includes('does not exist')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 404 }
-      )
-    
-    // Return 401 for authentication errors
-    if (errorMessage.includes('Unauthorized') ||
-        errorMessage.includes('authentication') ||
-        errorMessage.includes('token')) {
-      return NextResponse.json(
-        { error: errorMessage },
-        { status: 401 }
-      )
-    
-    // Return 500 for server errors
-    return NextResponse.json(
-      { error: errorMessage },
-      { status: 500 }
-    )
+  }
+}
 
 /**
  * GET /api/whatsapp/webhook
@@ -234,3 +198,5 @@ export async function GET(request: NextRequest) {
       message: 'WhatsApp webhook endpoint',
       status: 'active'
     }, { status: 200 })
+  }
+}

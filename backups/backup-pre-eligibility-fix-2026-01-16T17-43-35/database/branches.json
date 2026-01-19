@@ -1,0 +1,16 @@
+[
+  {
+    "_id": "695cb10eb950be5dc9f336eb",
+    "name": "ICICI Bank Chennai Branch",
+    "companyId": "100004",
+    "address_line_1": "ICICI Bank, T Nagar",
+    "city": "Chennai",
+    "state": "Tamil Nadu",
+    "pincode": "600017",
+    "country": "India",
+    "isActive": true,
+    "createdAt": "2026-01-06T06:51:58.823Z",
+    "updatedAt": "2026-01-06T06:51:58.823Z",
+    "id": "f336eb"
+  }
+]

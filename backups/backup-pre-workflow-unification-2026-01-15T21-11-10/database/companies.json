@@ -1,0 +1,52 @@
+[
+  {
+    "_id": "6929b9d9a2fdaf5e8d099e3b",
+    "id": "100002",
+    "name": "Akasa Air",
+    "logo": "https://www.akasaair.com/images/akasa-logo.svg",
+    "website": "https://www.akasaair.com",
+    "primaryColor": "#FF6B35",
+    "createdAt": "2025-11-13T07:49:45.667Z",
+    "updatedAt": "2025-11-14T10:29:28.908Z",
+    "__v": 0,
+    "showPrices": false
+  },
+  {
+    "_id": "6929b9d9a2fdaf5e8d099e3c",
+    "id": "100003",
+    "name": "Air India",
+    "logo": "https://www.airindia.com/images/air-india-logo.svg",
+    "website": "https://www.airindia.com",
+    "primaryColor": "#FF0000",
+    "createdAt": "2025-11-13T07:49:45.673Z",
+    "updatedAt": "2025-11-14T10:29:28.908Z",
+    "__v": 0,
+    "showPrices": false
+  },
+  {
+    "_id": "693d8ce66a37697609a911b5",
+    "id": "100004",
+    "name": "ICICI Bank",
+    "logo": "https://www.icicibank.com/logo.png",
+    "website": "https://www.icicibank.com",
+    "primaryColor": "#f7861d",
+    "secondaryColor": "#f3b712",
+    "showPrices": false,
+    "allowPersonalPayments": false,
+    "createdAt": "2025-12-13T15:57:26.402Z",
+    "updatedAt": "2026-01-15T10:51:05.388Z",
+    "__v": 0,
+    "allowPersonalAddressDelivery": false,
+    "enableEmployeeOrder": true,
+    "allowLocationAdminViewFeedback": true,
+    "allowEligibilityConsumptionReset": true,
+    "country": "India",
+    "allow_multi_pr_po": true,
+    "enable_pr_po_workflow": true,
+    "enable_site_admin_approval": true,
+    "enable_site_admin_pr_approval": true,
+    "require_company_admin_approval": true,
+    "require_company_admin_po_approval": true,
+    "shipmentRequestMode": "MANUAL"
+  }
+]

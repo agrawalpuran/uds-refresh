@@ -380,7 +380,9 @@ export async function getVendorByEmail(email: string): Promise<any | null> {
     const encodedEmail = encodeURIComponent(sanitizedEmail)
     console.log(`[getVendorByEmail] Encoded email for URL: ${encodedEmail}`)
     
-    const vendor = await fetchAPI<any>(`/vendors?email=${encodedEmail}`)
+    // Use roleCheck=true to return 200 with null instead of 404
+    // This prevents browser console from logging 404 errors for role detection
+    const vendor = await fetchAPI<any>(`/vendors?email=${encodedEmail}&roleCheck=true`)
     
     if (vendor) {
       console.log(`[getVendorByEmail] ✅ Vendor found: ${vendor.id} (${vendor.name})`)
@@ -1238,6 +1240,16 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
   }
 }
 
+export async function getPendingSiteAdminApprovalCount(companyId: string): Promise<{ count: number; message: string }> {
+  if (!companyId) return { count: 0, message: '' }
+  try {
+    return await fetchAPI<{ count: number; message: string }>(`/orders?pendingSiteAdminApprovalCount=true&companyId=${companyId}`)
+  } catch (error) {
+    console.error('Error fetching pending site admin approval count:', error)
+    return { count: 0, message: '' }
+  }
+}
+
 export async function getPendingApprovalsForSiteAdmin(
   adminEmail: string,
   fromDate?: Date,
@@ -1750,6 +1762,16 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
     return await fetchAPI<any[]>(`/orders?poCreatedCompanyAdmin=true&companyId=${companyId}`)
   } catch (error) {
     console.error('Error fetching PO created orders for company admin:', error)
+    return []
+  }
+}
+
+export async function getRejectedOrdersForCompanyAdmin(companyId: string): Promise<any[]> {
+  if (!companyId) return []
+  try {
+    return await fetchAPI<any[]>(`/orders?rejectedCompanyAdmin=true&companyId=${companyId}`)
+  } catch (error) {
+    console.error('Error fetching rejected orders for company admin:', error)
     return []
   }
 }

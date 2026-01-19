@@ -1,0 +1,10 @@
+[
+  {
+    "_id": "695cc2b516f8f9c54cac22c4",
+    "id": "SYS_FEATURE_CFG",
+    "testOrdersEnabled": true,
+    "createdAt": "2026-01-06T08:07:17.979Z",
+    "updatedAt": "2026-01-06T10:02:39.997Z",
+    "__v": 0
+  }
+]

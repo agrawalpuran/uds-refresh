@@ -1,0 +1,10 @@
+{
+  "timestamp": "2026-01-15T19:32:33.395Z",
+  "flags": {
+    "DUAL_WRITE_ENABLED": true,
+    "READ_FROM_UNIFIED": true,
+    "SAFE_MODE": false
+  },
+  "phase": "PHASE_3_UNIFIED_PRIMARY",
+  "isPhase3Active": true
+}

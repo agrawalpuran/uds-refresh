@@ -1,0 +1,36 @@
+[
+  {
+    "_id": "6969c22fe28e33291b6655fe",
+    "id": "8538671183",
+    "grnId": "8538671183",
+    "grnNumber": "GRN16011014",
+    "companyId": "100004",
+    "vendorId": "100001",
+    "poNumber": "PO1601846",
+    "prNumbers": [
+      "PR1601845"
+    ],
+    "items": [
+      {
+        "productCode": "200002",
+        "size": "XXL",
+        "orderedQuantity": 1,
+        "deliveredQuantity": 1,
+        "rejectedQuantity": 0,
+        "condition": "ACCEPTED",
+        "_id": "6969c22fe28e33291b6655ff"
+      }
+    ],
+    "status": "CREATED",
+    "createdBy": "100001",
+    "grnRaisedByVendor": true,
+    "grnAcknowledgedByCompany": false,
+    "grnStatus": "APPROVED",
+    "createdAt": "2026-01-16T04:44:31.187Z",
+    "updatedAt": "2026-01-16T04:45:55.273Z",
+    "__v": 0,
+    "approvedAt": "2026-01-16T04:44:41.347Z",
+    "approvedBy": "Company Admin",
+    "invoiceId": "8538755264"
+  }
+]

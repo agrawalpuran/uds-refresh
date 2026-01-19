@@ -20,6 +20,7 @@ import { generateShippingId } from '@/lib/db/shipping-config-access'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ shipmentId: string }> }
@@ -30,10 +31,11 @@ export async function POST(
     let body: any
     try {
       body = await request.json()
-    } catch (jsonError: any) {
+    } catch (jsonError) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
 
     await connectDB()
 
@@ -44,13 +46,13 @@ export async function POST(
         { error: `Shipment ${shipmentId} not found` },
         { status: 404 }
       )
+    }
 
     // ====================================================
     // ELIGIBILITY VALIDATION
     // ====================================================
     
     // Rule 1: Must be API shipment (AUTOMATIC mode)
-    }
     if (shipment.shipmentMode !== 'API') {
       return NextResponse.json(
         { 
@@ -59,6 +61,7 @@ export async function POST(
         },
         { status: 400 }
       )
+    }
 
     // Rule 2: providerShipmentReference MUST exist for API shipments
     if (!shipment.providerShipmentReference || !shipment.providerShipmentReference.trim()) {
@@ -74,6 +77,7 @@ export async function POST(
         },
         { status: 400 }
       )
+    }
 
     // Rule 3: AWB number must exist
     const awbNumber = shipment.courierAwbNumber || shipment.trackingNumber
@@ -85,6 +89,7 @@ export async function POST(
         },
         { status: 400 }
       )
+    }
 
     // Rule 4: Check if pickup already exists and is PICKED_UP
     const existingPickup = await ShipmentPickup.findOne({ shipmentId })
@@ -99,12 +104,12 @@ export async function POST(
         },
         { status: 400 }
       )
+    }
 
     // ====================================================
     // PHONE VALIDATION (BEFORE API CALL)
     // ====================================================
     const phoneValidation = validateAndNormalizePhone(body.contactPhone, false)
-    }
     if (!phoneValidation.isValid) {
       return NextResponse.json(
         { 
@@ -113,6 +118,7 @@ export async function POST(
         },
         { status: 400 }
       )
+    }
     const normalizedPhone = phoneValidation.normalizedPhone!
 
     // ====================================================
@@ -123,8 +129,8 @@ export async function POST(
         { error: 'warehouseId is required' },
         { status: 400 }
       )
-
     }
+
     const warehouse = await VendorWarehouse.findOne({ 
       warehouseRefId: body.warehouseId,
       vendorId: shipment.vendorId,
@@ -135,16 +141,17 @@ export async function POST(
         { error: `Warehouse ${body.warehouseId} not found` },
         { status: 404 }
       )
+    }
 
     // ====================================================
     // CREATE PROVIDER INSTANCE
     // ====================================================
-    }
     if (!shipment.providerId) {
       return NextResponse.json(
         { error: 'Provider ID not found in shipment' },
         { status: 400 }
       )
+    }
 
     const provider = await createProvider(
       shipment.providerId,
@@ -157,14 +164,15 @@ export async function POST(
         { error: 'Failed to initialize shipping provider' },
         { status: 500 }
       )
+    }
 
     // Check if provider supports pickup scheduling
-    }
     if (!provider.schedulePickup) {
       return NextResponse.json(
         { error: 'Pickup scheduling is not supported by this provider' },
         { status: 400 }
       )
+    }
 
     // ====================================================
     // BUILD PICKUP PAYLOAD
@@ -227,6 +235,7 @@ export async function POST(
         },
         { status: 500 }
       )
+    }
 
     // Additional validation: Ensure pickupReferenceId exists
     if (!pickupResult.pickupReferenceId || !pickupResult.pickupReferenceId.trim()) {
@@ -244,6 +253,7 @@ export async function POST(
         },
         { status: 500 }
       )
+    }
 
     // ====================================================
     // SAVE PICKUP RECORD (ONLY after Shiprocket confirms success)
@@ -291,7 +301,6 @@ export async function POST(
     }, { status: 200 })
   } catch (error: any) {
     console.error('[API /shipments/[shipmentId]/pickup/schedule] Error:', error)
-    console.error('[API /shipments/[shipmentId]/pickup/schedule] Error:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -331,3 +340,4 @@ export async function POST(
       { status: 500 }
     )
   }
+}

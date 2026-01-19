@@ -1,0 +1,236 @@
+[
+  {
+    "_id": "6957b0125c3b4d941fbdf084",
+    "providerId": "PROV_MJWT64DM",
+    "providerCode": "SHIPWAY",
+    "providerName": "Shipway Logistics",
+    "providerType": "API_AGGREGATOR",
+    "isActive": true,
+    "supportsShipmentCreate": true,
+    "supportsTracking": true,
+    "supportsServiceabilityCheck": true,
+    "supportsCancellation": true,
+    "supportsWebhooks": false,
+    "apiBaseUrl": "https://api.shipway.in",
+    "apiVersion": "v1",
+    "authType": "API_KEY",
+    "documentationUrl": "https://docs.shipway.in",
+    "createdAt": "2026-01-02T11:46:26.602Z",
+    "updatedAt": "2026-01-02T11:46:26.602Z",
+    "providerRefId": 100000
+  },
+  {
+    "_id": "6957b3d446b6150d7009e3f4",
+    "providerId": "PROV_MOCK_MJWTQQ86",
+    "providerCode": "MOCK",
+    "providerName": "Mock Logistics Provider (Testing)",
+    "providerType": "API_AGGREGATOR",
+    "isActive": true,
+    "supportsShipmentCreate": true,
+    "supportsTracking": true,
+    "supportsServiceabilityCheck": true,
+    "supportsCancellation": true,
+    "supportsWebhooks": false,
+    "apiBaseUrl": "https://mock.api.test",
+    "apiVersion": "v1",
+    "authType": "API_KEY",
+    "documentationUrl": "https://docs.mock.test",
+    "createdAt": "2026-01-02T12:02:28.038Z",
+    "updatedAt": "2026-01-02T12:02:28.038Z",
+    "providerRefId": 100001
+  },
+  {
+    "_id": "6957c8ae783d13076fe90f23",
+    "providerId": "PROV_SR_MJWWX5NU",
+    "providerCode": "SHIPROCKET",
+    "providerName": "Shiprocket",
+    "providerType": "API_AGGREGATOR",
+    "isActive": true,
+    "supportsShipmentCreate": true,
+    "supportsTracking": true,
+    "supportsServiceabilityCheck": true,
+    "supportsCancellation": true,
+    "supportsWebhooks": false,
+    "apiBaseUrl": "https://apiv2.shiprocket.in",
+    "apiVersion": "v1",
+    "authType": "TOKEN",
+    "documentationUrl": "https://apidocs.shiprocket.in/",
+    "createdAt": "2026-01-02T13:31:26.826Z",
+    "updatedAt": "2026-01-03T06:36:33.422Z",
+    "authConfig": {
+      "authType": "BASIC",
+      "credentials": {
+        "username": "W1vKWgG3fbu4frsbQrzSCw==:ZFV/HCMrIxWXH9Wg6T2ZO2nBFD438yMyihA3FtXBMNc=",
+        "password": "CMcoV4LWv/ggrTdHOd43jA==:3pRJBe2pTJZ2ex3VIi4ko6/AFZ1YjqA4lbkpbiCoJLlCjTr+jvYcjmKIYNOku34F"
+      },
+      "headersTemplate": {
+        "Authorization": "Bearer {{token}}",
+        "Content-Type": "application/json"
+      },
+      "autoRefreshToken": true
+    },
+    "providerRefId": 100002
+  },
+  {
+    "_id": "6958bc17049a155af4dc6e87",
+    "providerId": "PROV_MJXY0QMESF",
+    "providerCode": "SHIPROCKET_ICICI",
+    "providerName": "Shiprocket",
+    "providerType": "API_AGGREGATOR",
+    "isActive": true,
+    "supportsShipmentCreate": true,
+    "supportsTracking": true,
+    "supportsServiceabilityCheck": true,
+    "supportsCancellation": true,
+    "supportsWebhooks": false,
+    "apiBaseUrl": "https://apiv2.shiprocket.in",
+    "apiVersion": "v1",
+    "authType": "TOKEN",
+    "documentationUrl": "https://apidocs.shiprocket.in/",
+    "createdBy": "Super Admin",
+    "createdAt": "2026-01-03T06:49:59.766Z",
+    "updatedAt": "2026-01-05T07:45:49.660Z",
+    "__v": 1,
+    "updatedBy": "system",
+    "lastHealthCheckAt": "2026-01-05T07:45:49.638Z",
+    "lastHealthMessage": "Shiprocket API is accessible and authentication successful",
+    "lastHealthStatus": "HEALTHY",
+    "providerRefId": 100003,
+    "authConfig": {
+      "authType": "BASIC",
+      "credentials": {
+        "username": "l6hEu/DJVUJ+B3re9pIoLw==:mOpcemx7sSYFteRAkLX/gxe0niKJraFuVorVmonPdug=",
+        "password": "ss1aQjHRxG/ugbEy6v7rtg==:Ndmc3VSv+5YKMn2k6FvWyBKWyJVaYHEKJKf4A5eji/r5Q+ZrfFT2UMYxzSOmBQYr"
+      },
+      "headersTemplate": {
+        "Authorization": "Bearer {{token}}",
+        "Content-Type": "application/json"
+      },
+      "autoRefreshToken": true,
+      "_id": "6958ed343ae0938d6e45b623"
+    },
+    "supportedCouriers": [
+      {
+        "courierCode": "6",
+        "courierName": "DTDC Surface",
+        "serviceTypes": [
+          "SURFACE"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.508Z",
+        "_id": "6958ed343ae0938d6e45b624"
+      },
+      {
+        "courierCode": "43",
+        "courierName": "Delhivery Surface",
+        "serviceTypes": [
+          "SURFACE"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.508Z",
+        "_id": "6958ed343ae0938d6e45b625"
+      },
+      {
+        "courierCode": "217",
+        "courierName": "India Post-Speed Post Air Prepaid",
+        "serviceTypes": [
+          "AIR"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.509Z",
+        "_id": "6958ed343ae0938d6e45b626"
+      },
+      {
+        "courierCode": "225",
+        "courierName": "India Post-Business Parcel Surface Prepaid",
+        "serviceTypes": [
+          "SURFACE"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.509Z",
+        "_id": "6958ed343ae0938d6e45b627"
+      },
+      {
+        "courierCode": "684",
+        "courierName": "Xpressbees Surface_Network Stress",
+        "serviceTypes": [
+          "SURFACE"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.509Z",
+        "_id": "6958ed343ae0938d6e45b628"
+      },
+      {
+        "courierCode": "700",
+        "courierName": "Shadowfax  Surface_Network Stress",
+        "serviceTypes": [
+          "SURFACE"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.509Z",
+        "_id": "6958ed343ae0938d6e45b629"
+      },
+      {
+        "courierCode": "10",
+        "courierName": "Delhivery Air",
+        "serviceTypes": [
+          "AIR"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.509Z",
+        "_id": "6958ed343ae0938d6e45b62a"
+      },
+      {
+        "courierCode": "24",
+        "courierName": "Xpressbees Surface 2kg",
+        "serviceTypes": [
+          "SURFACE"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.509Z",
+        "_id": "6958ed343ae0938d6e45b62b"
+      },
+      {
+        "courierCode": "699",
+        "courierName": "Ekart Surface_Network Stress",
+        "serviceTypes": [
+          "SURFACE"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.510Z",
+        "_id": "6958ed343ae0938d6e45b62c"
+      },
+      {
+        "courierCode": "1",
+        "courierName": "Blue Dart Air",
+        "serviceTypes": [
+          "AIR"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.510Z",
+        "_id": "6958ed343ae0938d6e45b62d"
+      },
+      {
+        "courierCode": "196",
+        "courierName": "DTDC Air 500gm",
+        "serviceTypes": [
+          "AIR"
+        ],
+        "isActive": true,
+        "source": "API_SYNC",
+        "lastSyncedAt": "2026-01-03T10:19:32.510Z",
+        "_id": "6958ed343ae0938d6e45b62e"
+      }
+    ]
+  }
+]

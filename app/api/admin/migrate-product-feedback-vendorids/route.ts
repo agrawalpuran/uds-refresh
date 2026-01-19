@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { connectDB } from '@/lib/db/connect'
+import connectDB from '@/lib/db/mongodb'
 import mongoose from 'mongoose'
 import Vendor from '@/lib/models/Vendor'
 
@@ -51,7 +51,8 @@ export async function GET(request: Request) {
       needsMigration: stats.objectIdFormat > 0 || stats.invalidFormat > 0
     }, { status: 200 })
     
-  } catch (error: any) {
+  } catch (error) {
+    const err = error as any;
     console.error('[Migration] Stats check failed:', error)
     return NextResponse.json({
       success: false,
@@ -138,7 +139,8 @@ export async function POST(request: Request) {
           results.migrated++
           console.log(`[Migration] ✓ Migrated ProductFeedback ${feedback._id} vendorId: ${feedback.vendorId} -> ${vendorStringId}`)
         }
-      } catch (error: any) {
+      } catch (error) {
+    const err = error as any;
         results.errors.push(`Error migrating ProductFeedback ${feedback._id}: ${error.message}`)
         console.error(`[Migration] ❌ Error migrating ProductFeedback ${feedback._id}:`, error)
       }
@@ -152,7 +154,8 @@ export async function POST(request: Request) {
       results
     }, { status: 200 })
     
-  } catch (error: any) {
+  } catch (error) {
+    const err = error as any;
     console.error('[Migration] Migration failed:', error)
     return NextResponse.json({
       success: false,

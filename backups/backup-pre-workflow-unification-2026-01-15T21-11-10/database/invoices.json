@@ -1,0 +1,361 @@
+[
+  {
+    "_id": "695779abaa2ca635eb6219a6",
+    "id": "7340459191",
+    "invoiceId": "7340459191",
+    "invoiceNumber": "INV-12356789-450310",
+    "invoiceDate": "2026-01-02T00:00:00.000Z",
+    "vendorInvoiceNumber": "GT-1234567",
+    "vendorInvoiceDate": "2026-01-02T00:00:00.000Z",
+    "vendorId": "100001",
+    "companyId": "100004",
+    "grnId": "7338711452",
+    "grnNumber": "12356789",
+    "grnApprovedDate": "2026-01-02T07:25:41.137Z",
+    "poNumber": "890123",
+    "prNumbers": [
+      "3443493"
+    ],
+    "invoiceItems": [
+      {
+        "productCode": "200001",
+        "productName": "Oxford Shirt - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "695779abaa2ca635eb6219a7"
+      },
+      {
+        "productCode": "200002",
+        "productName": "Denim Shirt - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "695779abaa2ca635eb6219a8"
+      },
+      {
+        "productCode": "200004",
+        "productName": "Cargo Pants - Male",
+        "size": "30",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "695779abaa2ca635eb6219a9"
+      }
+    ],
+    "invoiceAmount": 4493,
+    "invoiceStatus": "APPROVED",
+    "raisedBy": "100001",
+    "taxAmount": 0,
+    "createdAt": "2026-01-02T07:54:19.227Z",
+    "updatedAt": "2026-01-02T07:54:53.604Z",
+    "__v": 0,
+    "approvedAt": "2026-01-02T07:54:53.602Z",
+    "approvedBy": "Company Admin"
+  },
+  {
+    "_id": "6957aa55b6ba90c02f8b91c7",
+    "id": "7352917312",
+    "invoiceId": "7352917312",
+    "invoiceNumber": "INV-66666666-900762",
+    "invoiceDate": "2026-01-02T00:00:00.000Z",
+    "vendorInvoiceNumber": "123123123",
+    "vendorInvoiceDate": "2026-01-02T00:00:00.000Z",
+    "vendorId": "100002",
+    "companyId": "100004",
+    "grnId": "7352862914",
+    "grnNumber": "66666666",
+    "grnApprovedDate": "2026-01-02T11:21:23.304Z",
+    "poNumber": "200200200",
+    "prNumbers": [
+      "100100100"
+    ],
+    "invoiceItems": [
+      {
+        "productCode": "200007",
+        "productName": "Heels - Female",
+        "size": "11",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "6957aa55b6ba90c02f8b91c8"
+      }
+    ],
+    "invoiceAmount": 2799,
+    "invoiceStatus": "APPROVED",
+    "raisedBy": "100002",
+    "taxAmount": 0,
+    "createdAt": "2026-01-02T11:21:57.320Z",
+    "updatedAt": "2026-01-02T11:22:23.261Z",
+    "__v": 0,
+    "approvedAt": "2026-01-02T11:22:23.259Z",
+    "approvedBy": "Company Admin"
+  },
+  {
+    "_id": "695902773ae0938d6e45bbbf",
+    "id": "7441015627",
+    "invoiceId": "7441015627",
+    "invoiceNumber": "INV-66666609-004424",
+    "invoiceDate": "2026-01-03T00:00:00.000Z",
+    "vendorInvoiceNumber": "4534543",
+    "vendorInvoiceDate": "2026-01-03T00:00:00.000Z",
+    "vendorId": "100001",
+    "companyId": "100004",
+    "grnId": "7440904172",
+    "grnNumber": "66666609",
+    "grnApprovedDate": "2026-01-03T11:49:34.352Z",
+    "poNumber": "009988776",
+    "prNumbers": [
+      "0-98123456"
+    ],
+    "invoiceItems": [
+      {
+        "productCode": "200019",
+        "productName": "Blazer - Female",
+        "size": "S",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "695902773ae0938d6e45bbc0"
+      }
+    ],
+    "invoiceAmount": 4299,
+    "invoiceStatus": "APPROVED",
+    "raisedBy": "100001",
+    "taxAmount": 0,
+    "createdAt": "2026-01-03T11:50:15.634Z",
+    "updatedAt": "2026-01-03T11:52:50.558Z",
+    "__v": 0,
+    "approvedAt": "2026-01-03T11:52:50.557Z",
+    "approvedBy": "Company Admin"
+  },
+  {
+    "_id": "69594b9f2907c9ae3907fe41",
+    "id": "7459743681",
+    "invoiceId": "7459743681",
+    "invoiceNumber": "INV-5465465464-733261",
+    "invoiceDate": "2026-01-03T00:00:00.000Z",
+    "vendorInvoiceNumber": "9798787987",
+    "vendorInvoiceDate": "2026-01-03T00:00:00.000Z",
+    "vendorId": "100001",
+    "companyId": "100004",
+    "grnId": "7459672387",
+    "grnNumber": "5465465464",
+    "grnApprovedDate": "2026-01-03T17:01:51.523Z",
+    "poNumber": "999999999",
+    "prNumbers": [
+      "888888"
+    ],
+    "invoiceItems": [
+      {
+        "productCode": "200001",
+        "productName": "Oxford Shirt - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "69594b9f2907c9ae3907fe42"
+      },
+      {
+        "productCode": "200002",
+        "productName": "Denim Shirt - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "69594b9f2907c9ae3907fe43"
+      }
+    ],
+    "invoiceAmount": 2494,
+    "invoiceStatus": "APPROVED",
+    "raisedBy": "100001",
+    "taxAmount": 0,
+    "createdAt": "2026-01-03T17:02:23.685Z",
+    "updatedAt": "2026-01-03T17:02:42.229Z",
+    "__v": 0,
+    "approvedAt": "2026-01-03T17:02:42.227Z",
+    "approvedBy": "Company Admin"
+  },
+  {
+    "_id": "695e263882ef90e4729923bd",
+    "id": "7777848510",
+    "invoiceId": "7777848510",
+    "invoiceNumber": "INV-GT-123456-832522",
+    "invoiceDate": "2026-01-07T00:00:00.000Z",
+    "vendorInvoiceNumber": "GT-098123",
+    "vendorInvoiceDate": "2026-01-07T00:00:00.000Z",
+    "vendorId": "100001",
+    "companyId": "100004",
+    "grnId": "7777784995",
+    "grnNumber": "GT-123456",
+    "grnApprovedDate": "2026-01-07T09:23:26.122Z",
+    "poNumber": "ICICI-PO-321123",
+    "prNumbers": [
+      "88765678"
+    ],
+    "invoiceItems": [
+      {
+        "productCode": "200001",
+        "productName": "Oxford Shirt - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "695e263882ef90e4729923be"
+      },
+      {
+        "productCode": "200002",
+        "productName": "Denim Shirt - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "695e263882ef90e4729923bf"
+      },
+      {
+        "productCode": "200004",
+        "productName": "Cargo Pants - Male",
+        "size": "30",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "695e263882ef90e4729923c0"
+      }
+    ],
+    "invoiceAmount": 4493,
+    "invoiceStatus": "APPROVED",
+    "raisedBy": "100001",
+    "taxAmount": 0,
+    "createdAt": "2026-01-07T09:24:08.518Z",
+    "updatedAt": "2026-01-07T09:24:32.931Z",
+    "__v": 0,
+    "approvedAt": "2026-01-07T09:24:32.929Z",
+    "approvedBy": "Company Admin"
+  },
+  {
+    "_id": "695e4e6747e35a12fbe342a0",
+    "id": "7788135787",
+    "invoiceId": "7788135787",
+    "invoiceNumber": "INV-112334455-107963",
+    "invoiceDate": "2026-01-07T00:00:00.000Z",
+    "vendorInvoiceNumber": "GT98564321",
+    "vendorInvoiceDate": "2026-01-08T00:00:00.000Z",
+    "vendorId": "100001",
+    "companyId": "100004",
+    "grnId": "7788008933",
+    "grnNumber": "112334455",
+    "grnApprovedDate": "2026-01-07T12:14:34.299Z",
+    "poNumber": "333333333",
+    "prNumbers": [
+      "22222222"
+    ],
+    "invoiceItems": [
+      {
+        "productCode": "200001",
+        "productName": "Oxford Shirt - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "695e4e6747e35a12fbe342a1"
+      }
+    ],
+    "invoiceAmount": 1395,
+    "invoiceStatus": "APPROVED",
+    "raisedBy": "100001",
+    "taxAmount": 0,
+    "createdAt": "2026-01-07T12:15:35.794Z",
+    "updatedAt": "2026-01-07T12:16:07.160Z",
+    "__v": 0,
+    "approvedAt": "2026-01-07T12:16:07.156Z",
+    "approvedBy": "Company Admin"
+  },
+  {
+    "_id": "696665769cbde7628b6ed9f4",
+    "id": "8318326236",
+    "invoiceId": "8318326236",
+    "invoiceNumber": "INV-1109000-316787",
+    "invoiceDate": "2026-01-13T00:00:00.000Z",
+    "vendorInvoiceNumber": "000111",
+    "vendorInvoiceDate": "2026-01-13T00:00:00.000Z",
+    "vendorId": "100001",
+    "companyId": "100004",
+    "grnId": "8311103539",
+    "grnNumber": "1109000",
+    "grnApprovedDate": "2026-01-13T13:35:16.083Z",
+    "poNumber": "11234000",
+    "prNumbers": [
+      "1123786"
+    ],
+    "invoiceItems": [
+      {
+        "productCode": "200002",
+        "productName": "Denim Shirt - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 1099,
+        "lineTotal": 1099,
+        "_id": "696665769cbde7628b6ed9f5"
+      }
+    ],
+    "invoiceAmount": 1099,
+    "invoiceStatus": "APPROVED",
+    "raisedBy": "100001",
+    "taxAmount": 0,
+    "createdAt": "2026-01-13T15:32:06.243Z",
+    "updatedAt": "2026-01-13T15:37:13.734Z",
+    "__v": 0,
+    "approvedAt": "2026-01-13T15:37:13.727Z",
+    "approvedBy": "Company Admin"
+  },
+  {
+    "_id": "69679f5b52ce9c0351a83445",
+    "id": "8398683588",
+    "invoiceId": "8398683588",
+    "invoiceNumber": "INV-GRN-650621",
+    "invoiceDate": "2026-01-14T00:00:00.000Z",
+    "vendorInvoiceNumber": "14012026",
+    "vendorInvoiceDate": "2026-01-14T00:00:00.000Z",
+    "vendorId": "100001",
+    "companyId": "100004",
+    "grnId": "8398606552",
+    "grnNumber": "GRN",
+    "grnApprovedDate": "2026-01-14T13:50:37.345Z",
+    "poNumber": "PO-Puran-14012026",
+    "prNumbers": [
+      "Puran-1401-2026"
+    ],
+    "invoiceItems": [
+      {
+        "productCode": "200002",
+        "productName": "Denim Shirt - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "69679f5b52ce9c0351a83446"
+      },
+      {
+        "productCode": "200018",
+        "productName": "Blazer - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "69679f5b52ce9c0351a83447"
+      }
+    ],
+    "invoiceAmount": 5598,
+    "invoiceStatus": "APPROVED",
+    "raisedBy": "100001",
+    "remarks": "Thanks for approving this swiftly",
+    "taxAmount": 0,
+    "createdAt": "2026-01-14T13:51:23.592Z",
+    "updatedAt": "2026-01-15T02:53:28.741Z",
+    "__v": 0,
+    "approvedAt": "2026-01-15T02:53:28.737Z",
+    "approvedBy": "Company Admin"
+  }
+]

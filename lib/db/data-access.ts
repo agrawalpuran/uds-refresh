@@ -53,6 +53,35 @@ import {
   ensureSystemCategories
 } from './category-helpers'
 
+// =============================================================================
+// DUAL-WRITE INTEGRATION (Feature Flag: DUAL_WRITE_ENABLED)
+// =============================================================================
+import {
+  safeDualWriteOrderStatus,
+  safeDualWritePRStatus,
+  safeDualWritePOStatus,
+  safeDualWriteGRNStatus,
+  safeDualWriteInvoiceStatus,
+  getUnifiedStatusFromLegacy,
+  type UnifiedOrderStatus,
+  type UnifiedPRStatus,
+  type UnifiedPOStatus,
+  type UnifiedGRNStatus,
+  type UnifiedInvoiceStatus,
+} from '@/migrations/dualwrite/status-dualwrite-wrapper'
+
+// =============================================================================
+// INVENTORY SYNC SERVICES
+// =============================================================================
+// NOTE: Eligibility service removed - using dynamic calculation approach instead.
+// Eligibility is calculated by: Total (from DesignationSubcategoryEligibility) - Consumed (from order counts)
+// See getConsumedEligibility() for the implementation.
+import {
+  decrementVendorStockOnDispatch,
+  incrementVendorStockOnReturn,
+  validateInventoryForDispatch,
+} from '../services/vendor-inventory-service'
+
 // Ensure Branch model is registered
 if (!mongoose.models.Branch) {
   require('../models/Branch')
@@ -270,6 +299,280 @@ function toPlainObject(doc: any): any {
     if ('enableEmployeeOrder' in obj) obj.enableEmployeeOrder = Boolean(obj.enableEmployeeOrder)
   }
   return obj
+}
+
+// =============================================================================
+// MANUAL POPULATION HELPERS (String ID System)
+// =============================================================================
+// Since all reference fields use STRING IDs (not ObjectIds), Mongoose's
+// .populate() does NOT work. These helpers manually fetch and attach
+// related documents using string ID lookups.
+// =============================================================================
+
+/**
+ * Manually populate company data for documents with companyId field
+ * @param docs Array of documents or single document with companyId field
+ * @param fields Fields to include from company (default: 'id name')
+ */
+async function manualPopulateCompany<T extends { companyId?: string }>(
+  docs: T | T[],
+  fields: string = 'id name'
+): Promise<T | T[]> {
+  const isArray = Array.isArray(docs)
+  const docArray = isArray ? docs : [docs]
+  
+  if (docArray.length === 0) return docs
+  
+  // Extract unique companyIds
+  const companyIds = [...new Set(docArray
+    .map(d => d.companyId)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  )]
+  
+  if (companyIds.length === 0) return docs
+  
+  // Fetch companies
+  const companies = await Company.find({ id: { $in: companyIds } })
+    .select(fields)
+    .lean()
+  
+  // Create lookup map
+  const companyMap = new Map(companies.map(c => [(c as any).id, c]))
+  
+  // Attach company data
+  for (const doc of docArray) {
+    if (doc.companyId && companyMap.has(doc.companyId)) {
+      ;(doc as any)._populatedCompany = companyMap.get(doc.companyId)
+    }
+  }
+  
+  return docs
+}
+
+/**
+ * Manually populate employee data for documents with employeeId field
+ * @param docs Array of documents or single document with employeeId field
+ * @param fields Fields to include from employee (default: 'id employeeId firstName lastName email')
+ */
+async function manualPopulateEmployee<T extends { employeeId?: string }>(
+  docs: T | T[],
+  fields: string = 'id employeeId firstName lastName email'
+): Promise<T | T[]> {
+  const isArray = Array.isArray(docs)
+  const docArray = isArray ? docs : [docs]
+  
+  if (docArray.length === 0) return docs
+  
+  // Extract unique employeeIds
+  const employeeIds = [...new Set(docArray
+    .map(d => d.employeeId)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  )]
+  
+  if (employeeIds.length === 0) return docs
+  
+  // Fetch employees by string id field
+  const employees = await Employee.find({ 
+    $or: [
+      { id: { $in: employeeIds } },
+      { employeeId: { $in: employeeIds } }
+    ]
+  })
+    .select(fields)
+    .lean()
+  
+  // Create lookup map (by both id and employeeId)
+  const employeeMap = new Map<string, any>()
+  for (const emp of employees) {
+    if ((emp as any).id) employeeMap.set((emp as any).id, emp)
+    if ((emp as any).employeeId) employeeMap.set((emp as any).employeeId, emp)
+  }
+  
+  // Attach employee data
+  for (const doc of docArray) {
+    if (doc.employeeId && employeeMap.has(doc.employeeId)) {
+      ;(doc as any)._populatedEmployee = employeeMap.get(doc.employeeId)
+    }
+  }
+  
+  return docs
+}
+
+/**
+ * Manually populate vendor data for documents with vendorId field
+ * @param docs Array of documents or single document with vendorId field
+ * @param fields Fields to include from vendor (default: 'id name')
+ */
+async function manualPopulateVendor<T extends { vendorId?: string }>(
+  docs: T | T[],
+  fields: string = 'id name'
+): Promise<T | T[]> {
+  const isArray = Array.isArray(docs)
+  const docArray = isArray ? docs : [docs]
+  
+  if (docArray.length === 0) return docs
+  
+  // Extract unique vendorIds
+  const vendorIds = [...new Set(docArray
+    .map(d => d.vendorId)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  )]
+  
+  if (vendorIds.length === 0) return docs
+  
+  // Fetch vendors
+  const vendors = await Vendor.find({ id: { $in: vendorIds } })
+    .select(fields)
+    .lean()
+  
+  // Create lookup map
+  const vendorMap = new Map(vendors.map(v => [(v as any).id, v]))
+  
+  // Attach vendor data and vendorName convenience field
+  for (const doc of docArray) {
+    if (doc.vendorId && vendorMap.has(doc.vendorId)) {
+      const vendor = vendorMap.get(doc.vendorId)
+      ;(doc as any)._populatedVendor = vendor
+      ;(doc as any).vendorName = (vendor as any)?.name || null
+    }
+  }
+  
+  return docs
+}
+
+/**
+ * Manually populate uniform data for order items with uniformId field
+ * @param docs Array of order documents with items[].uniformId
+ * @param fields Fields to include from uniform (default: 'id name category categoryId')
+ */
+async function manualPopulateOrderItems<T extends { items?: Array<{ uniformId?: string }> }>(
+  docs: T | T[],
+  fields: string = 'id name category categoryId'
+): Promise<T | T[]> {
+  const isArray = Array.isArray(docs)
+  const docArray = isArray ? docs : [docs]
+  
+  if (docArray.length === 0) return docs
+  
+  // Extract unique uniformIds from all items
+  const uniformIds = new Set<string>()
+  for (const doc of docArray) {
+    for (const item of doc.items || []) {
+      if (typeof item.uniformId === 'string' && item.uniformId.length > 0) {
+        uniformIds.add(item.uniformId)
+      }
+    }
+  }
+  
+  if (uniformIds.size === 0) return docs
+  
+  // Fetch uniforms
+  const uniforms = await Uniform.find({ id: { $in: Array.from(uniformIds) } })
+    .select(fields)
+    .lean()
+  
+  // Create lookup map
+  const uniformMap = new Map(uniforms.map(u => [(u as any).id, u]))
+  
+  // Attach uniform data to items
+  for (const doc of docArray) {
+    for (const item of doc.items || []) {
+      if (typeof item.uniformId === 'string' && uniformMap.has(item.uniformId)) {
+        ;(item as any)._populatedUniform = uniformMap.get(item.uniformId)
+      }
+    }
+  }
+  
+  return docs
+}
+
+/**
+ * Manually populate admin (employee) data for documents with adminId field
+ * @param docs Array of documents or single document with adminId field
+ * @param fields Fields to include from employee (default: 'id employeeId firstName lastName email designation')
+ */
+async function manualPopulateAdmin<T extends { adminId?: string }>(
+  docs: T | T[],
+  fields: string = 'id employeeId firstName lastName email designation'
+): Promise<T | T[]> {
+  const isArray = Array.isArray(docs)
+  const docArray = isArray ? docs : [docs]
+  
+  if (docArray.length === 0) return docs
+  
+  // Extract unique adminIds
+  const adminIds = [...new Set(docArray
+    .map(d => d.adminId)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  )]
+  
+  if (adminIds.length === 0) return docs
+  
+  // Fetch employees (admins are employees)
+  const admins = await Employee.find({ 
+    $or: [
+      { id: { $in: adminIds } },
+      { employeeId: { $in: adminIds } }
+    ]
+  })
+    .select(fields)
+    .lean()
+  
+  // Create lookup map
+  const adminMap = new Map<string, any>()
+  for (const admin of admins) {
+    if ((admin as any).id) adminMap.set((admin as any).id, admin)
+    if ((admin as any).employeeId) adminMap.set((admin as any).employeeId, admin)
+  }
+  
+  // Attach admin data
+  for (const doc of docArray) {
+    if (doc.adminId && adminMap.has(doc.adminId)) {
+      ;(doc as any)._populatedAdmin = adminMap.get(doc.adminId)
+    }
+  }
+  
+  return docs
+}
+
+/**
+ * Manually populate uniform data for documents with uniformId field (single item, not nested)
+ * @param docs Array of documents or single document with uniformId field
+ * @param fields Fields to include from uniform (default: 'id name category categoryId')
+ */
+async function manualPopulateUniform<T extends { uniformId?: string }>(
+  docs: T | T[],
+  fields: string = 'id name category categoryId'
+): Promise<T | T[]> {
+  const isArray = Array.isArray(docs)
+  const docArray = isArray ? docs : [docs]
+  
+  if (docArray.length === 0) return docs
+  
+  // Extract unique uniformIds
+  const uniformIds = [...new Set(docArray
+    .map(d => d.uniformId)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  )]
+  
+  if (uniformIds.length === 0) return docs
+  
+  // Fetch uniforms
+  const uniforms = await Uniform.find({ id: { $in: uniformIds } })
+    .select(fields)
+    .lean()
+  
+  // Create lookup map
+  const uniformMap = new Map(uniforms.map(u => [(u as any).id, u]))
+  
+  // Attach uniform data
+  for (const doc of docArray) {
+    if (doc.uniformId && uniformMap.has(doc.uniformId)) {
+      ;(doc as any)._populatedUniform = uniformMap.get(doc.uniformId)
+    }
+  }
+  
+  return docs
 }
 
 // ========== UNIFORM/PRODUCT FUNCTIONS ==========
@@ -5361,12 +5664,30 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
 export async function getEmployeeById(employeeId: string): Promise<any | null> {
   await connectDB()
   
-  const employee = await Employee.findOne({ id: employeeId })
-    .populate('companyId', 'id name')
-    .populate('locationId', 'id name address_line_1 city state pincode')
-    .lean()
+  // Don't use .populate() - it won't work with string IDs
+  // Fetch employee without population
+  const employee = await Employee.findOne({ id: employeeId }).lean()
   
   if (!employee) return null
+  
+  // Manually fetch company data if companyId exists
+  if (employee.companyId && typeof employee.companyId === 'string') {
+    const company = await Company.findOne({ id: employee.companyId }).select('id name').lean()
+    if (company) {
+      ;(employee as any).companyName = (company as any).name
+    }
+  }
+  
+  // Manually fetch location data if locationId exists
+  if (employee.locationId && typeof employee.locationId === 'string') {
+    const location = await Location.findOne({ id: employee.locationId })
+      .select('id name address_line_1 city state pincode')
+      .lean()
+    if (location) {
+      ;(employee as any).location = (location as any).name
+      ;(employee as any).locationData = location
+    }
+  }
   
   // Since we used .lean(), the post hooks don't run, so we need to manually decrypt sensitive fields
   const { decrypt } = require('../utils/encryption')
@@ -5523,27 +5844,59 @@ export async function getEmployeeByPhone(phone: string): Promise<any | null> {
       const rawEmployee = await db.collection('employees').findOne({ mobile: encryptedPhone })
       
       if (rawEmployee) {
-        // Found employee! Now fetch with Mongoose to get populated fields and decryption
-        employee = await Employee.findOne({ mobile: encryptedPhone })
-          .populate('companyId', 'id name')
-          .populate('locationId', 'id name address city state pincode')
-          .lean()
+        // Found employee! Fetch without .populate() (it won't work with string IDs)
+        employee = await Employee.findOne({ mobile: encryptedPhone }).lean()
         
         if (employee) {
+          // Manually fetch company data
+          if (employee.companyId && typeof employee.companyId === 'string') {
+            const company = await Company.findOne({ id: employee.companyId }).select('id name').lean()
+            if (company) {
+              ;(employee as any).companyName = (company as any).name
+            }
+          }
+          
+          // Manually fetch location data
+          if (employee.locationId && typeof employee.locationId === 'string') {
+            const location = await Location.findOne({ id: employee.locationId })
+              .select('id name address_line_1 city state pincode')
+              .lean()
+            if (location) {
+              ;(employee as any).location = (location as any).name
+              ;(employee as any).locationData = location
+            }
+          }
+          
           console.log(`[getEmployeeByPhone] ✅ Found employee with phone variation: ${phoneVar.substring(0, 5)}...`)
           break // Found employee, stop searching
         }
       }
     }
     
-    // Also try Mongoose query as fallback
+    // Also try Mongoose query as fallback (without .populate() - it won't work with string IDs)
     if (!employee) {
-      employee = await Employee.findOne({ mobile: encryptedPhone })
-        .populate('companyId', 'id name')
-        .populate('locationId', 'id name address city state pincode')
-        .lean()
+      employee = await Employee.findOne({ mobile: encryptedPhone }).lean()
       
       if (employee) {
+        // Manually fetch company data
+        if (employee.companyId && typeof employee.companyId === 'string') {
+          const company = await Company.findOne({ id: employee.companyId }).select('id name').lean()
+          if (company) {
+            ;(employee as any).companyName = (company as any).name
+          }
+        }
+        
+        // Manually fetch location data
+        if (employee.locationId && typeof employee.locationId === 'string') {
+          const location = await Location.findOne({ id: employee.locationId })
+            .select('id name address_line_1 city state pincode')
+            .lean()
+          if (location) {
+            ;(employee as any).location = (location as any).name
+            ;(employee as any).locationData = location
+          }
+        }
+        
         console.log(`[getEmployeeByPhone] ✅ Found employee with Mongoose query (variation: ${phoneVar.substring(0, 5)}...)`)
         break // Found employee, stop searching
       }
@@ -6975,10 +7328,8 @@ export async function getOrdersByCompany(companyId: string): Promise<any[]> {
   if (!company) return []
 
   // CRITICAL FIX: Order.companyId is stored as STRING ID, not ObjectId
+  // Don't use .populate() since employeeId, companyId, uniformId are string IDs, not ObjectId references
   const orders = await Order.find({ companyId: company.id })
-    .populate('employeeId', 'id firstName lastName email locationId')
-    .populate('companyId', 'id name')
-    .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
     .lean()
 
@@ -6988,27 +7339,215 @@ export async function getOrdersByCompany(companyId: string): Promise<any[]> {
   const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
   const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
 
+  // Fetch all employees for orders in batch for efficiency
+  // Handle case where employeeId might be a string OR an object (from previous populate)
+  const employeeIds = [...new Set(orders.flatMap((o: any) => {
+    const ids: string[] = []
+    // Handle employeeId as string or object
+    if (o.employeeId) {
+      if (typeof o.employeeId === 'string') {
+        ids.push(o.employeeId)
+      } else if (typeof o.employeeId === 'object' && o.employeeId.id) {
+        ids.push(o.employeeId.id)
+      } else if (typeof o.employeeId === 'object' && o.employeeId.employeeId) {
+        ids.push(o.employeeId.employeeId)
+      }
+    }
+    if (o.employeeIdNum && typeof o.employeeIdNum === 'string') {
+      ids.push(o.employeeIdNum)
+    }
+    return ids
+  }).filter(Boolean))]
+  
+  const employees = await Employee.find({ 
+    $or: [
+      { id: { $in: employeeIds } },
+      { employeeId: { $in: employeeIds } }
+    ]
+  }).select('id employeeId firstName lastName email address_line_1 address_line_2 address_line_3 city state pincode companyId').lean()
+  
+  // Import decrypt function for employee name decryption
+  const { decrypt } = require('../utils/encryption')
+  
+  // Create employee lookup map
+  const employeeMap = new Map<string, any>()
+  for (const emp of employees) {
+    const decryptedEmp: any = { ...emp }
+    const sensitiveFields = ['firstName', 'lastName', 'email', 'address_line_1', 'address_line_2', 'address_line_3', 'city', 'state', 'pincode']
+    for (const field of sensitiveFields) {
+      if (decryptedEmp[field] && typeof decryptedEmp[field] === 'string' && decryptedEmp[field].includes(':')) {
+        try { 
+          const decrypted = decrypt(decryptedEmp[field])
+          decryptedEmp[field] = decrypted
+        } catch (err: any) {
+          // Silently ignore decryption errors - keep original value
+        }
+      }
+    }
+    // Map by both id and employeeId for flexible lookup
+    if (decryptedEmp.id) employeeMap.set(decryptedEmp.id, decryptedEmp)
+    if (decryptedEmp.employeeId) employeeMap.set(decryptedEmp.employeeId, decryptedEmp)
+  }
+
+  // Fetch PO numbers for all orders
+  const poMap = new Map<string, any[]>()
+  const orderStringIds = orders.map((o: any) => o.id).filter(Boolean)
+  
+  if (orderStringIds.length > 0) {
+    try {
+      const poOrderMappings = await POOrder.find({ order_id: { $in: orderStringIds } }).lean()
+      
+      // Fetch PurchaseOrder documents for PO details
+      const poIds = poOrderMappings
+        .map((pom: any) => pom.purchase_order_id)
+        .filter(Boolean)
+      
+      if (poIds.length > 0) {
+        const purchaseOrders = await PurchaseOrder.find({ id: { $in: poIds } })
+          .select('id client_po_number po_date')
+          .lean()
+        
+        const poDetailsMap = new Map<string, any>()
+        for (const po of purchaseOrders) {
+          const poId = typeof po.id === 'string' ? po.id : String(po.id || '')
+          if (poId) {
+            poDetailsMap.set(poId, {
+              poNumber: (po as any)?.client_po_number || '',
+              poId: poId,
+              poDate: (po as any)?.po_date || null
+            })
+          }
+        }
+        
+        // Map PO details to orders
+        for (const pom of poOrderMappings) {
+          const orderId = (pom as any).order_id
+          const poId = (pom as any).purchase_order_id
+          const poDetails = poDetailsMap.get(poId)
+          
+          if (orderId && poDetails) {
+            if (!poMap.has(orderId)) {
+              poMap.set(orderId, [])
+            }
+            poMap.get(orderId)!.push(poDetails)
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error(`[getOrdersByCompany] Error fetching PO data:`, err.message)
+    }
+  }
+
   const transformedOrders = orders.map((o: any) => {
     const plain = toPlainObject(o)
+    
+    // Look up employee by employeeId or employeeIdNum
+    // Handle case where employeeId might be a string OR an object (from previous populate)
+    let empIdToSearch: string | null = null
+    if (plain.employeeId) {
+      if (typeof plain.employeeId === 'string') {
+        empIdToSearch = plain.employeeId
+      } else if (typeof plain.employeeId === 'object') {
+        empIdToSearch = plain.employeeId.id || plain.employeeId.employeeId || null
+      }
+    }
+    if (!empIdToSearch && plain.employeeIdNum && typeof plain.employeeIdNum === 'string') {
+      empIdToSearch = plain.employeeIdNum
+    }
+    
+    const employee = empIdToSearch ? employeeMap.get(empIdToSearch) : null
+    // Also try employeeIdNum if primary lookup failed
+    const finalEmployee = employee || (plain.employeeIdNum ? employeeMap.get(plain.employeeIdNum) : null)
+    
+    if (finalEmployee) {
+      // Construct decrypted employee name from fetched employee
+      const decryptedFirstName = finalEmployee.firstName || ''
+      const decryptedLastName = finalEmployee.lastName || ''
+      plain.employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+      
+      // Populate delivery address from employee if not set
+      if (!plain.deliveryAddress || plain.deliveryAddress === 'N/A' || plain.deliveryAddress.trim() === '') {
+        const addressParts = [
+          finalEmployee.address_line_1,
+          finalEmployee.address_line_2,
+          finalEmployee.address_line_3,
+          finalEmployee.city,
+          finalEmployee.state,
+          finalEmployee.pincode
+        ].filter(Boolean)
+        if (addressParts.length > 0) {
+          plain.deliveryAddress = addressParts.join(', ')
+        }
+      }
+      
+      plain.employeeId = toPlainObject(finalEmployee)
+    } else if (plain.employeeId && typeof plain.employeeId === 'object') {
+      // If employeeId was already populated as an object, decrypt it directly
+      const emp = plain.employeeId
+      if (emp.firstName && typeof emp.firstName === 'string' && emp.firstName.includes(':')) {
+        try { emp.firstName = decrypt(emp.firstName) } catch {}
+      }
+      if (emp.lastName && typeof emp.lastName === 'string' && emp.lastName.includes(':')) {
+        try { emp.lastName = decrypt(emp.lastName) } catch {}
+      }
+      plain.employeeName = `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || plain.employeeName || 'Employee'
+    } else if (plain.employeeName && typeof plain.employeeName === 'string') {
+      // Try to decrypt employeeName directly if it's encrypted
+      // employeeName might be stored as "encryptedFirstName encryptedLastName" or just encrypted text
+      if (plain.employeeName.includes(':')) {
+        // Check for "firstName/lastName" format with slash separator
+        // Or space-separated encrypted values
+        let parts: string[] = []
+        if (plain.employeeName.includes(' ')) {
+          parts = plain.employeeName.split(' ')
+        } else if (plain.employeeName.includes('/') && plain.employeeName.indexOf('/') < plain.employeeName.indexOf(':')) {
+          // Format might be "firstName/lastName" where each is encrypted
+          parts = plain.employeeName.split('/')
+        } else {
+          // Single encrypted value
+          parts = [plain.employeeName]
+        }
+        
+        const decryptedParts: string[] = []
+        for (const part of parts) {
+          const trimmedPart = part.trim()
+          if (trimmedPart && trimmedPart.includes(':')) {
+            // Remove leading slash if present (some formats have this)
+            const cleanPart = trimmedPart.startsWith('/') ? trimmedPart.substring(1) : trimmedPart
+            try {
+              const decrypted = decrypt(cleanPart)
+              decryptedParts.push(decrypted)
+            } catch {
+              // Keep original if decryption fails
+              decryptedParts.push(trimmedPart)
+            }
+          } else if (trimmedPart) {
+            decryptedParts.push(trimmedPart)
+          }
+        }
+        plain.employeeName = decryptedParts.join(' ').trim() || 'Employee'
+      }
+    }
+    
     // Add vendorName from vendorMap if missing
     if (!plain.vendorName && plain.vendorId && vendorMap.has(plain.vendorId)) {
       plain.vendorName = vendorMap.get(plain.vendorId)
     }
+    
+    // Add PO and PR numbers
+    const orderId = plain.id
+    const poDetails = orderId ? (poMap.get(orderId) || []) : []
+    plain.poNumbers = poDetails.map((po: any) => po.poNumber).filter(Boolean)
+    plain.poDetails = poDetails
+    plain.prNumber = plain.pr_number || null
+    plain.prDate = plain.pr_date || null
+    
     return plain
   })
   
   // Debug logging
   if (transformedOrders.length > 0) {
     console.log(`getOrdersByCompany(${companyId}): Found ${transformedOrders.length} orders`)
-    const firstOrder = transformedOrders[0]
-    console.log('Sample order:', {
-      id: firstOrder.id,
-      total: firstOrder.total,
-      itemsCount: firstOrder.items?.length,
-      vendorName: firstOrder.vendorName,
-      vendorId: firstOrder.vendorId,
-      items: firstOrder.items?.map((i: any) => ({ price: i.price, quantity: i.quantity, total: i.price * i.quantity }))
-    })
   }
   
   return transformedOrders
@@ -7060,6 +7599,53 @@ export async function getOrdersByLocation(locationId: string): Promise<any[]> {
   const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
   const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
 
+  // Fetch PO numbers for all orders
+  const poMap = new Map<string, any[]>()
+  const orderStringIds = orders.map((o: any) => o.id).filter(Boolean)
+  
+  if (orderStringIds.length > 0) {
+    try {
+      const poOrderMappings = await POOrder.find({ order_id: { $in: orderStringIds } }).lean()
+      
+      const poIds = poOrderMappings
+        .map((pom: any) => pom.purchase_order_id)
+        .filter(Boolean)
+      
+      if (poIds.length > 0) {
+        const purchaseOrders = await PurchaseOrder.find({ id: { $in: poIds } })
+          .select('id client_po_number po_date')
+          .lean()
+        
+        const poDetailsMap = new Map<string, any>()
+        for (const po of purchaseOrders) {
+          const poId = typeof po.id === 'string' ? po.id : String(po.id || '')
+          if (poId) {
+            poDetailsMap.set(poId, {
+              poNumber: (po as any)?.client_po_number || '',
+              poId: poId,
+              poDate: (po as any)?.po_date || null
+            })
+          }
+        }
+        
+        for (const pom of poOrderMappings) {
+          const orderId = (pom as any).order_id
+          const poId = (pom as any).purchase_order_id
+          const poDetails = poDetailsMap.get(poId)
+          
+          if (orderId && poDetails) {
+            if (!poMap.has(orderId)) {
+              poMap.set(orderId, [])
+            }
+            poMap.get(orderId)!.push(poDetails)
+          }
+        }
+      }
+    } catch (err: any) {
+      console.error(`[getOrdersByLocation] Error fetching PO data:`, err.message)
+    }
+  }
+
   // Manually populate employee, company, and uniform info using string IDs
   const ordersWithDetails = await Promise.all(orders.map(async (o: any) => {
     const plain = toPlainObject(o)
@@ -7074,7 +7660,24 @@ export async function getOrdersByLocation(locationId: string): Promise<any[]> {
       }).select('id employeeId firstName lastName email locationId').lean()
       
       if (employee) {
-        plain.employeeId = toPlainObject(employee)
+        const empObj = toPlainObject(employee)
+        // Decrypt firstName and lastName
+        if (empObj.firstName && typeof empObj.firstName === 'string' && empObj.firstName.includes(':')) {
+          try { empObj.firstName = decrypt(empObj.firstName) } catch {}
+        }
+        if (empObj.lastName && typeof empObj.lastName === 'string' && empObj.lastName.includes(':')) {
+          try { empObj.lastName = decrypt(empObj.lastName) } catch {}
+        }
+        // Construct decrypted employee name
+        const decryptedFirstName = empObj.firstName || ''
+        const decryptedLastName = empObj.lastName || ''
+        plain.employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || plain.employeeName || 'Unknown'
+        plain.employeeId = empObj
+      }
+    } else {
+      // If employeeName is stored directly and encrypted, decrypt it
+      if (plain.employeeName && typeof plain.employeeName === 'string' && plain.employeeName.includes(':')) {
+        try { plain.employeeName = decrypt(plain.employeeName) } catch {}
       }
     }
     
@@ -7116,6 +7719,14 @@ export async function getOrdersByLocation(locationId: string): Promise<any[]> {
       plain.vendorName = vendorMap.get(plain.vendorId)
     }
     
+    // Add PO and PR numbers
+    const orderId = plain.id
+    const poDetails = orderId ? (poMap.get(orderId) || []) : []
+    plain.poNumbers = poDetails.map((po: any) => po.poNumber).filter(Boolean)
+    plain.poDetails = poDetails
+    plain.prNumber = plain.pr_number || null
+    plain.prDate = plain.pr_date || null
+    
     return plain
   }))
 
@@ -7148,27 +7759,28 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
   
   // Query orders by numeric vendor ID (6-digit string)
   // CRITICAL: Vendors should ONLY see orders that are:
-  // - Approved by Company Admin (pr_status = 'COMPANY_ADMIN_APPROVED')
-  // - OR have PO created (pr_status = 'PO_CREATED')
+  // - Approved by Company Admin (unified_pr_status = 'COMPANY_ADMIN_APPROVED')
+  // - OR linked to PO (unified_pr_status = 'LINKED_TO_PO')
   // - OR are replacement orders (orderType = 'REPLACEMENT') - these are auto-approved
   // This ensures vendors don't see orders until Company Admin approval and PO assignment
   // Replacement orders are an exception as they're created after company admin approval of return request
+  // NOTE: Now uses ONLY unified_pr_status (Phase 4 - unified-only mode)
   const vendorOrderQuery: any = {
     vendorId: vendorNumericId,
     $or: [
-      { pr_status: { $in: ['COMPANY_ADMIN_APPROVED', 'PO_CREATED'] } },
+      { unified_pr_status: { $in: ['COMPANY_ADMIN_APPROVED', 'LINKED_TO_PO', 'IN_SHIPMENT', 'PARTIALLY_DELIVERED', 'FULLY_DELIVERED'] } },
       { orderType: 'REPLACEMENT' }
     ]
   }
   
-  console.log(`[getOrdersByVendor] Filtering orders: vendorId=${vendorNumericId}, (pr_status in [COMPANY_ADMIN_APPROVED, PO_CREATED] OR orderType = REPLACEMENT)`)
+  console.log(`[getOrdersByVendor] Filtering orders: vendorId=${vendorNumericId}, (unified_pr_status in [COMPANY_ADMIN_APPROVED, LINKED_TO_PO, etc.] OR orderType = REPLACEMENT)`)
   
   // Include PR fields (pr_number, pr_date) for display
   // Include shipping_address fields for destination address display
   // Include orderType and returnRequestId for replacement orders
   // Note: items array includes all fields (dispatchedQuantity, deliveredQuantity) automatically
   let orders = await Order.find(vendorOrderQuery)
-    .select('id employeeId employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status deliveryStatus dispatchStatus shipping_address_line_1 shipping_address_line_2 shipping_address_line_3 shipping_city shipping_state shipping_pincode shipping_country orderType returnRequestId')
+    .select('id employeeId employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date unified_pr_status unified_status deliveryStatus dispatchStatus shipping_address_line_1 shipping_address_line_2 shipping_address_line_3 shipping_city shipping_state shipping_pincode shipping_country orderType returnRequestId')
     .populate('employeeId', 'id firstName lastName email locationId')
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
@@ -7265,6 +7877,25 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
     }
   }
   
+  // Helper function to map unified_status to display-friendly status
+  const mapUnifiedStatusToDisplay = (unifiedStatus: string | undefined, unifiedPrStatus: string | undefined): string => {
+    // First check unified_status (order status)
+    if (unifiedStatus === 'DELIVERED' || unifiedStatus === 'FULFILLED') return 'Delivered'
+    if (unifiedStatus === 'DISPATCHED' || unifiedStatus === 'SHIPPED') return 'Dispatched'
+    if (unifiedStatus === 'PROCESSING') return 'Awaiting fulfilment'
+    if (unifiedStatus === 'PENDING') return 'Awaiting approval'
+    if (unifiedStatus === 'CANCELLED') return 'Cancelled'
+    
+    // Fall back to PR status if order status not set
+    if (unifiedPrStatus === 'FULLY_DELIVERED') return 'Delivered'
+    if (unifiedPrStatus === 'PARTIALLY_DELIVERED') return 'Partially Delivered'
+    if (unifiedPrStatus === 'IN_SHIPMENT') return 'Dispatched'
+    if (unifiedPrStatus === 'LINKED_TO_PO' || unifiedPrStatus === 'COMPANY_ADMIN_APPROVED') return 'Awaiting fulfilment'
+    if (unifiedPrStatus === 'PENDING_COMPANY_ADMIN_APPROVAL' || unifiedPrStatus === 'PENDING_SITE_ADMIN_APPROVAL') return 'Awaiting approval'
+    
+    return unifiedStatus || unifiedPrStatus || 'Unknown'
+  }
+
   // Add PO and PR numbers to orders
   // CRITICAL FIX: Use order.id (string ID) instead of order._id for PO mapping lookup
   orders = orders.map((order: any) => {
@@ -7272,6 +7903,8 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
     const poDetails = orderId ? (poMap.get(orderId) || []) : []
     return {
       ...order,
+      // Map unified status to display-friendly status for frontend compatibility
+      status: mapUnifiedStatusToDisplay(order.unified_status, order.unified_pr_status),
       poNumbers: poDetails.map((po: any) => po.poNumber).filter(Boolean),
       poDetails: poDetails, // Full PO details array
       prNumber: order.pr_number || null, // PR number is already in order
@@ -7279,10 +7912,45 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
     }
   })
   
+  // ========================================================================
+  // STATUS CONSISTENCY FIX
+  // ========================================================================
+  // PROBLEM: The `status` field might not be in sync with `dispatchStatus`.
+  // This happens when shipment updates `dispatchStatus` but not `status`.
+  // FIX: Compute the correct status based on dispatch/delivery status.
+  // ========================================================================
+  orders = orders.map((order: any) => {
+    let correctedStatus = order.status
+    
+    // Check if dispatchStatus or deliveryStatus indicates the order has been shipped/delivered
+    if (order.deliveryStatus === 'DELIVERED' || order.deliveryStatus === 'FULLY_DELIVERED') {
+      correctedStatus = 'Delivered'
+    } else if (order.deliveryStatus === 'PARTIALLY_DELIVERED') {
+      correctedStatus = 'Dispatched' // Still show as dispatched for partial delivery
+    } else if (order.dispatchStatus === 'SHIPPED' || order.dispatchStatus === 'IN_TRANSIT' || order.dispatchStatus === 'DISPATCHED') {
+      correctedStatus = 'Dispatched'
+    }
+    
+    // Only log if status was corrected
+    if (correctedStatus !== order.status) {
+      console.log(`[getOrdersByVendor] ⚠️ STATUS CORRECTION: Order ${order.id} - status was "${order.status}", corrected to "${correctedStatus}" based on dispatchStatus="${order.dispatchStatus}", deliveryStatus="${order.deliveryStatus}"`)
+      
+      // Also update the database to fix the inconsistency (async, non-blocking)
+      Order.updateOne({ id: order.id }, { $set: { status: correctedStatus } })
+        .then(() => console.log(`[getOrdersByVendor] ✅ Fixed status in DB for order ${order.id}`))
+        .catch((err: any) => console.error(`[getOrdersByVendor] ❌ Failed to fix status in DB for order ${order.id}:`, err.message))
+    }
+    
+    return {
+      ...order,
+      status: correctedStatus
+    }
+  })
+  
   // Log order details for debugging
   console.log(`[getOrdersByVendor] 📋 Order Summary:`)
   orders.forEach((order, idx) => {
-    console.log(`[getOrdersByVendor]   ${idx + 1}. Order ID: ${order.id}, Status: ${order.status}, PR: ${order.prNumber || 'N/A'}, PO: ${order.poNumbers?.join(', ') || 'N/A'}, ParentOrderId: ${(order as any).parentOrderId || 'N/A'}, VendorId: ${order.vendorId || 'N/A'}`)
+    console.log(`[getOrdersByVendor]   ${idx + 1}. Order ID: ${order.id}, Status: ${order.status}, PR: ${order.prNumber || 'N/A'}, PO: ${order.poNumbers?.join(', ') || 'N/A'}, ParentOrderId: ${(order as any).parentOrderId || 'N/A'}, VendorId: ${order.vendorId || 'N/A'}, DispatchStatus: ${order.dispatchStatus || 'N/A'}`)
   })
   
   // CRITICAL: Check for split orders (orders with parentOrderId)
@@ -7297,7 +7965,86 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
   console.log(`[getOrdersByVendor] ✅ Returning ${orders.length} order(s)`)
   console.log(`[getOrdersByVendor] ========================================`)
 
-  return orders.map((o: any) => toPlainObject(o))
+  // Decrypt and mask employee names for vendor access (privacy protection)
+  // NOTE: employeeId is a STRING ID, not ObjectId, so populate() doesn't work
+  // We need to manually fetch employee data and decrypt names
+  const { decrypt } = require('../utils/encryption')
+  const { maskEmployeeName } = require('../utils/data-masking')
+  
+  // Collect all unique employee IDs to fetch in batch
+  const employeeIds = [...new Set(orders.map((o: any) => o.employeeId).filter(Boolean))]
+  
+  // Fetch all employees in one query
+  const employees = employeeIds.length > 0 
+    ? await Employee.find({ 
+        $or: [
+          { id: { $in: employeeIds } },
+          { employeeId: { $in: employeeIds } }
+        ]
+      }).select('id employeeId firstName lastName').lean()
+    : []
+  
+  // Create a map of employee ID to decrypted name
+  const employeeNameMap = new Map<string, string>()
+  for (const emp of employees) {
+    const empId = emp.id || emp.employeeId
+    if (!empId) continue
+    
+    let firstName = (emp as any).firstName || ''
+    let lastName = (emp as any).lastName || ''
+    
+    // Decrypt firstName if encrypted (contains colon - iv:data format)
+    if (firstName && typeof firstName === 'string' && firstName.includes(':')) {
+      try {
+        firstName = decrypt(firstName)
+      } catch (e) {
+        console.error(`[getOrdersByVendor] Failed to decrypt firstName for employee ${empId}`)
+        firstName = ''
+      }
+    }
+    
+    // Decrypt lastName if encrypted
+    if (lastName && typeof lastName === 'string' && lastName.includes(':')) {
+      try {
+        lastName = decrypt(lastName)
+      } catch (e) {
+        console.error(`[getOrdersByVendor] Failed to decrypt lastName for employee ${empId}`)
+        lastName = ''
+      }
+    }
+    
+    const fullName = `${firstName} ${lastName}`.trim() || 'N/A'
+    employeeNameMap.set(String(empId), fullName)
+  }
+  
+  return orders.map((o: any) => {
+    const plain = toPlainObject(o)
+    
+    // Get decrypted name from our employee map
+    let decryptedName = 'N/A'
+    const empId = o.employeeId ? String(o.employeeId) : null
+    
+    if (empId && employeeNameMap.has(empId)) {
+      decryptedName = employeeNameMap.get(empId)!
+    } else if (o.employeeName && typeof o.employeeName === 'string') {
+      // Fallback: try to decrypt employeeName stored directly on order
+      if (o.employeeName.includes(':')) {
+        try {
+          decryptedName = decrypt(o.employeeName)
+        } catch (e) {
+          // Keep N/A if decryption fails
+        }
+      } else {
+        // Not encrypted, use as-is
+        decryptedName = o.employeeName
+      }
+    }
+    
+    // Mask the decrypted name for vendor privacy
+    plain.employeeName = maskEmployeeName(decryptedName)
+    
+    return plain
+  })
 }
 
 // ========== VENDOR REPORTS FUNCTIONS ==========
@@ -8106,15 +8853,43 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
   // Get all orders that count towards consumed eligibility (all except cancelled)
   // We'll filter by item-specific cycles below
   // Use string employeeId only (not ObjectId)
+  // CRITICAL: Exclude replacement orders to avoid double-counting eligibility
+  // Replacement orders are created when a return is approved, and eligibility
+  // was already consumed by the original order.
   const employeeStringId = employee.id || employee.employeeId || ''
+  
   const orders = await Order.find({
     employeeId: employeeStringId,
-    status: { $in: ['Awaiting approval', 'Awaiting fulfilment', 'Dispatched', 'Delivered'] }
+    status: { $in: ['Awaiting approval', 'Awaiting fulfilment', 'Dispatched', 'Delivered'] },
+    orderType: { $ne: 'REPLACEMENT' }, // Exclude replacement orders
   })
-    .populate('items.uniformId', 'id category categoryId')
     .lean()
   
-  console.log(`[getConsumedEligibility] Found ${orders.length} orders for employee ${employeeStringId}`)
+  // CRITICAL FIX: items.uniformId is stored as a STRING (e.g., "200001"), not an ObjectId
+  // Therefore .populate() won't work. We need to manually fetch uniform data.
+  // Collect all unique uniformIds across all orders
+  const allUniformIds = new Set<string>()
+  for (const order of orders) {
+    for (const item of order.items || []) {
+      if (item.uniformId && typeof item.uniformId === 'string') {
+        allUniformIds.add(item.uniformId)
+      }
+    }
+  }
+  
+  // Fetch all uniforms by their string ID
+  const uniforms = await Uniform.find({
+    id: { $in: Array.from(allUniformIds) }
+  })
+    .select('id category categoryId')
+    .lean()
+  
+  // Create a map for quick lookup
+  const uniformMap = new Map<string, any>()
+  for (const uniform of uniforms) {
+    uniformMap.set(uniform.id, uniform)
+  }
+  
 
   // Initialize consumed eligibility for all categories
   const consumed: Record<string, number> = {}
@@ -8129,6 +8904,9 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
   const resetDates = employee.eligibilityResetDates || {}
 
   // Sum up quantities by category from orders in their respective current cycles
+  let processedItems = 0
+  let skippedItems = 0
+  
   for (const order of orders) {
     const orderDate = order.orderDate ? new Date(order.orderDate) : null
     if (!orderDate) {
@@ -8136,8 +8914,16 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
     }
 
     for (const item of order.items || []) {
-      const uniform = item.uniformId
-      if (!uniform || typeof uniform !== 'object') {
+      // CRITICAL FIX: item.uniformId is a STRING (e.g., "200001"), not a populated object
+      // Use the uniformMap to look up the actual uniform data
+      const uniformId = typeof item.uniformId === 'string' 
+        ? item.uniformId 
+        : (item.uniformId as any)?.id || String(item.uniformId || '')
+      
+      const uniform = uniformMap.get(uniformId)
+      
+      if (!uniform) {
+        skippedItems++
         continue
       }
 
@@ -8164,6 +8950,7 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
       }
 
       if (!categoryName) {
+        skippedItems++
         continue
       }
 
@@ -8173,6 +8960,7 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
       const resetDate = resetDates[categoryName as keyof typeof resetDates]
       if (resetDate && orderDate < new Date(resetDate)) {
         // Order is before reset date, skip it
+        skippedItems++
         continue
       }
       
@@ -8188,6 +8976,7 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
           consumed[categoryName] = 0
         }
         consumed[categoryName] += quantity
+        processedItems++
         
         // Update legacy consumed for backward compatibility
         if (categoryName === 'shirt') {
@@ -8199,9 +8988,116 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
         } else if (categoryName === 'jacket' || categoryName === 'blazer') {
           legacyConsumed.jacket += quantity
         }
+      } else {
+        skippedItems++
       }
     }
   }
+
+  // ========================================================================
+  // SUBTRACT APPROVED RETURNS FROM CONSUMED ELIGIBILITY
+  // ========================================================================
+  // When a return is approved, the returned quantity should be subtracted
+  // from consumed eligibility, effectively restoring that eligibility.
+  // This applies to returns with status 'APPROVED' or 'COMPLETED'.
+  // ========================================================================
+  const approvedReturns = await ReturnRequest.find({
+    employeeId: employeeStringId,
+    status: { $in: ['APPROVED', 'COMPLETED'] },
+  })
+    .populate('uniformId', 'id category categoryId')
+    .lean()
+
+  for (const returnReq of approvedReturns) {
+    // Get approval date (use approvedAt or updatedAt as fallback)
+    const returnDate = returnReq.approvedAt 
+      ? new Date(returnReq.approvedAt) 
+      : (returnReq.updatedAt ? new Date(returnReq.updatedAt) : null)
+    
+    if (!returnDate) {
+      continue
+    }
+
+    // Get the product to determine category
+    let uniform = returnReq.uniformId
+    if (!uniform || typeof uniform !== 'object') {
+      // Try to fetch the uniform if not populated
+      if (returnReq.uniformId) {
+        const uniformDoc = await Uniform.findOne({ id: String(returnReq.uniformId) })
+          .select('id category categoryId')
+          .lean()
+        if (uniformDoc) {
+          uniform = uniformDoc
+        }
+      }
+    }
+    
+    if (!uniform || typeof uniform !== 'object') {
+      continue
+    }
+
+    // Get category name (handle both old and new formats)
+    let categoryName: string | null = null
+    
+    // Try new format first (categoryId)
+    if ('categoryId' in uniform && uniform.categoryId) {
+      const categoryId = uniform.categoryId.toString()
+      const category = await getCategoryByIdOrName(company.id, categoryId)
+      if (category) {
+        categoryName = category.name.toLowerCase()
+      }
+    }
+    
+    // Fallback to old format (category string)
+    if (!categoryName && 'category' in uniform && uniform.category) {
+      categoryName = normalizeCategoryName(uniform.category as string)
+      // Try to find matching category
+      const category = await getCategoryByIdOrName(company.id, categoryName)
+      if (category) {
+        categoryName = category.name.toLowerCase()
+      }
+    }
+
+    if (!categoryName) {
+      continue
+    }
+
+    const returnedQty = returnReq.requestedQty || 0
+    
+    // Check if return date is after the reset date for this category (if reset date exists)
+    const resetDate = resetDates[categoryName as keyof typeof resetDates]
+    if (resetDate && returnDate < new Date(resetDate)) {
+      // Return is before reset date, skip it
+      continue
+    }
+    
+    // Get cycle duration for this category
+    const cycleDuration = cycleDurations[categoryName] || cycleDurations[normalizeCategoryName(categoryName)] || 6
+    
+    // Check if return date is in current cycle for this specific item type
+    const inCurrentCycle = isDateInCurrentCycle(returnDate, categoryName, dateOfJoining, cycleDuration)
+    
+    if (inCurrentCycle) {
+      // Subtract from consumed eligibility (restore eligibility)
+      if (consumed[categoryName] !== undefined) {
+        consumed[categoryName] = Math.max(0, consumed[categoryName] - returnedQty)
+      }
+      
+      // Update legacy consumed for backward compatibility
+      if (categoryName === 'shirt') {
+        legacyConsumed.shirt = Math.max(0, legacyConsumed.shirt - returnedQty)
+      } else if (categoryName === 'pant' || categoryName === 'trouser') {
+        legacyConsumed.pant = Math.max(0, legacyConsumed.pant - returnedQty)
+      } else if (categoryName === 'shoe') {
+        legacyConsumed.shoe = Math.max(0, legacyConsumed.shoe - returnedQty)
+      } else if (categoryName === 'jacket' || categoryName === 'blazer') {
+        legacyConsumed.jacket = Math.max(0, legacyConsumed.jacket - returnedQty)
+      }
+    }
+  }
+
+  // Log summary for debugging (can be removed in production)
+  console.log(`[getConsumedEligibility] Employee ${employeeStringId}: ${orders.length} orders, consumed=${JSON.stringify(consumed)}`)
 
   return {
     consumed,
@@ -9410,7 +10306,9 @@ export async function createOrder(orderData: {
         // PR (Purchase Requisition) Extension Fields
         pr_number: prNumber,
         pr_date: prDate,
-        pr_status: prStatus,
+        // UNIFIED STATUS FIELDS (primary source of truth - legacy pr_status removed)
+        unified_pr_status: prStatus,
+        unified_status: 'PENDING_APPROVAL',
       })
     } catch (validationError: any) {
       console.error(`[createOrder] ❌ CRITICAL: Order validation failed!`)
@@ -9494,6 +10392,18 @@ export async function createOrder(orderData: {
     createdOrders.push(toPlainObject(populatedOrder))
   }
 
+  // ========================================================================
+  // ELIGIBILITY NOTE: Using Dynamic Calculation System
+  // ========================================================================
+  // Eligibility is NOT decremented here. Instead, consumed eligibility is
+  // calculated dynamically by counting orders in the current cycle.
+  // See: getConsumedEligibility() and validateEmployeeEligibility()
+  //
+  // This order will automatically be counted toward consumed eligibility
+  // when the employee's remaining eligibility is calculated.
+  // ========================================================================
+  console.log(`[createOrder] 📊 Eligibility tracking: Order ${parentOrderId} will be counted in dynamic eligibility calculation`)
+
   // If only one order was created, return it directly
   // Otherwise, return the first order with metadata about split orders
   if (createdOrders.length === 1) {
@@ -9560,7 +10470,7 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     throw new Error(`Order not found: ${orderId}`)
   }
   
-  console.log(`[approveOrder] ✅ Order found: ${order.id}, Status: ${order.status}, PR Status: ${order.pr_status || 'N/A'}, ParentOrderId: ${order.parentOrderId || 'N/A'}`)
+  console.log(`[approveOrder] ✅ Order found: ${order.id}, Status: ${order.status}, PR Status: ${order.unified_pr_status || 'N/A'}, ParentOrderId: ${order.parentOrderId || 'N/A'}`)
   
   // CRITICAL FIX: If this order has a parentOrderId, approve ALL child orders atomically
   // This ensures all vendor orders in a split order are approved together
@@ -9607,18 +10517,20 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     }
   }
   
-  // For PR workflow, check pr_status instead of status
-  const isSiteAdminApproval = order.pr_status === 'PENDING_SITE_ADMIN_APPROVAL'
-  const isCompanyAdminApproval = order.pr_status === 'PENDING_COMPANY_ADMIN_APPROVAL'
+  // For PR workflow, check unified_pr_status (Phase 4 - unified-only, fallback for legacy data)
+  const currentPRStatus = order.unified_pr_status
+  const isSiteAdminApproval = currentPRStatus === 'PENDING_SITE_ADMIN_APPROVAL'
+  const isCompanyAdminApproval = currentPRStatus === 'PENDING_COMPANY_ADMIN_APPROVAL'
   
-  // If pr_status is not set but company has PR workflow enabled, determine the correct status
+  // If unified_pr_status is not set but company has PR workflow enabled, determine the correct status
   let shouldBeSiteAdminApproval = false
-  if (!order.pr_status && company.enable_pr_po_workflow === true && company.enable_site_admin_pr_approval === true) {
+  if (!currentPRStatus && company.enable_pr_po_workflow === true && company.enable_site_admin_pr_approval === true) {
     // Order was created before PR workflow was fully enabled, but company now requires site admin approval
     // Check if order is in a state that would require site admin approval
-    if (order.status === 'Awaiting approval' || !order.status) {
+    const currentStatus = order.unified_status || order.status
+    if (currentStatus === 'Awaiting approval' || currentStatus === 'PENDING_APPROVAL' || !currentStatus) {
       shouldBeSiteAdminApproval = true
-      console.log(`[approveOrder] ⚠️ Order ${orderId} has no pr_status but company requires site admin approval. Treating as site admin approval.`)
+      console.log(`[approveOrder] ⚠️ Order ${orderId} has no unified_pr_status but company requires site admin approval. Treating as site admin approval.`)
     }
   }
   
@@ -9626,13 +10538,13 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
   console.log(`[approveOrder]   isSiteAdminApproval: ${isSiteAdminApproval}`)
   console.log(`[approveOrder]   isCompanyAdminApproval: ${isCompanyAdminApproval}`)
   console.log(`[approveOrder]   shouldBeSiteAdminApproval: ${shouldBeSiteAdminApproval}`)
-  console.log(`[approveOrder]   order.pr_status: ${order.pr_status || 'undefined'}`)
+  console.log(`[approveOrder]   unified_pr_status: ${order.unified_pr_status || 'undefined'}`)
   console.log(`[approveOrder]   company.enable_pr_po_workflow: ${company.enable_pr_po_workflow}`)
   console.log(`[approveOrder]   company.enable_site_admin_pr_approval: ${company.enable_site_admin_pr_approval}`)
   
   // Only check status for legacy orders (no PR workflow)
   if (!isSiteAdminApproval && !isCompanyAdminApproval && !shouldBeSiteAdminApproval && order.status !== 'Awaiting approval') {
-    throw new Error(`Order ${orderId} is not in 'Awaiting approval' status (current: ${order.status}, pr_status: ${order.pr_status || 'N/A'})`)
+    throw new Error(`Order ${orderId} is not in 'Awaiting approval' status (current: ${order.status}, unified_pr_status: ${order.unified_pr_status || 'N/A'})`)
   }
   
   // Find employee by email (handle encryption)
@@ -9770,7 +10682,27 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     console.log(`[approveOrder] Site Admin provided PR number: ${prNumber.trim()}`)
     console.log(`[approveOrder] Site Admin provided PR date: ${prDate.toISOString()}`)
     
-    order.pr_status = 'SITE_ADMIN_APPROVED'
+    // DUAL-WRITE: PR status for Site Admin approval (behind feature flag)
+    if (process.env.DUAL_WRITE_ENABLED === "true") {
+      try {
+        const currentUnified = order.unified_pr_status || 'PENDING_SITE_ADMIN_APPROVAL'
+        const dualWriteResult = safeDualWritePRStatus(
+          orderId,
+          'SITE_ADMIN_APPROVED' as UnifiedPRStatus,
+          null,  // Legacy pr_status removed
+          currentUnified as string,
+          { updatedBy: employee.id || employee.employeeId, source: 'approveOrder', metadata: { approvalType: 'site_admin', prNumber: order.pr_number } }
+        )
+        order.unified_pr_status = dualWriteResult.unifiedUpdate.unified_pr_status as string
+        order.unified_pr_status_updated_at = dualWriteResult.unifiedUpdate.unified_pr_status_updated_at as Date
+        order.unified_pr_status_updated_by = dualWriteResult.unifiedUpdate.unified_pr_status_updated_by as string
+        console.log(`[approveOrder] 🔄 DUAL-WRITE: unified_pr_status → SITE_ADMIN_APPROVED`)
+      } catch (dualWriteError: any) {
+        console.error(`[approveOrder] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+      }
+    }
+    // Update unified field (legacy pr_status removed)
+    order.unified_pr_status = 'SITE_ADMIN_APPROVED'
     // CRITICAL FIX: Use string ID, not ObjectId
     order.site_admin_approved_by = employee.id || employee.employeeId
     order.site_admin_approved_at = new Date()
@@ -9778,10 +10710,46 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     // Check if company admin approval is required
     if (company.require_company_admin_po_approval === true) {
       // Move to Company Admin approval
-      order.pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
+      // DUAL-WRITE: Transition to pending company admin (behind feature flag)
+      if (process.env.DUAL_WRITE_ENABLED === "true") {
+        try {
+          const dualWriteResult = safeDualWritePRStatus(
+            orderId,
+            'PENDING_COMPANY_ADMIN_APPROVAL' as UnifiedPRStatus,
+            'SITE_ADMIN_APPROVED',
+            order.unified_pr_status,
+            { updatedBy: employee.id || employee.employeeId, source: 'approveOrder', metadata: { transition: 'site_to_company_admin' } }
+          )
+          order.unified_pr_status = dualWriteResult.unifiedUpdate.unified_pr_status as string
+          order.unified_pr_status_updated_at = dualWriteResult.unifiedUpdate.unified_pr_status_updated_at as Date
+          console.log(`[approveOrder] 🔄 DUAL-WRITE: pr_status → PENDING_COMPANY_ADMIN_APPROVAL`)
+        } catch (dualWriteError: any) {
+          console.error(`[approveOrder] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+        }
+      }
+      // Update unified field (legacy pr_status removed)
+      order.unified_pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
       console.log(`[approveOrder] Site Admin approved. Moving to Company Admin approval.`)
     } else {
       // No company admin approval needed, move to fulfilment
+      // DUAL-WRITE: Order status to fulfilment (behind feature flag)
+      if (process.env.DUAL_WRITE_ENABLED === "true") {
+        try {
+          const dualWriteResult = safeDualWriteOrderStatus(
+            orderId,
+            'IN_FULFILMENT' as UnifiedOrderStatus,
+            order.status,
+            order.unified_status,
+            { updatedBy: employee.id || employee.employeeId, source: 'approveOrder', metadata: { approvalType: 'site_admin', noCompanyAdminRequired: true } }
+          )
+          order.unified_status = dualWriteResult.unifiedUpdate.unified_status as string
+          order.unified_status_updated_at = dualWriteResult.unifiedUpdate.unified_status_updated_at as Date
+          console.log(`[approveOrder] 🔄 DUAL-WRITE: status → Awaiting fulfilment (unified: IN_FULFILMENT)`)
+        } catch (dualWriteError: any) {
+          console.error(`[approveOrder] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+        }
+      }
+      // LEGACY: Always update legacy field
       order.status = 'Awaiting fulfilment'
       console.log(`[approveOrder] Site Admin approved. No Company Admin approval required. Moving to fulfilment.`)
     }
@@ -9794,11 +10762,50 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
       throw new Error(`User ${adminEmail} does not have permission to approve orders as Company Admin`)
     }
     
-    // Update PR status to COMPANY_ADMIN_APPROVED
-    order.pr_status = 'COMPANY_ADMIN_APPROVED'
+    // DUAL-WRITE: PR status for Company Admin approval (behind feature flag)
+    if (process.env.DUAL_WRITE_ENABLED === "true") {
+      try {
+        const currentUnified = order.unified_pr_status || 'PENDING_COMPANY_ADMIN_APPROVAL'
+        const dualWriteResult = safeDualWritePRStatus(
+          orderId,
+          'COMPANY_ADMIN_APPROVED' as UnifiedPRStatus,
+          null,  // Legacy pr_status removed
+          currentUnified as string,
+          { updatedBy: employee.id || employee.employeeId, source: 'approveOrder', metadata: { approvalType: 'company_admin' } }
+        )
+        order.unified_pr_status = dualWriteResult.unifiedUpdate.unified_pr_status as string
+        order.unified_pr_status_updated_at = dualWriteResult.unifiedUpdate.unified_pr_status_updated_at as Date
+        order.unified_pr_status_updated_by = dualWriteResult.unifiedUpdate.unified_pr_status_updated_by as string
+        console.log(`[approveOrder] 🔄 DUAL-WRITE: pr_status → COMPANY_ADMIN_APPROVED (unified: ${order.unified_pr_status})`)
+      } catch (dualWriteError: any) {
+        console.error(`[approveOrder] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+      }
+    }
+    // Update unified field (legacy pr_status removed)
+    order.unified_pr_status = 'COMPANY_ADMIN_APPROVED'
+    order.unified_status = 'IN_FULFILMENT'
     // CRITICAL FIX: Use string ID, not ObjectId
     order.company_admin_approved_by = employee.id || employee.employeeId
     order.company_admin_approved_at = new Date()
+    
+    // DUAL-WRITE: Order status to fulfilment (behind feature flag)
+    if (process.env.DUAL_WRITE_ENABLED === "true") {
+      try {
+        const dualWriteResult = safeDualWriteOrderStatus(
+          orderId,
+          'IN_FULFILMENT' as UnifiedOrderStatus,
+          order.status,
+          order.unified_status,
+          { updatedBy: employee.id || employee.employeeId, source: 'approveOrder', metadata: { approvalType: 'company_admin' } }
+        )
+        order.unified_status = dualWriteResult.unifiedUpdate.unified_status as string
+        order.unified_status_updated_at = dualWriteResult.unifiedUpdate.unified_status_updated_at as Date
+        console.log(`[approveOrder] 🔄 DUAL-WRITE: status → Awaiting fulfilment (unified: IN_FULFILMENT)`)
+      } catch (dualWriteError: any) {
+        console.error(`[approveOrder] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+      }
+    }
+    // LEGACY: Always update legacy field
     order.status = 'Awaiting fulfilment'
     console.log(`[approveOrder] Company Admin approved. Moving to fulfilment.`)
   } else {
@@ -9891,7 +10898,7 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     console.log(`[approveOrderByParentId] Child Order ${idx + 1}:`, {
       orderId: order.id,
       status: order.status,
-      pr_status: order.pr_status || 'N/A',
+      unified_pr_status: order.unified_pr_status || 'N/A',
       vendorId: order.vendorId?.toString() || 'N/A',
       vendorName: (order as any).vendorName || 'N/A',
       itemCount: order.items?.length || 0,
@@ -9966,13 +10973,13 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
   const isWorkflowEnabled = company.enable_pr_po_workflow === true || company.enable_pr_po_workflow === 'true'
   
   if (isWorkflowEnabled) {
-    // PR workflow enabled - check pr_status
-    const pendingSiteAdminOrders = childOrders.filter(o => o.pr_status === 'PENDING_SITE_ADMIN_APPROVAL')
-    const pendingCompanyAdminOrders = childOrders.filter(o => o.pr_status === 'PENDING_COMPANY_ADMIN_APPROVAL')
+    // PR workflow enabled - check unified_pr_status (Phase 4 - unified-only)
+    const pendingSiteAdminOrders = childOrders.filter(o => o.unified_pr_status === 'PENDING_SITE_ADMIN_APPROVAL')
+    const pendingCompanyAdminOrders = childOrders.filter(o => o.unified_pr_status === 'PENDING_COMPANY_ADMIN_APPROVAL')
     const approvedOrders = childOrders.filter(o => 
-      o.pr_status === 'SITE_ADMIN_APPROVED' || 
-      o.pr_status === 'COMPANY_ADMIN_APPROVED' ||
-      o.pr_status === 'PO_CREATED'
+      o.unified_pr_status === 'SITE_ADMIN_APPROVED' || 
+      o.unified_pr_status === 'COMPANY_ADMIN_APPROVED' ||
+      o.unified_pr_status === 'LINKED_TO_PO'
     )
     
     console.log(`[approveOrderByParentId] PR Workflow Status breakdown:`, {
@@ -9980,42 +10987,42 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
       pendingCompanyAdmin: pendingCompanyAdminOrders.length,
       alreadyApproved: approvedOrders.length,
       total: childOrders.length,
-      allPRStatuses: childOrders.map(o => o.pr_status || 'N/A')
+      allUnifiedPRStatuses: childOrders.map(o => o.unified_pr_status || 'N/A')
     })
     
     // If no orders are pending approval, check if they're already processed
     if (pendingSiteAdminOrders.length === 0 && pendingCompanyAdminOrders.length === 0) {
       if (approvedOrders.length === 0) {
-        // Orders might have invalid or missing pr_status
+        // Orders might have invalid or missing unified_pr_status
         console.error(`[approveOrderByParentId] ❌ No orders with parentOrderId ${parentOrderId} are in pending approval status`)
-        console.error(`[approveOrderByParentId] All orders pr_status:`, childOrders.map(o => ({ id: o.id, pr_status: o.pr_status || 'N/A', status: o.status })))
-        throw new Error(`No orders with parentOrderId ${parentOrderId} are in pending approval status. All orders are already processed or have invalid pr_status.`)
+        console.error(`[approveOrderByParentId] All orders unified_pr_status:`, childOrders.map(o => ({ id: o.id, unified_pr_status: o.unified_pr_status || 'N/A', status: o.status })))
+        throw new Error(`No orders with parentOrderId ${parentOrderId} are in pending approval status. All orders are already processed or have invalid unified_pr_status.`)
       } else {
-        console.log(`[approveOrderByParentId] ⚠️ All orders are already approved (pr_status: ${approvedOrders[0]?.pr_status}), but proceeding to ensure synchronization`)
+        console.log(`[approveOrderByParentId] ⚠️ All orders are already approved (unified_pr_status: ${approvedOrders[0]?.unified_pr_status}), but proceeding to ensure synchronization`)
       }
     }
   } else {
-    // Legacy workflow - check status field
-    const pendingOrders = childOrders.filter(o => o.status === 'Awaiting approval')
-    const fulfilmentOrders = childOrders.filter(o => o.status === 'Awaiting fulfilment')
+    // Legacy workflow - check unified_status field
+    const pendingOrders = childOrders.filter(o => o.unified_status === 'PENDING_APPROVAL')
+    const fulfilmentOrders = childOrders.filter(o => o.unified_status === 'IN_FULFILMENT')
     
     console.log(`[approveOrderByParentId] Legacy Status breakdown:`, {
       awaitingApproval: pendingOrders.length,
       awaitingFulfilment: fulfilmentOrders.length,
       total: childOrders.length,
-      allStatuses: childOrders.map(o => o.status)
+      allUnifiedStatuses: childOrders.map(o => o.unified_status)
     })
     
     if (pendingOrders.length === 0 && fulfilmentOrders.length === 0) {
-      console.error(`[approveOrderByParentId] ❌ No orders with parentOrderId ${parentOrderId} are in 'Awaiting approval' or 'Awaiting fulfilment' status`)
-      console.error(`[approveOrderByParentId] All orders are in status:`, childOrders.map(o => o.status))
-      throw new Error(`No orders with parentOrderId ${parentOrderId} are in 'Awaiting approval' or 'Awaiting fulfilment' status. All orders are already processed.`)
+      console.error(`[approveOrderByParentId] ❌ No orders with parentOrderId ${parentOrderId} are in PENDING_APPROVAL or IN_FULFILMENT unified_status`)
+      console.error(`[approveOrderByParentId] All orders are in unified_status:`, childOrders.map(o => o.unified_status))
+      throw new Error(`No orders with parentOrderId ${parentOrderId} are in PENDING or PROCESSING unified_status. All orders are already processed.`)
     }
   }
   
   // Check if this is a site admin approval (PR workflow)
-  // Check the first order's PR status to determine the approval type
-  const firstOrderPRStatus = firstOrder.pr_status
+  // UNIFIED-ONLY: Use unified_pr_status as the single source of truth
+  const firstOrderPRStatus = firstOrder.unified_pr_status
   const isSiteAdminApproval = firstOrderPRStatus === 'PENDING_SITE_ADMIN_APPROVAL'
   const isCompanyAdminApproval = firstOrderPRStatus === 'PENDING_COMPANY_ADMIN_APPROVAL'
   
@@ -10100,7 +11107,7 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     let updatedCount = 0
     for (const childOrder of childOrders) {
       const previousStatus = childOrder.status
-      const previousPRStatus = childOrder.pr_status
+      const previousPRStatus = childOrder.unified_pr_status
       
       // PR number and date MUST be provided by Site Admin (required for site admin approval)
       if (!prNumber || !prNumber.trim()) {
@@ -10116,8 +11123,27 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
       console.log(`[approveOrderByParentId] Site Admin provided PR number: ${prNumber.trim()} for order ${childOrder.id}`)
       console.log(`[approveOrderByParentId] Site Admin provided PR date: ${prDate.toISOString()} for order ${childOrder.id}`)
       
-      // Update PR status to SITE_ADMIN_APPROVED
-      childOrder.pr_status = 'SITE_ADMIN_APPROVED'
+      // DUAL-WRITE: PR status for Site Admin approval (behind feature flag)
+      if (process.env.DUAL_WRITE_ENABLED === "true") {
+        try {
+          const currentUnified = childOrder.unified_pr_status || getUnifiedStatusFromLegacy('PR', previousPRStatus || 'PENDING_SITE_ADMIN_APPROVAL')
+          const dualWriteResult = safeDualWritePRStatus(
+            childOrder.id,
+            'SITE_ADMIN_APPROVED' as UnifiedPRStatus,
+            previousPRStatus,
+            currentUnified as string,
+            { updatedBy: employee.id || employee.employeeId, source: 'approveOrderByParentId', metadata: { bulk: true, parentOrderId } }
+          )
+          childOrder.unified_pr_status = dualWriteResult.unifiedUpdate.unified_pr_status as string
+          childOrder.unified_pr_status_updated_at = dualWriteResult.unifiedUpdate.unified_pr_status_updated_at as Date
+          childOrder.unified_pr_status_updated_by = dualWriteResult.unifiedUpdate.unified_pr_status_updated_by as string
+          console.log(`[approveOrderByParentId] 🔄 DUAL-WRITE: order ${childOrder.id} pr_status → SITE_ADMIN_APPROVED`)
+        } catch (dualWriteError: any) {
+          console.error(`[approveOrderByParentId] ❌ DUAL-WRITE error for ${childOrder.id}: ${dualWriteError.message}`)
+        }
+      }
+      // Update unified field (legacy pr_status removed)
+      childOrder.unified_pr_status = 'SITE_ADMIN_APPROVED'
       // CRITICAL FIX: Use string ID, not ObjectId
       childOrder.site_admin_approved_by = employee.id || employee.employeeId
       childOrder.site_admin_approved_at = new Date()
@@ -10125,17 +11151,51 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
       // Check if company admin approval is required
       if (company.require_company_admin_po_approval === true) {
         // Move to Company Admin approval
-        childOrder.pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
+        // DUAL-WRITE: Transition to pending company admin (behind feature flag)
+        if (process.env.DUAL_WRITE_ENABLED === "true") {
+          try {
+            const dualWriteResult = safeDualWritePRStatus(
+              childOrder.id,
+              'PENDING_COMPANY_ADMIN_APPROVAL' as UnifiedPRStatus,
+              'SITE_ADMIN_APPROVED',
+              childOrder.unified_pr_status,
+              { updatedBy: employee.id || employee.employeeId, source: 'approveOrderByParentId', metadata: { bulk: true, transition: 'to_company_admin' } }
+            )
+            childOrder.unified_pr_status = dualWriteResult.unifiedUpdate.unified_pr_status as string
+            childOrder.unified_pr_status_updated_at = dualWriteResult.unifiedUpdate.unified_pr_status_updated_at as Date
+          } catch (dualWriteError: any) {
+            console.error(`[approveOrderByParentId] ❌ DUAL-WRITE error for ${childOrder.id}: ${dualWriteError.message}`)
+          }
+        }
+        // Update unified field (legacy pr_status removed)
+        childOrder.unified_pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
         console.log(`[approveOrderByParentId] Site Admin approved order ${childOrder.id}. Moving to Company Admin approval.`)
       } else {
         // No company admin approval needed, move to fulfilment
+        // DUAL-WRITE: Order status to fulfilment (behind feature flag)
+        if (process.env.DUAL_WRITE_ENABLED === "true") {
+          try {
+            const dualWriteResult = safeDualWriteOrderStatus(
+              childOrder.id,
+              'IN_FULFILMENT' as UnifiedOrderStatus,
+              previousStatus,
+              childOrder.unified_status,
+              { updatedBy: employee.id || employee.employeeId, source: 'approveOrderByParentId', metadata: { bulk: true, noCompanyAdminRequired: true } }
+            )
+            childOrder.unified_status = dualWriteResult.unifiedUpdate.unified_status as string
+            childOrder.unified_status_updated_at = dualWriteResult.unifiedUpdate.unified_status_updated_at as Date
+          } catch (dualWriteError: any) {
+            console.error(`[approveOrderByParentId] ❌ DUAL-WRITE error for ${childOrder.id}: ${dualWriteError.message}`)
+          }
+        }
+        // LEGACY: Always update legacy field
         childOrder.status = 'Awaiting fulfilment'
         console.log(`[approveOrderByParentId] Site Admin approved order ${childOrder.id}. No Company Admin approval required. Moving to fulfilment.`)
       }
       
       await childOrder.save()
       updatedCount++
-      console.log(`[approveOrderByParentId] ✅ Updated order ${childOrder.id}: status=${previousStatus}→${childOrder.status}, pr_status=${previousPRStatus}→${childOrder.pr_status}`)
+      console.log(`[approveOrderByParentId] ✅ Updated order ${childOrder.id}: status=${previousStatus}→${childOrder.status}, unified_pr_status=${previousPRStatus}→${childOrder.unified_pr_status}`)
     }
     
     console.log(`[approveOrderByParentId] ✅ Updated ${updatedCount} of ${childOrders.length} child order(s) with Site Admin approval`)
@@ -10183,12 +11243,51 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     let updatedCount = 0
     for (const childOrder of childOrders) {
       const previousStatus = childOrder.status
+      const previousPRStatus = childOrder.unified_pr_status
       
-      // Update PR status to COMPANY_ADMIN_APPROVED
-      childOrder.pr_status = 'COMPANY_ADMIN_APPROVED'
+      // DUAL-WRITE: PR status for Company Admin approval (behind feature flag)
+      if (process.env.DUAL_WRITE_ENABLED === "true") {
+        try {
+          const currentUnified = childOrder.unified_pr_status || getUnifiedStatusFromLegacy('PR', previousPRStatus || 'PENDING_COMPANY_ADMIN_APPROVAL')
+          const dualWriteResult = safeDualWritePRStatus(
+            childOrder.id,
+            'COMPANY_ADMIN_APPROVED' as UnifiedPRStatus,
+            previousPRStatus,
+            currentUnified as string,
+            { updatedBy: employee.id || employee.employeeId, source: 'approveOrderByParentId', metadata: { bulk: true, approvalType: 'company_admin' } }
+          )
+          childOrder.unified_pr_status = dualWriteResult.unifiedUpdate.unified_pr_status as string
+          childOrder.unified_pr_status_updated_at = dualWriteResult.unifiedUpdate.unified_pr_status_updated_at as Date
+          childOrder.unified_pr_status_updated_by = dualWriteResult.unifiedUpdate.unified_pr_status_updated_by as string
+          console.log(`[approveOrderByParentId] 🔄 DUAL-WRITE: order ${childOrder.id} pr_status → COMPANY_ADMIN_APPROVED`)
+        } catch (dualWriteError: any) {
+          console.error(`[approveOrderByParentId] ❌ DUAL-WRITE error for ${childOrder.id}: ${dualWriteError.message}`)
+        }
+      }
+      // Update unified field (legacy pr_status removed)
+      childOrder.unified_pr_status = 'COMPANY_ADMIN_APPROVED'
+      childOrder.unified_status = 'IN_FULFILMENT'
       // CRITICAL FIX: Use string ID, not ObjectId
       childOrder.company_admin_approved_by = employee.id || employee.employeeId
       childOrder.company_admin_approved_at = new Date()
+      
+      // DUAL-WRITE: Order status to fulfilment (behind feature flag)
+      if (process.env.DUAL_WRITE_ENABLED === "true") {
+        try {
+          const dualWriteResult = safeDualWriteOrderStatus(
+            childOrder.id,
+            'IN_FULFILMENT' as UnifiedOrderStatus,
+            previousStatus,
+            childOrder.unified_status,
+            { updatedBy: employee.id || employee.employeeId, source: 'approveOrderByParentId', metadata: { bulk: true, approvalType: 'company_admin' } }
+          )
+          childOrder.unified_status = dualWriteResult.unifiedUpdate.unified_status as string
+          childOrder.unified_status_updated_at = dualWriteResult.unifiedUpdate.unified_status_updated_at as Date
+        } catch (dualWriteError: any) {
+          console.error(`[approveOrderByParentId] ❌ DUAL-WRITE error for ${childOrder.id}: ${dualWriteError.message}`)
+        }
+      }
+      // LEGACY: Always update legacy field
       childOrder.status = 'Awaiting fulfilment'
       
       await childOrder.save()
@@ -10398,8 +11497,8 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
             continue
           }
           
-          // Check if this is a site admin approval (PR workflow)
-          const firstChildOrderPRStatus = childOrders[0].pr_status
+          // Check if this is a site admin approval (PR workflow) - using unified_pr_status
+          const firstChildOrderPRStatus = childOrders[0].unified_pr_status
           const isSiteAdminApproval = firstChildOrderPRStatus === 'PENDING_SITE_ADMIN_APPROVAL'
           const isCompanyAdminApproval = firstChildOrderPRStatus === 'PENDING_COMPANY_ADMIN_APPROVAL'
           
@@ -10470,15 +11569,16 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
               // Set PR number and date
               childOrder.pr_number = prData.prNumber.trim()
               childOrder.pr_date = prData.prDate
-              childOrder.pr_status = 'SITE_ADMIN_APPROVED'
+              childOrder.unified_pr_status = 'SITE_ADMIN_APPROVED'
               // CRITICAL FIX: Use string ID, not ObjectId
               childOrder.site_admin_approved_by = employee.id || employee.employeeId
               childOrder.site_admin_approved_at = new Date()
               
               if (company.require_company_admin_po_approval === true) {
-                childOrder.pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
+                childOrder.unified_pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
               } else {
                 childOrder.status = 'Awaiting fulfilment'
+                childOrder.unified_status = 'IN_FULFILMENT'
               }
               
               await childOrder.save()
@@ -10496,7 +11596,8 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
             
             // Update all child orders with company admin approval
             for (const childOrder of childOrders) {
-              childOrder.pr_status = 'COMPANY_ADMIN_APPROVED'
+              childOrder.unified_pr_status = 'COMPANY_ADMIN_APPROVED'
+              childOrder.unified_status = 'IN_FULFILMENT'
               // CRITICAL FIX: Use string ID, not ObjectId
               childOrder.company_admin_approved_by = employee.id || employee.employeeId
               childOrder.company_admin_approved_at = new Date()
@@ -10579,8 +11680,8 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
           continue
         }
         
-        // Check if this is a site admin approval (PR workflow)
-        const firstChildOrderPRStatus = childOrders[0].pr_status
+        // Check if this is a site admin approval (PR workflow) - using unified_pr_status
+        const firstChildOrderPRStatus = childOrders[0].unified_pr_status
         const isSiteAdminApproval = firstChildOrderPRStatus === 'PENDING_SITE_ADMIN_APPROVAL'
         const isCompanyAdminApproval = firstChildOrderPRStatus === 'PENDING_COMPANY_ADMIN_APPROVAL'
         
@@ -10641,15 +11742,16 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
           
           // Site admin can approve - update all child orders
           for (const childOrder of childOrders) {
-            childOrder.pr_status = 'SITE_ADMIN_APPROVED'
+            childOrder.unified_pr_status = 'SITE_ADMIN_APPROVED'
             // CRITICAL FIX: Use string ID, not ObjectId
             childOrder.site_admin_approved_by = employee.id || employee.employeeId
             childOrder.site_admin_approved_at = new Date()
             
             if (company.require_company_admin_po_approval === true) {
-              childOrder.pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
+              childOrder.unified_pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
             } else {
               childOrder.status = 'Awaiting fulfilment'
+              childOrder.unified_status = 'IN_FULFILMENT'
             }
             
             await childOrder.save()
@@ -10666,7 +11768,8 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
           
           // Update all child orders with company admin approval
           for (const childOrder of childOrders) {
-            childOrder.pr_status = 'COMPANY_ADMIN_APPROVED'
+            childOrder.unified_pr_status = 'COMPANY_ADMIN_APPROVED'
+            childOrder.unified_status = 'IN_FULFILMENT'
             // CRITICAL FIX: Use string ID, not ObjectId
             childOrder.company_admin_approved_by = employee.id || employee.employeeId
             childOrder.company_admin_approved_at = new Date()
@@ -10695,9 +11798,9 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
         }
       } else {
         // Standalone order
-        // For PR workflow, check pr_status instead of status
-        const orderIsSiteAdminApproval = order.pr_status === 'PENDING_SITE_ADMIN_APPROVAL'
-        const orderIsCompanyAdminApproval = order.pr_status === 'PENDING_COMPANY_ADMIN_APPROVAL'
+        // For PR workflow, check unified_pr_status (legacy pr_status removed)
+        const orderIsSiteAdminApproval = order.unified_pr_status === 'PENDING_SITE_ADMIN_APPROVAL'
+        const orderIsCompanyAdminApproval = order.unified_pr_status === 'PENDING_COMPANY_ADMIN_APPROVAL'
         
         // Only check status for legacy orders (no PR workflow)
         if (!orderIsSiteAdminApproval && !orderIsCompanyAdminApproval && order.status !== 'Awaiting approval') {
@@ -10830,14 +11933,14 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
         // Site admin can approve - update PR status with PR data
         order.pr_number = prData.prNumber.trim()
         order.pr_date = prData.prDate
-        order.pr_status = 'SITE_ADMIN_APPROVED'
+        order.unified_pr_status = 'SITE_ADMIN_APPROVED'
         // CRITICAL FIX: Use string ID, not ObjectId
         order.site_admin_approved_by = approvingEmployee.id || approvingEmployee.employeeId
         order.site_admin_approved_at = new Date()
         
         // Check if company admin approval is required
         if (company.require_company_admin_po_approval === true) {
-          order.pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
+          order.unified_pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
         } else {
           order.status = 'Awaiting fulfilment'
         }
@@ -10852,8 +11955,8 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
         continue
       }
       
-      // Update order status
-        order.pr_status = 'COMPANY_ADMIN_APPROVED'
+      // Update order status (unified only - legacy pr_status removed)
+        order.unified_pr_status = 'COMPANY_ADMIN_APPROVED'
         // CRITICAL FIX: Use string ID, not ObjectId
         order.company_admin_approved_by = employee.id || employee.employeeId
         order.company_admin_approved_at = new Date()
@@ -11030,9 +12133,80 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
     }
     
     console.log(`[updateOrderStatus] ✅ Dispatched status transition validated: ${order.status} -> Dispatched`)
+    
+    // ========================================================================
+    // INVENTORY VALIDATION (Pre-Dispatch Check)
+    // ========================================================================
+    // BUSINESS RULE: Before marking an order as Dispatched, validate that
+    // vendor has sufficient inventory for all items. This prevents overselling
+    // and ensures data integrity.
+    // ========================================================================
+    if (vendorIdValue) {
+      console.log(`[updateOrderStatus] 📦 Validating inventory before dispatch...`)
+      
+      // Prepare order items for validation
+      const itemsForValidation = order.items.map((item: any) => ({
+        uniformId: typeof item.uniformId === 'object' 
+          ? (item.uniformId.id || String(item.uniformId._id || item.uniformId))
+          : String(item.uniformId),
+        size: item.size,
+        quantity: item.quantity,
+        productName: typeof item.uniformId === 'object' ? (item.uniformId.name || item.uniformId.id) : undefined,
+      }))
+      
+      const inventoryValidation = await validateInventoryForDispatch(vendorIdValue, itemsForValidation)
+      
+      if (!inventoryValidation.valid) {
+        console.error(`[updateOrderStatus] ❌ INVENTORY VALIDATION FAILED:`)
+        inventoryValidation.errors.forEach(err => console.error(`  - ${err}`))
+        
+        // Provide detailed error message
+        const errorDetails = inventoryValidation.details
+          .filter(d => !d.sufficient || !d.inventoryExists)
+          .map(d => {
+            if (!d.inventoryExists) {
+              return `Product ${d.productId}: No inventory record exists`
+            }
+            return `Product ${d.productId} size ${d.size}: need ${d.requestedQty}, have ${d.availableStock}`
+          })
+          .join('; ')
+        
+        throw new Error(`Cannot dispatch order: Insufficient inventory. ${errorDetails}. Please ensure inventory is added before dispatching.`)
+      }
+      
+      console.log(`[updateOrderStatus] ✅ Inventory validation passed - sufficient stock for all items`)
+    } else {
+      console.warn(`[updateOrderStatus] ⚠️ No vendorId - skipping inventory validation`)
+    }
   }
   
   const previousStatus = order.status
+  
+  // DUAL-WRITE: Order status update (behind feature flag)
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    try {
+      const unifiedStatus = getUnifiedStatusFromLegacy('Order', status) as UnifiedOrderStatus
+      const currentUnified = order.unified_status || getUnifiedStatusFromLegacy('Order', previousStatus || 'Awaiting approval')
+      const dualWriteResult = safeDualWriteOrderStatus(
+        orderId,
+        unifiedStatus,
+        previousStatus,
+        currentUnified as string,
+        { updatedBy: vendorId || 'system', source: 'updateOrderStatus', metadata: { vendorId } }
+      )
+      // Apply unified field updates
+      order.unified_status = dualWriteResult.unifiedUpdate.unified_status as string
+      order.unified_status_updated_at = dualWriteResult.unifiedUpdate.unified_status_updated_at as Date
+      order.unified_status_updated_by = dualWriteResult.unifiedUpdate.unified_status_updated_by as string
+      console.log(`[updateOrderStatus] 🔄 DUAL-WRITE: ${previousStatus} → ${status} (unified: ${order.unified_status})`)
+      if (!dualWriteResult.validation.valid) {
+        console.warn(`[updateOrderStatus] ⚠️ DUAL-WRITE validation warning: ${dualWriteResult.validation.reason}`)
+      }
+    } catch (dualWriteError: any) {
+      console.error(`[updateOrderStatus] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+    }
+  }
+  // LEGACY: Always update the legacy status field
   order.status = status
   
   // OPTION 1 ENHANCEMENT: Automatically set all required shipment/delivery fields
@@ -11041,7 +12215,12 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
   if (status === 'Dispatched') {
     console.log(`[updateOrderStatus] 📦 Setting shipment fields for Dispatched status...`)
     
-    // Set dispatch status
+    // DUAL-WRITE: Dispatch status (behind feature flag)
+    if (process.env.DUAL_WRITE_ENABLED === "true") {
+      // Dispatch status is tracked as part of unified order status
+      console.log(`[updateOrderStatus] 🔄 DUAL-WRITE: dispatchStatus → SHIPPED`)
+    }
+    // LEGACY: Set dispatch status
     order.dispatchStatus = 'SHIPPED'
     
     // Set dispatched date if not already set
@@ -11078,7 +12257,12 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
   if (status === 'Delivered') {
     console.log(`[updateOrderStatus] 📦 Setting delivery fields for Delivered status...`)
     
-    // Set delivery status
+    // DUAL-WRITE: Delivery status (behind feature flag)
+    if (process.env.DUAL_WRITE_ENABLED === "true") {
+      // Delivery status is tracked as part of unified order status
+      console.log(`[updateOrderStatus] 🔄 DUAL-WRITE: deliveryStatus → DELIVERED`)
+    }
+    // LEGACY: Set delivery status
     order.deliveryStatus = 'DELIVERED'
     
     // Set delivered date if not already set
@@ -11296,482 +12480,205 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
     }
   }
   
-  // If status is being changed to "Dispatched" or "Delivered", decrement inventory
-  // IMPORTANT: We need to check if inventory was already decremented by looking at order history
-  // For now, we'll decrement when:
-  // 1. Order goes from "Awaiting fulfilment" -> "Dispatched" (normal flow)
-  // 2. Order goes from "Awaiting fulfilment" -> "Delivered" (direct delivery, skipping dispatch)
-  // 3. Order goes from "Dispatched" -> "Delivered" (only if inventory wasn't decremented during Dispatched)
-  // 
-  // NOTE: We check previousStatus to avoid double-decrementing, but if the order was marked as "Dispatched"
-  // without inventory being updated (due to missing vendorId or other error), we should still update when marking as "Delivered"
-  const shouldUpdateInventory = (status === 'Dispatched' || status === 'Delivered') && 
-                                 previousStatus !== 'Dispatched' && 
-                                 previousStatus !== 'Delivered'
-  
-  // SPECIAL CASE: If going from "Dispatched" to "Delivered" and vendorId exists but wasn't processed before,
-  // we should still update inventory (in case the previous Dispatched update failed)
-  // CRITICAL: For replacement orders, we should NOT decrement again on "Delivered" - replacement size was already decremented on "Dispatched"
-  // Only the returned size should be incremented on "Delivered" (handled separately above)
-  const isDispatchedToDelivered = status === 'Delivered' && previousStatus === 'Dispatched'
-  const isReplacementOrderForDeliveredCheck = (order as any).orderType === 'REPLACEMENT'
-  const shouldUpdateInventoryForDelivered = isDispatchedToDelivered && vendorIdValue !== null && !isReplacementOrderForDeliveredCheck
+  // ========================================================================
+  // VENDOR INVENTORY DECREMENT ON DISPATCH
+  // ========================================================================
+  // BUSINESS RULE: Vendor inventory must be decremented when order is DISPATCHED,
+  // NOT when the order is placed. This reflects actual physical stock movement.
+  //
+  // IMPORTANT: Only decrement when transitioning TO Dispatched status.
+  // Do NOT decrement again when transitioning from Dispatched to Delivered.
+  // ========================================================================
+  const shouldDecrementInventory = 
+    status === 'Dispatched' && 
+    previousStatus !== 'Dispatched' && 
+    previousStatus !== 'Delivered'
   
   const isReplacementOrderForLogging = (order as any).orderType === 'REPLACEMENT'
   console.log(`[updateOrderStatus] 🔍 Inventory update check:`, {
-    shouldUpdate: shouldUpdateInventory,
-    shouldUpdateForDelivered: shouldUpdateInventoryForDelivered,
+    shouldDecrementInventory,
     status,
     previousStatus,
-    isDispatchedToDelivered,
     hasVendorId: vendorIdValue !== null,
     orderType: isReplacementOrderForLogging ? 'REPLACEMENT' : 'NORMAL',
     returnRequestId: (order as any).returnRequestId || 'N/A',
-    condition1: status === 'Dispatched' || status === 'Delivered',
-    condition2: previousStatus !== 'Dispatched',
-    condition3: previousStatus !== 'Delivered',
-    skipDeliveredUpdateForReplacement: isReplacementOrderForDeliveredCheck && isDispatchedToDelivered
   })
   
-  // Update inventory if either condition is true
-  // NOTE: This applies to BOTH normal orders AND replacement orders
-  // For replacement orders: DECREMENT inventory for the NEW size (replacement item being shipped out)
-  // For normal orders: DECREMENT inventory for ordered items - stock is consumed
-  // NOTE: Returned size (original) is incremented separately when replacement order is Delivered
-  if (shouldUpdateInventory || shouldUpdateInventoryForDelivered) {
+  // Decrement vendor inventory when order is dispatched
+  if (shouldDecrementInventory) {
     const isReplacementOrder = (order as any).orderType === 'REPLACEMENT'
     console.log(`\n[updateOrderStatus] 📦 ========== INVENTORY UPDATE REQUIRED ==========`)
     console.log(`[updateOrderStatus] 📦 Order ${orderId}: ${previousStatus} -> ${status}, will decrement inventory`)
     console.log(`[updateOrderStatus] 📦 Order type: ${isReplacementOrder ? 'REPLACEMENT' : 'NORMAL'}`)
-    console.log(`[updateOrderStatus] 📦 Update reason: ${shouldUpdateInventory ? 'Normal flow' : 'Dispatched->Delivered (recovery)'}`)
     
     if (!vendorIdValue) {
-      const isReplacementOrder = (order as any).orderType === 'REPLACEMENT'
       console.error(`[updateOrderStatus] ❌ Order ${orderId} has no vendorId, cannot update inventory`)
-      console.error(`[updateOrderStatus] ❌ Order details:`, {
-        vendorId: order.vendorId,
-        vendorName: (order as any).vendorName,
-        vendorIdValue: vendorIdValue,
-        orderType: isReplacementOrder ? 'REPLACEMENT' : 'NORMAL',
-        returnRequestId: (order as any).returnRequestId || 'N/A'
-      })
-      // For replacement orders, this is critical - throw error instead of silently failing
       if (isReplacementOrder) {
-        throw new Error(`Replacement order ${orderId} has no vendorId - inventory update cannot proceed. This will cause inventory discrepancies.`)
+        throw new Error(`Replacement order ${orderId} has no vendorId - inventory update cannot proceed.`)
       }
     } else {
       try {
-        console.log(`[updateOrderStatus] 🔍 Processing vendor for inventory update`)
-        console.log(`[updateOrderStatus] 🔍 Using vendorId: ${vendorIdValue}`)
-        
-        // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId
-        // Look up vendor by numeric ID to get ObjectId for inventory operations
-        let vendor = await Vendor.findOne({ id: vendorIdValue })
-        if (!vendor && (order as any).vendorName) {
-          console.log(`[updateOrderStatus] ⚠️ Vendor not found by id, trying by name: ${(order as any).vendorName}`)
-          vendor = await Vendor.findOne({ name: (order as any).vendorName })
-        }
-        
-        if (!vendor) {
-          console.error(`[updateOrderStatus] ❌ Vendor not found for order ${orderId}`)
-          console.error(`[updateOrderStatus] ❌ Tried: id=${vendorIdValue}, name=${(order as any).vendorName || 'N/A'}`)
-          throw new Error(`Vendor not found for vendorId: ${vendorIdValue}`)
-        }
-        
-        // Vendor found - use string ID for inventory operations
-        console.log(`[updateOrderStatus] ✅ Vendor found:`, {
-          vendorId: vendor.id,
-          vendorName: vendor.name,
-          lookupMethod: 'by numeric id'
-        })
-        
-        const isReplacementOrder = (order as any).orderType === 'REPLACEMENT'
-        console.log(`[updateOrderStatus] 📦 Processing ${order.items.length} order items`)
-        if (isReplacementOrder) {
-          console.log(`[updateOrderStatus] 🔄 REPLACEMENT ORDER: Will DECREMENT inventory for NEW size (replacement item being shipped out)`)
-          console.log(`[updateOrderStatus] 🔄 REPLACEMENT ORDER: Note - Returned size (original, e.g., XXL) will be INCREMENTED when order is Delivered`)
-        } else {
-          console.log(`[updateOrderStatus] 🔄 NORMAL ORDER: Will decrement inventory for ordered items`)
-        }
-        
-        // Process each item in the order
-        let itemIndex = 0
-        for (const item of order.items) {
-            itemIndex++
-            console.log(`\n[updateOrderStatus] 📦 ========== PROCESSING ITEM ${itemIndex}/${order.items.length} ==========`)
-            console.log(`[updateOrderStatus] 📦 Item details:`, {
-              uniformId: item.uniformId,
-              uniformName: item.uniformName || 'N/A',
-              size: item.size,
-              quantity: item.quantity,
-              price: item.price
-            })
-            // Get product ObjectId - handle both populated and unpopulated cases
-            let productObjectId: mongoose.Types.ObjectId
-            if (item.uniformId instanceof mongoose.Types.ObjectId) {
-              productObjectId = item.uniformId
-              console.log(`[updateOrderStatus] 🔍 Product ID is ObjectId: ${productObjectId.toString()}`)
-            } else {
-              // Populated product document
-              productObjectId = (item.uniformId as any)._id || item.uniformId
-              console.log(`[updateOrderStatus] 🔍 Product ID from populated doc: ${productObjectId?.toString() || 'N/A'}`)
-            }
-            
-            const size = item.size
-            const quantity = item.quantity
-            
-            if (!size || !quantity) {
-              console.error(`[updateOrderStatus] ❌ Order ${orderId} item ${itemIndex} missing size or quantity:`, {
-                size,
-                quantity,
-                item
-              })
-              continue
-            }
-            
-            // Get product ID - prefer string id over ObjectId
-            const productIdStr = (item.uniformId as any)?.id || String(productObjectId)
-            console.log(`[updateOrderStatus] 🔍 Looking up product:`, {
-              productIdStr,
-              size,
-              quantity
-            })
-            
-            // Get product to verify it exists - use string ID lookup
-            const product = await Uniform.findOne({ id: productIdStr })
-            
-            if (!product) {
-              console.error(`[updateOrderStatus] ❌ Product not found for order ${orderId}, item ${itemIndex}:`, {
-                productIdStr,
-                item
-              })
-              continue
-            }
-          
-            console.log(`[updateOrderStatus] ✅ Product found:`, {
-              productId: product.id,
-              productName: product.name
-            })
-          
-          // Update inventory (without transaction for standalone MongoDB)
-          console.log(`[updateOrderStatus] 🔄 Starting inventory update (standalone MongoDB - no transactions)`)
-          
-          try {
-            // Find or create inventory record
-            console.log(`[updateOrderStatus] 🔍 Looking up VendorInventory:`, {
-              vendorId: vendor.id,
-              productId: product.id
-            })
-            
-            // Use string IDs for VendorInventory lookup and create
-            let inventory = await VendorInventory.findOne({
-              vendorId: vendor.id,
-              productId: product.id,
-            })
-            
-            if (!inventory) {
-              console.warn(`[updateOrderStatus] ⚠️ No inventory record found for vendor ${vendor.id} and product ${product.id}, creating one with 0 stock`)
-              // Create inventory record with 0 stock if it doesn't exist
-              const inventoryId = `VEND-INV-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`
-              inventory = await VendorInventory.create({
-                id: inventoryId,
-                vendorId: vendor.id,       // Use string ID, not ObjectId
-                productId: product.id,     // Use string ID, not ObjectId
-                sizeInventory: new Map(),
-                totalStock: 0,
-                lowInventoryThreshold: new Map(),
-              })
-            }
-              
-              console.log(`[updateOrderStatus] ✅ Inventory record found/created:`, {
-                inventoryId: inventory.id,
-                currentSizeInventory: inventory.sizeInventory instanceof Map 
-                  ? Object.fromEntries(inventory.sizeInventory)
-                  : inventory.sizeInventory,
-                currentTotalStock: inventory.totalStock
-              })
-            
-            // Get current size inventory
-            const sizeInventory = inventory.sizeInventory instanceof Map
-              ? new Map(inventory.sizeInventory)
-              : new Map(Object.entries(inventory.sizeInventory || {}))
-            
-              console.log(`[updateOrderStatus] 🔍 Current sizeInventory Map:`, Object.fromEntries(sizeInventory))
-              
-              // CRITICAL FIX: For replacement orders, DECREMENT inventory for replacement size (being shipped out)
-              // For normal orders, also DECREMENT inventory (stock is consumed)
-              // NOTE: Returned size (original) is incremented separately when order is Delivered
-            const currentStock = sizeInventory.get(size) || 0
-              let newStock: number
-              let operation: string
-              
-              // Both replacement and normal orders DECREMENT inventory when shipped
-              // Replacement order: Decrement replacement size (M) because we're shipping it out
-              // Normal order: Decrement ordered size because stock is consumed
-            if (currentStock < quantity) {
-                console.warn(`[updateOrderStatus] ⚠️ Insufficient inventory for order ${orderId}: product ${product.id}, size ${size}. Current: ${currentStock}, Requested: ${quantity}`)
-                // Still allow the order to be shipped, but inventory goes to 0 (not negative)
-              }
-              newStock = Math.max(0, currentStock - quantity) // Don't go below 0
-              operation = 'decrement'
-              
-              if (isReplacementOrder) {
-                console.log(`[updateOrderStatus] 📊 REPLACEMENT ORDER - Stock calculation:`, {
-                  size,
-                  currentStock,
-                  quantity,
-                  newStock,
-                  calculation: `${currentStock} - ${quantity} = ${newStock}`,
-                  note: 'Replacement order: DECREMENTING inventory for replacement size (being shipped out). Returned size will be incremented when delivered.'
-                })
-              } else {
-                console.log(`[updateOrderStatus] 📊 NORMAL ORDER - Stock calculation:`, {
-                  size,
-                  currentStock,
-                  quantity,
-                  newStock,
-                  calculation: `${currentStock} - ${quantity} = ${newStock}`,
-                  note: 'Normal order: decrementing inventory'
-                })
-              }
-              
-              console.log(`[updateOrderStatus] 📊 Stock calculation result:`, {
-                orderType: isReplacementOrder ? 'REPLACEMENT' : 'NORMAL',
-                operation,
-                currentStock,
-                quantity,
-                newStock,
-                calculation: `${currentStock} - ${quantity} = ${newStock}`,
-                note: isReplacementOrder 
-                  ? 'Replacement order: decrementing replacement size (being shipped out)'
-                  : 'Normal order: decrementing inventory'
-              })
-            
-            sizeInventory.set(size, newStock)
-              console.log(`[updateOrderStatus] ✅ Updated sizeInventory Map:`, Object.fromEntries(sizeInventory))
-            
-            // Calculate new total stock
-            let totalStock = 0
-            for (const qty of sizeInventory.values()) {
-              totalStock += qty
-            }
-            
-              // Update inventory atomically
-              console.log(`[updateOrderStatus] 🔄 Updating inventory object...`)
-              console.log(`[updateOrderStatus] 🔄 Before assignment:`, {
-                inventorySizeInventoryType: typeof inventory.sizeInventory,
-                inventorySizeInventoryIsMap: inventory.sizeInventory instanceof Map,
-                newSizeInventoryType: typeof sizeInventory,
-                newSizeInventoryIsMap: sizeInventory instanceof Map
-              })
-              
-            inventory.sizeInventory = sizeInventory
-            inventory.totalStock = totalStock
-              
-              console.log(`[updateOrderStatus] 🔄 After assignment:`, {
-                inventorySizeInventoryType: typeof inventory.sizeInventory,
-                inventorySizeInventoryIsMap: inventory.sizeInventory instanceof Map,
-                inventorySizeInventoryValue: inventory.sizeInventory instanceof Map
-                  ? Object.fromEntries(inventory.sizeInventory)
-                  : inventory.sizeInventory
-              })
-              
-              // CRITICAL: Mark Map fields as modified to ensure Mongoose saves them
-              // Mongoose doesn't always detect changes to Map objects, so we must explicitly mark them
-              console.log(`[updateOrderStatus] 🔄 Marking sizeInventory as modified...`)
-              inventory.markModified('sizeInventory')
-              console.log(`[updateOrderStatus] ✅ markModified('sizeInventory') called`)
-              console.log(`[updateOrderStatus] 🔄 Modified paths after markModified:`, inventory.modifiedPaths())
-              
-              console.log(`[Inventory Update] 🔍 Before save - inventory record:`, {
-                inventoryId: inventory.id,
-                vendorId: vendor.id,
-                productId: product.id,
-                size: size,
-                sizeInventory: Object.fromEntries(sizeInventory),
-                totalStock: totalStock,
-                currentStock: currentStock,
-                newStock: newStock,
-                quantity: quantity
-              })
-              
-              console.log(`[updateOrderStatus] 💾 ========== SAVING INVENTORY ==========`)
-              console.log(`[updateOrderStatus] 💾 Attempting to save inventory with session...`)
-              console.log(`[updateOrderStatus] 💾 Pre-save state:`, {
-                inventoryId: inventory.id,
-                inventoryIsNew: inventory.isNew,
-                inventoryIsModified: inventory.isModified(),
-                modifiedPaths: inventory.modifiedPaths(),
-                sizeInventoryBeforeSave: inventory.sizeInventory instanceof Map
-                  ? Object.fromEntries(inventory.sizeInventory)
-                  : inventory.sizeInventory,
-                totalStockBeforeSave: inventory.totalStock,
-                markModifiedCalled: true // We called it above
-              })
-              
-              const saveResult = await inventory.save()
-              
-              console.log(`[updateOrderStatus] ✅ Inventory save() completed:`, {
-                inventoryId: saveResult.id,
-                savedSizeInventory: saveResult.sizeInventory instanceof Map
-                  ? Object.fromEntries(saveResult.sizeInventory)
-                  : saveResult.sizeInventory,
-                savedTotalStock: saveResult.totalStock,
-                savedSizeStock: saveResult.sizeInventory instanceof Map
-                  ? saveResult.sizeInventory.get(size)
-                  : (saveResult.sizeInventory as any)?.[size],
-                expectedSizeStock: newStock,
-                saveMatch: (saveResult.sizeInventory instanceof Map
-                  ? saveResult.sizeInventory.get(size)
-                  : (saveResult.sizeInventory as any)?.[size]) === newStock
-              })
-              
-              console.log(`[updateOrderStatus] ✅ Inventory update saved successfully (standalone MongoDB)`)
-              
-              const operationText = isReplacementOrder ? 'incremented' : 'decremented'
-              console.log(`[updateOrderStatus] ✅ Successfully updated VendorInventory for order ${orderId}: product ${product.id}, size ${size}, ${currentStock} -> ${newStock} (${operationText} ${quantity})`)
-              console.log(`[updateOrderStatus] ✅ Order type: ${isReplacementOrder ? 'REPLACEMENT' : 'NORMAL'}`)
-              
-              // CRITICAL VERIFICATION: Query database directly to confirm update persisted
-              // IMPORTANT: Query OUTSIDE the transaction session to see committed data
-              console.log(`[updateOrderStatus] 🔍 ========== POST-SAVE VERIFICATION ==========`)
-              console.log(`[updateOrderStatus] 🔍 Waiting 200ms for database write to complete...`)
-              await new Promise(resolve => setTimeout(resolve, 200))
-              
-              // Query using raw MongoDB to bypass any Mongoose caching
-              // Query WITHOUT session to see committed data
-              const db = mongoose.connection.db
-              const vendorInventoriesCollection = db.collection('vendorinventories')
-              
-              console.log(`[updateOrderStatus] 🔍 Querying raw MongoDB (outside transaction)...`)
-              const rawInventoryDoc = await vendorInventoriesCollection.findOne({
-                vendorId: vendor._id,
-                productId: product._id,
-              })
-              
-              console.log(`[updateOrderStatus] 🔍 Raw MongoDB query result:`, {
-                found: !!rawInventoryDoc,
-                inventoryId: rawInventoryDoc?.id,
-                sizeInventory: rawInventoryDoc?.sizeInventory,
-                totalStock: rawInventoryDoc?.totalStock,
-                sizeStock: rawInventoryDoc?.sizeInventory?.[size],
-                expectedStock: newStock
-              })
-              
-              // Also verify using Mongoose (without session to see committed data)
-              console.log(`[updateOrderStatus] 🔍 Querying Mongoose (outside transaction)...`)
-              const verifyInventory = await VendorInventory.findOne({
-                vendorId: vendor._id,
-                productId: product._id,
-              }).lean()
-              
-              if (verifyInventory) {
-                const verifySizeStock = verifyInventory.sizeInventory instanceof Map
-                  ? verifyInventory.sizeInventory.get(size)
-                  : (verifyInventory.sizeInventory as any)?.[size]
-                const verifyTotalStock = verifyInventory.totalStock
-                
-                console.log(`[updateOrderStatus] ✅ Mongoose verification result:`, {
-                  inventoryId: verifyInventory.id,
-                  size,
-                  expectedStock: newStock,
-                  actualStock: verifySizeStock,
-                  match: verifySizeStock === newStock,
-                  expectedTotal: totalStock,
-                  actualTotal: verifyTotalStock,
-                  totalMatch: verifyTotalStock === totalStock,
-                  sizeInventoryType: typeof verifyInventory.sizeInventory,
-                  sizeInventoryIsMap: verifyInventory.sizeInventory instanceof Map,
-                  sizeInventoryKeys: verifyInventory.sizeInventory instanceof Map 
-                    ? Array.from(verifyInventory.sizeInventory.keys())
-                    : Object.keys(verifyInventory.sizeInventory || {})
-                })
-                
-                // Compare raw MongoDB vs Mongoose
-                const rawSizeStock = rawInventoryDoc?.sizeInventory?.[size]
-                console.log(`[updateOrderStatus] 🔍 Raw vs Mongoose comparison:`, {
-                  rawSizeStock,
-                  mongooseSizeStock: verifySizeStock,
-                  match: rawSizeStock === verifySizeStock
-                })
-                
-                if (verifySizeStock !== newStock) {
-                  console.error(`[updateOrderStatus] ❌❌❌ VERIFICATION FAILED: Expected stock ${newStock} but got ${verifySizeStock}`)
-                  console.error(`[updateOrderStatus] ❌❌❌ This indicates the inventory update did NOT persist!`)
-                  console.error(`[updateOrderStatus] ❌❌❌ Debug info:`, {
-                    beforeSave: currentStock,
-                    quantity: quantity,
-                    calculatedNewStock: newStock,
-                    afterSave: verifySizeStock,
-                    rawMongoDB: rawSizeStock
-                  })
-                } else {
-                  console.log(`[updateOrderStatus] ✅✅✅ VERIFICATION PASSED: Stock correctly saved and persisted`)
-                  const operationText = 'decremented'
-                  const calculationText = `${currentStock} - ${quantity} = ${newStock}`
-                  const note = isReplacementOrder 
-                    ? ' (Replacement order: replacement size decremented, returned size will be incremented on delivery)'
-                    : ' (Normal order: inventory decremented)'
-                  console.log(`[updateOrderStatus] ✅✅✅ Inventory ${operationText}: ${calculationText}${note}`)
-                }
-              } else {
-                console.error(`[updateOrderStatus] ❌ Verification failed: Could not find inventory record after save`)
-                console.error(`[updateOrderStatus] ❌ Query used:`, {
-                  vendorId: vendor._id.toString(),
-                  productId: product._id.toString()
-                })
-              }
-              
-              console.log(`[updateOrderStatus] 📦 ========== ITEM ${itemIndex} PROCESSING COMPLETE ==========\n`)
-            } catch (error: any) {
-              console.error(`[updateOrderStatus] ❌ Error updating inventory for item ${itemIndex}:`, error)
-              console.error(`[updateOrderStatus] ❌ Error details:`, {
-                message: error?.message,
-                stack: error?.stack,
-                name: error?.name
-              })
-              throw error
-            }
+        // Prepare order items for inventory decrement
+        const orderItemsForInventory = order.items.map((item: any) => ({
+          uniformId: typeof item.uniformId === 'object' 
+            ? (item.uniformId.id || String(item.uniformId._id || item.uniformId))
+            : String(item.uniformId),
+          size: item.size,
+          quantity: item.quantity,
+        }))
+
+        // Use the vendor inventory service
+        const inventoryResult = await decrementVendorStockOnDispatch(
+          vendorIdValue,
+          orderItemsForInventory,
+          orderId
+        )
+
+        if (inventoryResult.success) {
+          console.log(`[updateOrderStatus] ✅ Inventory decrement completed:`, {
+            orderId,
+            decrements: inventoryResult.decrements.length,
+          })
+        } else if (inventoryResult.errors.length > 0) {
+          console.error(`[updateOrderStatus] ❌ Inventory decrement had errors:`, inventoryResult.errors)
+          if (isReplacementOrder) {
+            throw new Error(`Inventory decrement failed for replacement order: ${inventoryResult.errors.join(', ')}`)
           }
-          
-          console.log(`[updateOrderStatus] 📦 ========== ALL ITEMS PROCESSED ==========`)
-          
-          // FINAL VERIFICATION: Query all inventory records for this vendor-product to confirm
-          console.log(`[updateOrderStatus] 🔍 ========== FINAL INVENTORY VERIFICATION ==========`)
-          const finalInventoryCheck = await VendorInventory.find({
-            vendorId: vendor._id,
-            productId: product._id,
-          }).lean()
-          
-          console.log(`[updateOrderStatus] 🔍 Final inventory check found ${finalInventoryCheck.length} record(s):`)
-          finalInventoryCheck.forEach((inv, idx) => {
-            console.log(`[updateOrderStatus] 🔍 Inventory record ${idx + 1}:`, {
-              id: inv.id,
-              sizeInventory: inv.sizeInventory,
-              totalStock: inv.totalStock,
-              sizeInventoryType: typeof inv.sizeInventory,
-              sizeInventoryKeys: inv.sizeInventory instanceof Map
-                ? Array.from(inv.sizeInventory.keys())
-                : Object.keys(inv.sizeInventory || {})
-            })
-          })
-          console.log(`[updateOrderStatus] 📦 ========== ALL ITEMS PROCESSED ==========\n`)
-        } catch (error: any) {
-          console.error(`[updateOrderStatus] ❌❌❌ CRITICAL ERROR updating inventory for order ${orderId}:`, error)
-          console.error(`[updateOrderStatus] ❌ Error details:`, {
-            message: error?.message,
-            stack: error?.stack,
-            name: error?.name,
-            code: error?.code
-          })
-          // Don't throw - we still want to update the order status even if inventory update fails
+        }
+      } catch (inventoryError: any) {
+        console.error(`[updateOrderStatus] ❌ Inventory update failed:`, inventoryError.message)
+        if (isReplacementOrder) {
+          throw inventoryError
         }
       }
-    } else {
-    // Log when inventory update is skipped
-    if (status === 'Dispatched' || status === 'Delivered') {
-      console.log(`[updateOrderStatus] ⏭️ Skipping inventory update for order ${orderId}: ${previousStatus} -> ${status} (already processed or invalid transition)`)
     }
+  } else if (status === 'Dispatched') {
+    console.log(`[updateOrderStatus] ⏭️ Skipping inventory update for order ${orderId}: ${previousStatus} -> ${status} (already processed)`)
+  }
+  
+  // ========================================================================
+  // PARENT/SPLIT ORDER STATUS SYNCHRONIZATION
+  // ========================================================================
+  // BUSINESS RULE: When an order status changes, ensure all related orders
+  // (parent and splits) are synchronized to maintain consistency across
+  // Employee and Vendor views.
+  // ========================================================================
+  try {
+    const orderWithParent = order as any
+    const currentOrderId = order.id
+    const parentOrderId = orderWithParent.parentOrderId
+    
+    // Check if this is a split order (has parentOrderId and ID contains vendor suffix)
+    const isSplitOrder = parentOrderId && currentOrderId !== parentOrderId && currentOrderId.includes('-10')
+    
+    console.log(`[updateOrderStatus] 🔄 STATUS SYNC: Checking for related orders...`)
+    console.log(`[updateOrderStatus]   Current order: ${currentOrderId}`)
+    console.log(`[updateOrderStatus]   Parent order ID: ${parentOrderId || 'N/A'}`)
+    console.log(`[updateOrderStatus]   Is split order: ${isSplitOrder}`)
+    
+    if (isSplitOrder && parentOrderId) {
+      // This is a SPLIT ORDER - sync status to PARENT and OTHER SPLITS
+      console.log(`[updateOrderStatus] 🔄 SYNC: Split order updated, syncing to parent and siblings...`)
+      
+      // Find all related orders (parent + all splits with same parentOrderId)
+      const relatedOrders = await Order.find({
+        $or: [
+          { id: parentOrderId }, // Parent order
+          { parentOrderId: parentOrderId, id: { $ne: currentOrderId } } // Sibling split orders
+        ]
+      })
+      
+      console.log(`[updateOrderStatus]   Found ${relatedOrders.length} related order(s)`)
+      
+      // Update status on all related orders
+      for (const relatedOrder of relatedOrders) {
+        const relatedId = relatedOrder.id
+        const relatedPrevStatus = relatedOrder.status
+        
+        if (relatedPrevStatus !== status) {
+          console.log(`[updateOrderStatus]   Syncing ${relatedId}: ${relatedPrevStatus} -> ${status}`)
+          
+          // Build update payload
+          const syncUpdate: any = {
+            status: status,
+            dispatchStatus: order.dispatchStatus,
+            deliveryStatus: order.deliveryStatus,
+          }
+          
+          // Include unified status fields
+          if (order.unified_status) {
+            syncUpdate.unified_status = order.unified_status
+            syncUpdate.unified_status_updated_at = new Date()
+            syncUpdate.unified_status_updated_by = 'status_sync'
+          }
+          
+          // Include dispatch/delivery dates
+          if (status === 'Dispatched') {
+            syncUpdate.dispatchedDate = order.dispatchedDate || new Date()
+          }
+          if (status === 'Delivered') {
+            syncUpdate.deliveredDate = order.deliveredDate || new Date()
+          }
+          
+          await Order.updateOne({ id: relatedId }, { $set: syncUpdate })
+          console.log(`[updateOrderStatus]   ✅ Synced ${relatedId} to status: ${status}`)
+        } else {
+          console.log(`[updateOrderStatus]   ⏭️ ${relatedId} already at status: ${status}`)
+        }
+      }
+    } else if (parentOrderId === currentOrderId || !parentOrderId) {
+      // This could be a PARENT ORDER - sync status to all SPLIT ORDERS
+      // Check if there are split orders for this parent
+      const splitOrders = await Order.find({
+        parentOrderId: currentOrderId,
+        id: { $ne: currentOrderId }
+      })
+      
+      if (splitOrders.length > 0) {
+        console.log(`[updateOrderStatus] 🔄 SYNC: Parent order updated, syncing to ${splitOrders.length} split order(s)...`)
+        
+        for (const splitOrder of splitOrders) {
+          const splitId = splitOrder.id
+          const splitPrevStatus = splitOrder.status
+          
+          if (splitPrevStatus !== status) {
+            console.log(`[updateOrderStatus]   Syncing ${splitId}: ${splitPrevStatus} -> ${status}`)
+            
+            // Build update payload
+            const syncUpdate: any = {
+              status: status,
+              dispatchStatus: order.dispatchStatus,
+              deliveryStatus: order.deliveryStatus,
+            }
+            
+            // Include unified status fields
+            if (order.unified_status) {
+              syncUpdate.unified_status = order.unified_status
+              syncUpdate.unified_status_updated_at = new Date()
+              syncUpdate.unified_status_updated_by = 'status_sync'
+            }
+            
+            // Include dispatch/delivery dates
+            if (status === 'Dispatched') {
+              syncUpdate.dispatchedDate = order.dispatchedDate || new Date()
+            }
+            if (status === 'Delivered') {
+              syncUpdate.deliveredDate = order.deliveredDate || new Date()
+            }
+            
+            await Order.updateOne({ id: splitId }, { $set: syncUpdate })
+            console.log(`[updateOrderStatus]   ✅ Synced ${splitId} to status: ${status}`)
+          } else {
+            console.log(`[updateOrderStatus]   ⏭️ ${splitId} already at status: ${status}`)
+          }
+        }
+      } else {
+        console.log(`[updateOrderStatus]   ℹ️ No split orders found for this order`)
+      }
+    }
+  } catch (syncError: any) {
+    // Log but don't fail the main operation
+    console.error(`[updateOrderStatus] ⚠️ Status sync error (non-fatal):`, syncError.message)
   }
   
   // Populate and return - use string id field instead of _id
@@ -11791,8 +12698,8 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
 
 export async function getPendingApprovals(companyId: string): Promise<any[]> {
   await connectDB()
-  
-  const company = await Company.findOne({ id: companyId }).select('_id id name enable_pr_po_workflow require_company_admin_po_approval').lean()
+
+  const company = await Company.findOne({ id: companyId }).select('_id id name enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval').lean() as any
   if (!company) {
     return []
   }
@@ -11803,22 +12710,42 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
     companyId: company.id,
   }
   
-  // If PR/PO workflow is enabled, only show orders pending COMPANY ADMIN approval
-  // (Site Admin approvals are handled separately)
-  // CRITICAL: When PR workflow is enabled, filter ONLY by pr_status, NOT by status
+  // If PR/PO workflow is enabled, show orders based on site admin approval configuration
+  // CRITICAL: When PR workflow is enabled, filter by unified_pr_status (with fallback to pr_status)
   // Orders can have status 'Awaiting approval' or 'Awaiting fulfilment' but still need company admin approval
   if (company.enable_pr_po_workflow === true) {
-    queryFilter.pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
-    // Don't filter by status - pr_status is the source of truth for PR workflow
-    console.log(`[getPendingApprovals] PR/PO workflow enabled. Filtering for PENDING_COMPANY_ADMIN_APPROVAL orders only (ignoring status field).`)
+    // Check if site admin approval is required
+    const isSiteAdminApprovalRequired = company.enable_site_admin_pr_approval === true
+    
+    if (isSiteAdminApprovalRequired) {
+      // Site admin approval required - Company Admin only sees orders AFTER site admin approval
+      // Include PENDING_COMPANY_ADMIN_APPROVAL (after site admin approved) and SITE_ADMIN_APPROVED (same thing)
+      queryFilter.$or = [
+        { unified_pr_status: 'PENDING_COMPANY_ADMIN_APPROVAL' },
+        { unified_pr_status: 'SITE_ADMIN_APPROVED' }
+      ]
+      console.log(`[getPendingApprovals] PR/PO workflow enabled WITH Site Admin approval. Showing orders pending Company Admin approval (after Site Admin approved).`)
+    } else {
+      // No site admin approval - Company Admin sees all pending orders directly
+      queryFilter.$or = [
+        { unified_pr_status: 'PENDING_COMPANY_ADMIN_APPROVAL' },
+        // Also include orders awaiting approval without unified_pr_status (backward compatibility)
+        { unified_pr_status: { $exists: false }, status: 'Awaiting approval' },
+        { unified_pr_status: null, status: 'Awaiting approval' }
+      ]
+      console.log(`[getPendingApprovals] PR/PO workflow enabled WITHOUT Site Admin approval. Showing all pending orders for Company Admin.`)
+    }
   } else {
     // Legacy workflow: show all orders with status 'Awaiting approval'
     // Exclude orders that are pending site admin approval (if any exist)
-    queryFilter.status = 'Awaiting approval'
-    queryFilter.$or = [
-      { pr_status: { $exists: false } }, // Legacy orders without PR status
-      { pr_status: null }, // Legacy orders with null PR status
-      { pr_status: { $ne: 'PENDING_SITE_ADMIN_APPROVAL' } }, // Exclude site admin pending
+    const currentStatus = { $or: [{ unified_status: 'PENDING_APPROVAL' }, { status: 'Awaiting approval' }] }
+    queryFilter.$and = [
+      currentStatus,
+      { $or: [
+        { unified_pr_status: { $exists: false } }, // Orders without unified PR status
+        { unified_pr_status: null },
+        { unified_pr_status: { $nin: ['PENDING_SITE_ADMIN_APPROVAL'] } },
+      ]}
     ]
     console.log(`[getPendingApprovals] Legacy workflow. Showing all orders with status 'Awaiting approval' except PENDING_SITE_ADMIN_APPROVAL.`)
   }
@@ -11827,7 +12754,7 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
   // This eliminates the need for two separate queries
   // CRITICAL: Don't use populate since Order.employeeId and Order.companyId are string IDs
   const pendingOrders = await Order.find(queryFilter)
-    .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status site_admin_approved_by site_admin_approved_at')
+    .select('id employeeId employeeIdNum employeeName items total status unified_status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status unified_pr_status site_admin_approved_by site_admin_approved_at')
     .sort({ orderDate: -1 })
     .lean()
   
@@ -11838,8 +12765,23 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
   const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
   
   // Manually populate employee, company, and uniform info using string IDs
+  const { decrypt } = require('../utils/encryption')
   const pendingOrdersWithDetails = await Promise.all(pendingOrders.map(async (o: any) => {
     const plain = toPlainObject(o)
+    
+    // Decrypt employee name stored directly on order if it appears encrypted
+    if (plain.employeeName && typeof plain.employeeName === 'string') {
+      try {
+        if (plain.employeeName.includes(':') || plain.employeeName.includes('/') || plain.employeeName.includes('+')) {
+          const decrypted = decrypt(plain.employeeName)
+          if (decrypted && decrypted.length > 0) {
+            plain.employeeName = decrypted
+          }
+        }
+      } catch (e) {
+        // Keep original if decryption fails
+      }
+    }
     
     // Manually fetch employee info using string ID
     if (plain.employeeId && typeof plain.employeeId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.employeeId)) {
@@ -11848,13 +12790,12 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
           { id: plain.employeeId },
           { employeeId: plain.employeeId }
         ]
-      }).select('id employeeId firstName lastName email').lean()
+      }).select('id employeeId firstName lastName email address_line_1 address_line_2 address_line_3 city state pincode').lean()
       
       if (employee) {
         // Decrypt employee fields since we used .lean()
-        const { decrypt } = require('../utils/encryption')
         const decryptedEmployee: any = { ...employee }
-        const sensitiveFields = ['firstName', 'lastName', 'email']
+        const sensitiveFields = ['firstName', 'lastName', 'email', 'address_line_1', 'address_line_2', 'address_line_3', 'city', 'state', 'pincode']
         
         for (const field of sensitiveFields) {
           if (decryptedEmployee[field] && typeof decryptedEmployee[field] === 'string' && decryptedEmployee[field].includes(':')) {
@@ -11863,6 +12804,28 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
             } catch (error) {
               // If decryption fails, keep original value
             }
+          }
+        }
+        
+        // Construct employeeName from decrypted firstName and lastName
+        const decryptedFirstName = decryptedEmployee.firstName || ''
+        const decryptedLastName = decryptedEmployee.lastName || ''
+        const decryptedEmployeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+        plain.employeeName = decryptedEmployeeName
+        
+        // Populate delivery address from employee address if not set on order
+        if (!plain.deliveryAddress || plain.deliveryAddress === 'N/A' || plain.deliveryAddress.trim() === '') {
+          const addressParts = [
+            decryptedEmployee.address_line_1,
+            decryptedEmployee.address_line_2,
+            decryptedEmployee.address_line_3,
+            decryptedEmployee.city,
+            decryptedEmployee.state,
+            decryptedEmployee.pincode
+          ].filter(Boolean)
+          
+          if (addressParts.length > 0) {
+            plain.deliveryAddress = addressParts.join(', ')
           }
         }
         
@@ -11942,13 +12905,13 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
             { id: plain.employeeId },
             { employeeId: plain.employeeId }
           ]
-        }).select('id employeeId firstName lastName email').lean()
+        }).select('id employeeId firstName lastName email address_line_1 address_line_2 address_line_3 city state pincode').lean()
         
         if (employee) {
           // Decrypt employee fields since we used .lean()
           const { decrypt } = require('../utils/encryption')
           const decryptedEmployee: any = { ...employee }
-          const sensitiveFields = ['firstName', 'lastName', 'email']
+          const sensitiveFields = ['firstName', 'lastName', 'email', 'address_line_1', 'address_line_2', 'address_line_3', 'city', 'state', 'pincode']
           
           for (const field of sensitiveFields) {
             if (decryptedEmployee[field] && typeof decryptedEmployee[field] === 'string' && decryptedEmployee[field].includes(':')) {
@@ -11957,6 +12920,27 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
               } catch (error) {
                 // If decryption fails, keep original value
               }
+            }
+          }
+          
+          // Construct employeeName from decrypted firstName and lastName
+          const decryptedFirstName = decryptedEmployee.firstName || ''
+          const decryptedLastName = decryptedEmployee.lastName || ''
+          plain.employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+          
+          // Populate delivery address from employee address if not set on order
+          if (!plain.deliveryAddress || plain.deliveryAddress === 'N/A' || plain.deliveryAddress.trim() === '') {
+            const addressParts = [
+              decryptedEmployee.address_line_1,
+              decryptedEmployee.address_line_2,
+              decryptedEmployee.address_line_3,
+              decryptedEmployee.city,
+              decryptedEmployee.state,
+              decryptedEmployee.pincode
+            ].filter(Boolean)
+            
+            if (addressParts.length > 0) {
+              plain.deliveryAddress = addressParts.join(', ')
             }
           }
           
@@ -12048,6 +13032,44 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
 }
 
 /**
+ * Get count of orders pending Site Admin approval for a company
+ * This helps Company Admin see how many orders are waiting for Site Admin to approve
+ * @param companyId Company ID
+ * @returns Object with count and message
+ */
+export async function getPendingSiteAdminApprovalCount(companyId: string): Promise<{
+  count: number
+  message: string
+}> {
+  await connectDB()
+  
+  const company = await Company.findOne({ id: companyId }).select('_id id enable_pr_po_workflow enable_site_admin_pr_approval').lean() as any
+  if (!company) {
+    return { count: 0, message: '' }
+  }
+  
+  // Only count if PR/PO workflow is enabled AND site admin approval is required
+  if (company.enable_pr_po_workflow !== true || company.enable_site_admin_pr_approval !== true) {
+    return { count: 0, message: '' }
+  }
+  
+  // Count orders pending site admin approval
+  const count = await Order.countDocuments({
+    companyId: company.id,
+    unified_pr_status: 'PENDING_SITE_ADMIN_APPROVAL'
+  })
+  
+  if (count > 0) {
+    return {
+      count,
+      message: `${count} order${count !== 1 ? 's are' : ' is'} pending Site Admin approval`
+    }
+  }
+  
+  return { count: 0, message: '' }
+}
+
+/**
  * Get pending PRs for Site Admin (Location Admin)
  * Tab 1: Pending Approval - Shows PRs with pr_status = PENDING_SITE_ADMIN_APPROVAL
  * PR visibility driven ONLY by PR.status, PR.createdDate, PR.locationId
@@ -12108,9 +13130,10 @@ export async function getPendingApprovalsForSiteAdmin(
   // Build query filter - PR visibility driven ONLY by pr_status and createdAt (date filter)
   // NO filtering based on PO/GRN existence
   // CRITICAL: Use string IDs, not ObjectIds
+  // UNIFIED-ONLY: Use unified_pr_status as the single source of truth
   const queryFilter: any = {
     employeeId: { $in: employeeStringIds },
-    pr_status: 'PENDING_SITE_ADMIN_APPROVAL', // Tab 1: Only pending site admin approval
+    unified_pr_status: 'PENDING_SITE_ADMIN_APPROVAL',
   }
   
   // Apply date filter on PR.createdAt if provided
@@ -12238,7 +13261,7 @@ export async function getPendingApprovalsForSiteAdmin(
     const allChildOrders = await Order.find({
       employeeId: { $in: employeeStringIds }, // Use string IDs, not ObjectIds
       parentOrderId: { $in: Array.from(parentOrderIds) },
-      pr_status: 'PENDING_SITE_ADMIN_APPROVAL',
+      unified_pr_status: 'PENDING_SITE_ADMIN_APPROVAL',
     })
       .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount pr_number pr_date pr_status createdAt')
       .lean()
@@ -12357,7 +13380,7 @@ export async function getPendingApprovalsForSiteAdmin(
       deliveryAddress: splitOrders[0]?.deliveryAddress,
       pr_number: splitOrders[0]?.pr_number,
       pr_date: splitOrders[0]?.pr_date,
-      pr_status: splitOrders[0]?.pr_status,
+      unified_pr_status: splitOrders[0]?.unified_pr_status,
       isSplitOrder: true,
       splitOrders: splitOrders.map((o: any) => ({
         orderId: o.id,
@@ -12463,31 +13486,22 @@ export async function getAllPRsForSiteAdmin(
   // Exclude: PENDING_SITE_ADMIN_APPROVAL (Tab 1), PENDING_COMPANY_ADMIN_APPROVAL (Tab 2)
   // PR visibility driven ONLY by pr_status and createdAt (date filter)
   // NO filtering based on PO/GRN existence
-  // CRITICAL: Include orders where pr_status is null/undefined for backward compatibility
+  // UNIFIED-ONLY: Use unified_pr_status as the single source of truth
   // CRITICAL: Use string IDs, not ObjectIds
   const queryFilter: any = {
     employeeId: { $in: employeeStringIds },
-    $or: [
-      {
-        pr_status: { 
-          $in: [
-            'COMPANY_ADMIN_APPROVED',  // Approved by company admin
-            'PO_CREATED',              // PO created
-            'REJECTED_BY_SITE_ADMIN',  // Rejected PRs
-            'REJECTED_BY_COMPANY_ADMIN', // Rejected PRs
-            'DRAFT',                    // Draft PRs
-            'SUBMITTED',                // Submitted PRs
-            'SITE_ADMIN_APPROVED'       // Site admin approved (but not yet sent to company admin - edge case)
-          ]
-        }
-      },
-      {
-        pr_status: { $exists: false }  // Backward compatibility: include orders without pr_status
-      },
-      {
-        pr_status: null  // Backward compatibility: include orders with null pr_status
-      }
-    ]
+    unified_pr_status: { 
+      $in: [
+        'COMPANY_ADMIN_APPROVED',  // Approved by company admin
+        'LINKED_TO_PO',            // PO created (unified equivalent of PO_CREATED)
+        'REJECTED',                // Rejected PRs
+        'DRAFT',                   // Draft PRs
+        'SITE_ADMIN_APPROVED',     // Site admin approved
+        'IN_SHIPMENT',             // In shipment
+        'PARTIALLY_DELIVERED',     // Partially delivered
+        'FULLY_DELIVERED',         // Fully delivered
+      ]
+    }
   }
   
   console.log(`[getAllPRsForSiteAdmin] 🔍 Query filter (before date filter):`, JSON.stringify(queryFilter, null, 2))
@@ -12512,11 +13526,9 @@ export async function getAllPRsForSiteAdmin(
   // Find ALL orders from employees at this location with downstream statuses
   // NO status filter on order.status - only pr_status matters
   // NO filtering based on PO/GRN existence - PR-only records MUST appear
+  // CRITICAL: Don't use populate since Order.employeeId is a string ID
   const allOrders = await Order.find(queryFilter)
-    .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount pr_number pr_date pr_status site_admin_approved_by site_admin_approved_at company_admin_approved_by company_admin_approved_at createdAt')
-    .populate('employeeId', 'id employeeId firstName lastName email locationId')
-    .populate('companyId', 'id name')
-    .populate('items.uniformId', 'id name')
+    .select('id employeeId employeeIdNum employeeName items total status unified_status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount pr_number pr_date pr_status unified_pr_status site_admin_approved_by site_admin_approved_at company_admin_approved_by company_admin_approved_at createdAt')
     .sort({ createdAt: -1, orderDate: -1 })
     .lean()
   
@@ -12524,7 +13536,7 @@ export async function getAllPRsForSiteAdmin(
   if (allOrders.length > 0) {
     console.log(`[getAllPRsForSiteAdmin] 📋 Sample orders (first 3):`)
     allOrders.slice(0, 3).forEach((order: any, idx: number) => {
-      console.log(`  ${idx + 1}. Order ID: ${order.id}, PR Status: ${order.pr_status || 'N/A'}, PR Number: ${order.pr_number || 'N/A'}`)
+      console.log(`  ${idx + 1}. Order ID: ${order.id}, PR Status: ${order.unified_pr_status || 'N/A'}, PR Number: ${order.pr_number || 'N/A'}`)
     })
   } else {
     console.log(`[getAllPRsForSiteAdmin] ⚠️  No orders found matching query filter`)
@@ -12540,7 +13552,7 @@ export async function getAllPRsForSiteAdmin(
     if (allOrdersNoStatusFilter.length > 0) {
       const statusCounts: Record<string, number> = {}
       allOrdersNoStatusFilter.forEach((o: any) => {
-        const status = o.pr_status || 'NULL'
+        const status = o.unified_pr_status || 'NULL'
         statusCounts[status] = (statusCounts[status] || 0) + 1
       })
       console.log(`[getAllPRsForSiteAdmin] 📊 PR Status breakdown:`)
@@ -12557,19 +13569,115 @@ export async function getAllPRsForSiteAdmin(
   const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
   const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
   
-  // Add vendorName to orders
-  allOrders.forEach((o: any) => {
-    if (!o.vendorName && o.vendorId && vendorMap.has(o.vendorId)) {
-      o.vendorName = vendorMap.get(o.vendorId)
+  // Decrypt employee names and populate employee/company/uniform info manually
+  const { decrypt } = require('../utils/encryption')
+  const allOrdersWithDetails = await Promise.all(allOrders.map(async (o: any) => {
+    const plain = toPlainObject(o)
+    
+    // Manually fetch employee info using string ID and decrypt name
+    // Try multiple ID fields: employeeId, employeeIdNum to ensure we find the employee
+    const empIdToSearch = plain.employeeId || plain.employeeIdNum
+    if (empIdToSearch && typeof empIdToSearch === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(empIdToSearch)) {
+      // Build OR query to match employee by different ID fields
+      const empSearchConditions: any[] = [
+        { id: empIdToSearch },
+        { employeeId: empIdToSearch }
+      ]
+      // Also try employeeIdNum if different from employeeId
+      if (plain.employeeIdNum && plain.employeeIdNum !== empIdToSearch) {
+        empSearchConditions.push({ id: plain.employeeIdNum })
+        empSearchConditions.push({ employeeId: plain.employeeIdNum })
+      }
+      
+      const employee = await Employee.findOne({ 
+        $or: empSearchConditions
+      }).select('id employeeId firstName lastName email locationId address_line_1 address_line_2 address_line_3 city state pincode').lean()
+      
+      if (employee) {
+        // Decrypt employee fields since we used .lean()
+        const decryptedEmployee: any = { ...employee }
+        const sensitiveFields = ['firstName', 'lastName', 'email', 'address_line_1', 'address_line_2', 'address_line_3', 'city', 'state', 'pincode']
+        
+        for (const field of sensitiveFields) {
+          if (decryptedEmployee[field] && typeof decryptedEmployee[field] === 'string' && decryptedEmployee[field].includes(':')) {
+            try {
+              decryptedEmployee[field] = decrypt(decryptedEmployee[field])
+            } catch (error) {
+              // If decryption fails, keep original value
+            }
+          }
+        }
+        
+        // Construct employeeName from decrypted firstName and lastName
+        const decryptedFirstName = decryptedEmployee.firstName || ''
+        const decryptedLastName = decryptedEmployee.lastName || ''
+        const decryptedEmployeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+        plain.employeeName = decryptedEmployeeName
+        
+        // Populate delivery address from employee if not set
+        if (!plain.deliveryAddress || plain.deliveryAddress === 'N/A' || plain.deliveryAddress.trim() === '') {
+          const addressParts = [
+            decryptedEmployee.address_line_1,
+            decryptedEmployee.address_line_2,
+            decryptedEmployee.address_line_3,
+            decryptedEmployee.city,
+            decryptedEmployee.state,
+            decryptedEmployee.pincode
+          ].filter(Boolean)
+          if (addressParts.length > 0) {
+            plain.deliveryAddress = addressParts.join(', ')
+          }
+        }
+        
+        plain.employeeId = toPlainObject(decryptedEmployee)
+      } else {
+        console.log(`[getAllPRsForSiteAdmin] ⚠️ Employee not found for order ${plain.id}, empIdToSearch=${empIdToSearch}, employeeIdNum=${plain.employeeIdNum}`)
+      }
     }
-  })
+    
+    // Manually fetch company info using string ID
+    if (plain.companyId && typeof plain.companyId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.companyId)) {
+      const company = await Company.findOne({ id: plain.companyId })
+        .select('id name')
+        .lean()
+      if (company) {
+        plain.companyId = toPlainObject(company)
+      }
+    }
+    
+    // Manually fetch uniform info for items
+    if (plain.items && Array.isArray(plain.items)) {
+      const uniformIds = [...new Set(plain.items.map((item: any) => item.uniformId).filter(Boolean))]
+      if (uniformIds.length > 0) {
+        const Uniform = require('../models/Uniform').default
+        const uniforms = await Uniform.find({ id: { $in: uniformIds } })
+          .select('id name')
+          .lean()
+        const uniformMap = new Map(uniforms.map((u: any) => [u.id, toPlainObject(u)]))
+        
+        plain.items = plain.items.map((item: any) => {
+          if (item.uniformId && uniformMap.has(item.uniformId)) {
+            item.uniformId = uniformMap.get(item.uniformId)
+          }
+          return item
+        })
+      }
+    }
+    
+    // Add vendorName
+    if (!plain.vendorName && plain.vendorId && vendorMap.has(plain.vendorId)) {
+      plain.vendorName = vendorMap.get(plain.vendorId)
+    }
+    
+    return plain
+  }))
   
-  console.log(`[getAllPRsForSiteAdmin] Found ${allOrders.length} order(s) for location: ${location.id}`)
+  console.log(`[getAllPRsForSiteAdmin] Found ${allOrdersWithDetails.length} order(s) for location: ${location.id}`)
   
   // Group orders by parentOrderId (similar to other functions)
   const parentOrderIds = new Set<string>()
   const standaloneOrders: any[] = []
-  const plainOrders = allOrders.map((o: any) => toPlainObject(o))
+  const plainOrders = allOrdersWithDetails
 
   console.log(`[getAllPRsForSiteAdmin] 📊 Processing ${plainOrders.length} order(s) for grouping...`)
   
@@ -12589,32 +13697,23 @@ export async function getAllPRsForSiteAdmin(
   const orderMap = new Map<string, any[]>()
   if (parentOrderIds.size > 0) {
     // Build child orders query filter - same status filter as parent orders
-    // CRITICAL: Include backward compatibility for null/undefined pr_status
+    // UNIFIED-ONLY: Use unified_pr_status as the single source of truth
     // CRITICAL: Use string IDs, not ObjectIds
     const childQueryFilter: any = {
       employeeId: { $in: employeeStringIds },
       parentOrderId: { $in: Array.from(parentOrderIds) },
-      $or: [
-        {
-          pr_status: { 
-            $in: [
-              'COMPANY_ADMIN_APPROVED',
-              'PO_CREATED',
-              'REJECTED_BY_SITE_ADMIN',
-              'REJECTED_BY_COMPANY_ADMIN',
-              'DRAFT',
-              'SUBMITTED',
-              'SITE_ADMIN_APPROVED'
-            ]
-          }
-        },
-        {
-          pr_status: { $exists: false }  // Backward compatibility: include orders without pr_status
-        },
-        {
-          pr_status: null  // Backward compatibility: include orders with null pr_status
-        }
-      ]
+      unified_pr_status: { 
+        $in: [
+          'COMPANY_ADMIN_APPROVED',
+          'LINKED_TO_PO',
+          'REJECTED',
+          'DRAFT',
+          'SITE_ADMIN_APPROVED',
+          'IN_SHIPMENT',
+          'PARTIALLY_DELIVERED',
+          'FULLY_DELIVERED',
+        ]
+      }
     }
     
     // Apply same date filter to child orders
@@ -12630,21 +13729,88 @@ export async function getAllPRsForSiteAdmin(
       }
     }
     
+    // CRITICAL: Don't use populate since Order.employeeId is a string ID
     const allChildOrders = await Order.find(childQueryFilter)
-      .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount pr_number pr_date pr_status site_admin_approved_by site_admin_approved_at company_admin_approved_by company_admin_approved_at createdAt')
-      .populate('employeeId', 'id employeeId firstName lastName email locationId')
-      .populate('companyId', 'id name')
-      .populate('items.uniformId', 'id name')
+      .select('id employeeId employeeIdNum employeeName items total status unified_status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount pr_number pr_date pr_status unified_pr_status site_admin_approved_by site_admin_approved_at company_admin_approved_by company_admin_approved_at createdAt')
       .lean()
     
-    const allChildOrdersPlain = allChildOrders.map((o: any) => toPlainObject(o))
-    
-    // Add vendor names to child orders
-    allChildOrdersPlain.forEach((o: any) => {
-      if (!o.vendorName && o.vendorId && vendorMap.has(o.vendorId)) {
-        o.vendorName = vendorMap.get(o.vendorId)
+    // Decrypt employee names and populate details for child orders
+    const allChildOrdersPlain = await Promise.all(allChildOrders.map(async (o: any) => {
+      const plain = toPlainObject(o)
+      
+      // Manually fetch employee info using string ID and decrypt name
+      // Try multiple ID fields: employeeId, employeeIdNum to ensure we find the employee
+      const empIdToSearch = plain.employeeId || plain.employeeIdNum
+      if (empIdToSearch && typeof empIdToSearch === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(empIdToSearch)) {
+        // Build OR query to match employee by different ID fields
+        const empSearchConditions: any[] = [
+          { id: empIdToSearch },
+          { employeeId: empIdToSearch }
+        ]
+        // Also try employeeIdNum if different from employeeId
+        if (plain.employeeIdNum && plain.employeeIdNum !== empIdToSearch) {
+          empSearchConditions.push({ id: plain.employeeIdNum })
+          empSearchConditions.push({ employeeId: plain.employeeIdNum })
+        }
+        
+        const employee = await Employee.findOne({ 
+          $or: empSearchConditions
+        }).select('id employeeId firstName lastName email locationId address_line_1 address_line_2 address_line_3 city state pincode').lean()
+        
+        if (employee) {
+          const decryptedEmployee: any = { ...employee }
+          const sensitiveFields = ['firstName', 'lastName', 'email', 'address_line_1', 'address_line_2', 'address_line_3', 'city', 'state', 'pincode']
+          
+          for (const field of sensitiveFields) {
+            if (decryptedEmployee[field] && typeof decryptedEmployee[field] === 'string' && decryptedEmployee[field].includes(':')) {
+              try {
+                decryptedEmployee[field] = decrypt(decryptedEmployee[field])
+              } catch (error) {
+                // If decryption fails, keep original value
+              }
+            }
+          }
+          
+          const decryptedFirstName = decryptedEmployee.firstName || ''
+          const decryptedLastName = decryptedEmployee.lastName || ''
+          plain.employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+          
+          // Populate delivery address from employee if not set
+          if (!plain.deliveryAddress || plain.deliveryAddress === 'N/A' || plain.deliveryAddress.trim() === '') {
+            const addressParts = [
+              decryptedEmployee.address_line_1,
+              decryptedEmployee.address_line_2,
+              decryptedEmployee.address_line_3,
+              decryptedEmployee.city,
+              decryptedEmployee.state,
+              decryptedEmployee.pincode
+            ].filter(Boolean)
+            if (addressParts.length > 0) {
+              plain.deliveryAddress = addressParts.join(', ')
+            }
+          }
+          
+          plain.employeeId = toPlainObject(decryptedEmployee)
+        } else {
+          console.log(`[getAllPRsForSiteAdmin] ⚠️ Child order - Employee not found for order ${plain.id}, empIdToSearch=${empIdToSearch}`)
+        }
       }
-    })
+      
+      // Manually fetch company info
+      if (plain.companyId && typeof plain.companyId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.companyId)) {
+        const company = await Company.findOne({ id: plain.companyId }).select('id name').lean()
+        if (company) {
+          plain.companyId = toPlainObject(company)
+        }
+      }
+      
+      // Add vendorName
+      if (!plain.vendorName && plain.vendorId && vendorMap.has(plain.vendorId)) {
+        plain.vendorName = vendorMap.get(plain.vendorId)
+      }
+      
+      return plain
+    }))
     
     for (const childOrder of allChildOrdersPlain) {
       const parentId = childOrder.parentOrderId
@@ -12672,23 +13838,90 @@ export async function getAllPRsForSiteAdmin(
   let missingParents: any[] = []
   if (missingParentIds.length > 0) {
     console.log(`[getAllPRsForSiteAdmin] ⚠️  Found ${missingParentIds.length} parent order(s) not in query results, fetching separately...`)
+    // CRITICAL: Don't use populate since Order.employeeId is a string ID
     const missingParentOrders = await Order.find({
       id: { $in: missingParentIds }
     })
-      .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount pr_number pr_date pr_status site_admin_approved_by site_admin_approved_at company_admin_approved_by company_admin_approved_at createdAt')
-      .populate('employeeId', 'id employeeId firstName lastName email locationId')
-      .populate('companyId', 'id name')
-      .populate('items.uniformId', 'id name')
+      .select('id employeeId employeeIdNum employeeName items total status unified_status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount pr_number pr_date pr_status unified_pr_status site_admin_approved_by site_admin_approved_at company_admin_approved_by company_admin_approved_at createdAt')
       .lean()
     
-    missingParents = missingParentOrders.map((o: any) => toPlainObject(o))
-    
-    // Add vendor names to missing parents
-    missingParents.forEach((o: any) => {
-      if (!o.vendorName && o.vendorId && vendorMap.has(o.vendorId)) {
-        o.vendorName = vendorMap.get(o.vendorId)
+    // Decrypt employee names and populate details for missing parents
+    missingParents = await Promise.all(missingParentOrders.map(async (o: any) => {
+      const plain = toPlainObject(o)
+      
+      // Manually fetch employee info using string ID and decrypt name
+      // Try multiple ID fields: employeeId, employeeIdNum to ensure we find the employee
+      const empIdToSearch = plain.employeeId || plain.employeeIdNum
+      if (empIdToSearch && typeof empIdToSearch === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(empIdToSearch)) {
+        // Build OR query to match employee by different ID fields
+        const empSearchConditions: any[] = [
+          { id: empIdToSearch },
+          { employeeId: empIdToSearch }
+        ]
+        // Also try employeeIdNum if different from employeeId
+        if (plain.employeeIdNum && plain.employeeIdNum !== empIdToSearch) {
+          empSearchConditions.push({ id: plain.employeeIdNum })
+          empSearchConditions.push({ employeeId: plain.employeeIdNum })
+        }
+        
+        const employee = await Employee.findOne({ 
+          $or: empSearchConditions
+        }).select('id employeeId firstName lastName email locationId address_line_1 address_line_2 address_line_3 city state pincode').lean()
+        
+        if (employee) {
+          const decryptedEmployee: any = { ...employee }
+          const sensitiveFields = ['firstName', 'lastName', 'email', 'address_line_1', 'address_line_2', 'address_line_3', 'city', 'state', 'pincode']
+          
+          for (const field of sensitiveFields) {
+            if (decryptedEmployee[field] && typeof decryptedEmployee[field] === 'string' && decryptedEmployee[field].includes(':')) {
+              try {
+                decryptedEmployee[field] = decrypt(decryptedEmployee[field])
+              } catch (error) {
+                // If decryption fails, keep original value
+              }
+            }
+          }
+          
+          const decryptedFirstName = decryptedEmployee.firstName || ''
+          const decryptedLastName = decryptedEmployee.lastName || ''
+          plain.employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+          
+          // Populate delivery address from employee if not set
+          if (!plain.deliveryAddress || plain.deliveryAddress === 'N/A' || plain.deliveryAddress.trim() === '') {
+            const addressParts = [
+              decryptedEmployee.address_line_1,
+              decryptedEmployee.address_line_2,
+              decryptedEmployee.address_line_3,
+              decryptedEmployee.city,
+              decryptedEmployee.state,
+              decryptedEmployee.pincode
+            ].filter(Boolean)
+            if (addressParts.length > 0) {
+              plain.deliveryAddress = addressParts.join(', ')
+            }
+          }
+          
+          plain.employeeId = toPlainObject(decryptedEmployee)
+        } else {
+          console.log(`[getAllPRsForSiteAdmin] ⚠️ Missing parent - Employee not found for order ${plain.id}, empIdToSearch=${empIdToSearch}`)
+        }
       }
-    })
+      
+      // Manually fetch company info
+      if (plain.companyId && typeof plain.companyId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.companyId)) {
+        const company = await Company.findOne({ id: plain.companyId }).select('id name').lean()
+        if (company) {
+          plain.companyId = toPlainObject(company)
+        }
+      }
+      
+      // Add vendorName
+      if (!plain.vendorName && plain.vendorId && vendorMap.has(plain.vendorId)) {
+        plain.vendorName = vendorMap.get(plain.vendorId)
+      }
+      
+      return plain
+    }))
     
     console.log(`[getAllPRsForSiteAdmin] ✅ Fetched ${missingParents.length} missing parent order(s)`)
   }
@@ -12757,7 +13990,7 @@ export async function getAllPRsForSiteAdmin(
           deliveryAddress: firstChild.deliveryAddress,
           pr_number: firstChild.pr_number,
           pr_date: firstChild.pr_date,
-          pr_status: firstChild.pr_status,
+          unified_pr_status: firstChild.unified_pr_status,
           childOrders: childOrders,
           isParent: true,
           isSplitOrder: true,
@@ -12846,9 +14079,10 @@ export async function getApprovedPRsForSiteAdmin(
   // PR visibility driven ONLY by pr_status and createdAt (date filter)
   // NO filtering based on PO/GRN existence
   // CRITICAL: Use string IDs, not ObjectIds
+  // UNIFIED-ONLY: Use unified_pr_status as the single source of truth
   const queryFilter: any = {
     employeeId: { $in: employeeStringIds },
-    pr_status: 'PENDING_COMPANY_ADMIN_APPROVAL', // Tab 2: Only pending company admin approval
+    unified_pr_status: 'PENDING_COMPANY_ADMIN_APPROVAL',
   }
   
   // Apply date filter on PR.createdAt if provided
@@ -12978,7 +14212,7 @@ export async function getApprovedPRsForSiteAdmin(
     const childQueryFilter: any = {
       employeeId: { $in: employeeStringIds },
       parentOrderId: { $in: Array.from(parentOrderIds) },
-      pr_status: 'PENDING_COMPANY_ADMIN_APPROVAL',
+      unified_pr_status: 'PENDING_COMPANY_ADMIN_APPROVAL',
     }
     
     // Apply same date filter to child orders
@@ -13110,7 +14344,7 @@ export async function getApprovedPRsForSiteAdmin(
       deliveryAddress: splitOrders[0]?.deliveryAddress,
       pr_number: splitOrders[0]?.pr_number,
       pr_date: splitOrders[0]?.pr_date,
-      pr_status: splitOrders[0]?.pr_status,
+      unified_pr_status: splitOrders[0]?.unified_pr_status,
       site_admin_approved_at: splitOrders[0]?.site_admin_approved_at,
       isSplitOrder: true,
       splitOrders: splitOrders.map((o: any) => ({
@@ -13293,9 +14527,9 @@ export async function createPurchaseOrderFromPRs(
   // - SITE_ADMIN_APPROVED (Site Admin approved, no Company Admin approval needed)
   // - PO_CREATED (PR already has PO created - allows re-creating or updating PO)
   for (const order of ordersToProcess) {
-    const validStatuses = ['PENDING_COMPANY_ADMIN_APPROVAL', 'SITE_ADMIN_APPROVED', 'PO_CREATED']
-    if (!validStatuses.includes(order.pr_status)) {
-      throw new Error(`Order ${order.id} is not in a valid status for PO creation. Current status: ${order.pr_status}. Valid statuses: ${validStatuses.join(', ')}`)
+    const validStatuses = ['PENDING_COMPANY_ADMIN_APPROVAL', 'SITE_ADMIN_APPROVED', 'COMPANY_ADMIN_APPROVED', 'LINKED_TO_PO']
+    if (!validStatuses.includes(order.unified_pr_status)) {
+      throw new Error(`Order ${order.id} is not in a valid status for PO creation. Current unified_pr_status: ${order.unified_pr_status}. Valid statuses: ${validStatuses.join(', ')}`)
     }
     // CRITICAL FIX: Order.companyId is a STRING ID (6-digit numeric), not ObjectId
     // Compare with company.id (string ID) instead of company._id (ObjectId)
@@ -13512,6 +14746,18 @@ export async function createPurchaseOrderFromPRs(
     // Generate PO ID
     const poId = `PO-${company.id}-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`
     
+    // DUAL-WRITE: PO status (behind feature flag)
+    let unifiedPOFields: Record<string, any> = {}
+    if (process.env.DUAL_WRITE_ENABLED === "true") {
+      try {
+        const dualWriteResult = safeDualWritePOStatus(poId, 'SENT_TO_VENDOR' as UnifiedPOStatus, null, null, { updatedBy: createdByUserId, source: 'createPurchaseOrderFromPRs' })
+        unifiedPOFields = dualWriteResult.unifiedUpdate
+        console.log(`[createPurchaseOrderFromPRs] 🔄 DUAL-WRITE: PO ${poId} → unified_po_status=SENT_TO_VENDOR`)
+      } catch (dualWriteError: any) {
+        console.error(`[createPurchaseOrderFromPRs] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+      }
+    }
+    
     // Create PO - use vendor numeric ID (6-digit string) instead of ObjectId
     // CRITICAL FIX: PurchaseOrder.companyId and PurchaseOrder.created_by_user_id are STRING IDs (6-digit numeric), not ObjectIds
     const purchaseOrder = await PurchaseOrder.create({
@@ -13521,7 +14767,8 @@ export async function createPurchaseOrderFromPRs(
       client_po_number: poNumber.trim(),
       po_date: poDate,
       po_status: 'SENT_TO_VENDOR', // Immediately send to vendor for fulfilment
-      created_by_user_id: creatingEmployee.id || creatingEmployee.employeeId // Use string ID (6-digit numeric), not ObjectId
+      created_by_user_id: creatingEmployee.id || creatingEmployee.employeeId, // Use string ID (6-digit numeric), not ObjectId
+      ...unifiedPOFields, // Include unified fields if flag enabled
     })
     
     console.log(`[createPurchaseOrderFromPRs] ✅ Created PO: ${poId} for vendor ${vendor.name}`)
@@ -13542,12 +14789,35 @@ export async function createPurchaseOrderFromPRs(
       })
       
       // Update order status using string ID
+      // DUAL-WRITE: Order and PR status cascade (behind feature flag)
+      let orderUnifiedFields: Record<string, any> = {}
+      if (process.env.DUAL_WRITE_ENABLED === "true") {
+        try {
+          // Get current order for old status values
+          const currentOrder = orderDoc as any
+          const oldStatus = currentOrder.status || 'CREATED'
+          const oldPRStatus = currentOrder.unified_pr_status || 'PENDING_COMPANY_ADMIN_APPROVAL'
+          
+          const orderResult = safeDualWriteOrderStatus(orderIdString, 'IN_PURCHASE_ORDER' as UnifiedOrderStatus, oldStatus, currentOrder.unified_status || null, { source: 'createPurchaseOrderFromPRs' })
+          const prResult = safeDualWritePRStatus(orderIdString, 'LINKED_TO_PO' as UnifiedPRStatus, oldPRStatus, currentOrder.unified_pr_status || null, { source: 'createPurchaseOrderFromPRs' })
+          
+          orderUnifiedFields = {
+            ...orderResult.unifiedUpdate,
+            ...prResult.unifiedUpdate,
+          }
+          console.log(`[createPurchaseOrderFromPRs] 🔄 DUAL-WRITE: Order ${orderIdString} → unified_status=IN_PURCHASE_ORDER, unified_pr_status=LINKED_TO_PO`)
+        } catch (dualWriteError: any) {
+          console.error(`[createPurchaseOrderFromPRs] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+        }
+      }
+      
       const updateResult = await Order.updateOne(
         { id: orderIdString },
         { 
           $set: {
             status: 'Awaiting fulfilment',
-            pr_status: 'PO_CREATED'
+            unified_pr_status: 'LINKED_TO_PO',
+            unified_status: 'IN_FULFILMENT',
           }
         }
       )
@@ -13754,9 +15024,10 @@ export async function updatePRShipmentStatus(
     throw new Error(`Vendor ${vendorId} is not authorized to update PR ${prId}`)
   }
   
-  // Validate PR is in correct status
-  if (pr.pr_status !== 'PO_CREATED') {
-    throw new Error(`PR ${prId} is not in PO_CREATED status (current: ${pr.pr_status})`)
+  // Validate PR is in correct status (unified_pr_status only - legacy pr_status removed)
+  const prStatus = pr.unified_pr_status
+  if (prStatus !== 'LINKED_TO_PO') {
+    throw new Error(`PR ${prId} is not in LINKED_TO_PO status (current: ${prStatus})`)
   }
   
   // MANDATORY VALIDATION: Check required fields
@@ -13868,13 +15139,46 @@ export async function updatePRShipmentStatus(
   pr.carrierName = shipmentData.carrierName?.trim()
   pr.modeOfTransport = shipmentData.modeOfTransport
   pr.trackingNumber = shipmentData.trackingNumber?.trim()
+  
+  // DUAL-WRITE: Dispatch status (behind feature flag)
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    console.log(`[updatePRShipmentStatus] 🔄 DUAL-WRITE: dispatchStatus → SHIPPED`)
+  }
+  // LEGACY: Set dispatch status
   pr.dispatchStatus = 'SHIPPED'
   pr.dispatchedDate = shipmentData.dispatchedDate
   pr.expectedDeliveryDate = shipmentData.expectedDeliveryDate
+  
+  // DUAL-WRITE: Delivery status (behind feature flag)
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    console.log(`[updatePRShipmentStatus] 🔄 DUAL-WRITE: deliveryStatus → ${deliveryStatus}`)
+  }
+  // LEGACY: Set delivery status
   pr.deliveryStatus = deliveryStatus
   pr.items = updatedItems as any
   
   // AUTO-UPDATE: Update Order status to Dispatched when items are shipped
+  // DUAL-WRITE: Order status to Dispatched (behind feature flag)
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    try {
+      const previousStatus = pr.status
+      const currentUnified = pr.unified_status || getUnifiedStatusFromLegacy('Order', previousStatus || 'Awaiting fulfilment')
+      const dualWriteResult = safeDualWriteOrderStatus(
+        prId,
+        'DISPATCHED' as UnifiedOrderStatus,
+        previousStatus,
+        currentUnified as string,
+        { updatedBy: 'system', source: 'updatePRShipmentStatus', metadata: { autoUpdate: true, trigger: 'shipment_created', shipmentId } }
+      )
+      pr.unified_status = dualWriteResult.unifiedUpdate.unified_status as string
+      pr.unified_status_updated_at = dualWriteResult.unifiedUpdate.unified_status_updated_at as Date
+      pr.unified_status_updated_by = dualWriteResult.unifiedUpdate.unified_status_updated_by as string
+      console.log(`[updatePRShipmentStatus] 🔄 DUAL-WRITE: status → Dispatched (unified: ${pr.unified_status})`)
+    } catch (dualWriteError: any) {
+      console.error(`[updatePRShipmentStatus] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+    }
+  }
+  // LEGACY: Always update legacy status
   pr.status = 'Dispatched'
   
   await pr.save()
@@ -14037,6 +15341,73 @@ export async function updatePRShipmentStatus(
   // AUTO-UPDATE: Update PO status based on PR shipment status
   await updatePOStatusFromPRDelivery(prId)
   
+  // ========================================================================
+  // PARENT/SPLIT ORDER STATUS SYNCHRONIZATION
+  // ========================================================================
+  // BUSINESS RULE: When a split order (PR) status changes to Dispatched,
+  // sync to parent order and other split orders for consistency.
+  // ========================================================================
+  try {
+    const prWithParent = pr as any
+    const currentOrderId = pr.id
+    const parentOrderId = prWithParent.parentOrderId
+    
+    // Check if this is a split order (has parentOrderId and ID contains vendor suffix)
+    const isSplitOrder = parentOrderId && currentOrderId !== parentOrderId && currentOrderId.includes('-10')
+    
+    console.log(`[updatePRShipmentStatus] 🔄 STATUS SYNC: Checking for related orders...`)
+    console.log(`[updatePRShipmentStatus]   Current order (PR): ${currentOrderId}`)
+    console.log(`[updatePRShipmentStatus]   Parent order ID: ${parentOrderId || 'N/A'}`)
+    console.log(`[updatePRShipmentStatus]   Is split order: ${isSplitOrder}`)
+    
+    if (isSplitOrder && parentOrderId) {
+      // This is a SPLIT ORDER - sync status to PARENT and OTHER SPLITS
+      console.log(`[updatePRShipmentStatus] 🔄 SYNC: Split order dispatched, syncing to parent and siblings...`)
+      
+      // Find all related orders (parent + all splits with same parentOrderId)
+      const relatedOrders = await Order.find({
+        $or: [
+          { id: parentOrderId }, // Parent order
+          { parentOrderId: parentOrderId, id: { $ne: currentOrderId } } // Sibling split orders
+        ]
+      })
+      
+      console.log(`[updatePRShipmentStatus]   Found ${relatedOrders.length} related order(s)`)
+      
+      // Update status on all related orders
+      for (const relatedOrder of relatedOrders) {
+        const relatedId = relatedOrder.id
+        const relatedPrevStatus = relatedOrder.status
+        
+        if (relatedPrevStatus !== 'Dispatched') {
+          console.log(`[updatePRShipmentStatus]   Syncing ${relatedId}: ${relatedPrevStatus} -> Dispatched`)
+          
+          // Build update payload
+          const syncUpdate: any = {
+            status: 'Dispatched',
+            dispatchStatus: 'SHIPPED',
+            dispatchedDate: pr.dispatchedDate || new Date(),
+          }
+          
+          // Include unified status fields
+          if (pr.unified_status) {
+            syncUpdate.unified_status = pr.unified_status
+            syncUpdate.unified_status_updated_at = new Date()
+            syncUpdate.unified_status_updated_by = 'pr_shipment_sync'
+          }
+          
+          await Order.updateOne({ id: relatedId }, { $set: syncUpdate })
+          console.log(`[updatePRShipmentStatus]   ✅ Synced ${relatedId} to status: Dispatched`)
+        } else {
+          console.log(`[updatePRShipmentStatus]   ⏭️ ${relatedId} already at status: Dispatched`)
+        }
+      }
+    }
+  } catch (syncError: any) {
+    // Log but don't fail the main operation
+    console.error(`[updatePRShipmentStatus] ⚠️ Status sync error (non-fatal):`, syncError.message)
+  }
+  
   // Return updated PR - use string id field instead of _id
   const prIdStr = pr.id || String(pr._id || '')
   const updatedPR = await Order.findOne({ id: prIdStr })
@@ -14141,7 +15512,7 @@ async function updateSinglePOStatus(poId: string): Promise<void> {
     return
   }
   
-  // CRITICAL FIX: Check PR status (pr_status = 'FULLY_DELIVERED' or deliveryStatus = 'DELIVERED')
+  // CRITICAL FIX: Check PR status (unified_pr_status = 'FULLY_DELIVERED' or deliveryStatus = 'DELIVERED')
   // instead of item-level checks to properly handle shipment-based delivery
   let allPRsDelivered = true
   let allPRsShipped = true
@@ -14149,8 +15520,8 @@ async function updateSinglePOStatus(poId: string): Promise<void> {
   let anyPRDelivered = false
   
   for (const pr of prs) {
-    // Check PR status: PR is fully delivered if pr_status = 'FULLY_DELIVERED' or deliveryStatus = 'DELIVERED'
-    const prFullyDelivered = pr.pr_status === 'FULLY_DELIVERED' || pr.deliveryStatus === 'DELIVERED'
+    // Check PR status: PR is fully delivered if unified_pr_status = 'FULLY_DELIVERED' or deliveryStatus = 'DELIVERED'
+    const prFullyDelivered = pr.unified_pr_status === 'FULLY_DELIVERED' || pr.deliveryStatus === 'DELIVERED'
     const prShipped = pr.dispatchStatus === 'SHIPPED'
     const prDelivered = pr.deliveryStatus === 'DELIVERED' || pr.deliveryStatus === 'PARTIALLY_DELIVERED'
     
@@ -14202,11 +15573,29 @@ async function updateSinglePOStatus(poId: string): Promise<void> {
   
   // Update PO status if it changed
   if (currentPO.po_status !== newPOStatus) {
-    await PurchaseOrder.updateOne(
-      { id: poId },
-      { $set: { po_status: newPOStatus } }
-    )
-    console.log(`[updateSinglePOStatus] Updated PO ${poId} status from ${currentPO.po_status} to ${newPOStatus}`)
+    // DUAL-WRITE: PO status update (behind feature flag)
+    if (process.env.DUAL_WRITE_ENABLED === "true") {
+      try {
+        const unifiedStatus = getUnifiedStatusFromLegacy('PO', newPOStatus) as UnifiedPOStatus
+        const currentUnified = currentPO.unified_po_status || getUnifiedStatusFromLegacy('PO', currentPO.po_status || 'CREATED')
+        const dualWriteResult = safeDualWritePOStatus(poId, unifiedStatus, currentPO.po_status, currentUnified as string, { source: 'updateSinglePOStatus' })
+        await PurchaseOrder.updateOne(
+          { id: poId },
+          { $set: { 
+            po_status: newPOStatus,
+            ...dualWriteResult.unifiedUpdate 
+          } }
+        )
+        console.log(`[updateSinglePOStatus] 🔄 DUAL-WRITE: PO ${poId} status ${currentPO.po_status} → ${newPOStatus} (unified: ${unifiedStatus})`)
+      } catch (dualWriteError: any) {
+        console.error(`[updateSinglePOStatus] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+        await PurchaseOrder.updateOne({ id: poId }, { $set: { po_status: newPOStatus } })
+      }
+    } else {
+      // LEGACY: Original behavior
+      await PurchaseOrder.updateOne({ id: poId }, { $set: { po_status: newPOStatus } })
+      console.log(`[updateSinglePOStatus] Updated PO ${poId} status from ${currentPO.po_status} to ${newPOStatus}`)
+    }
   }
   
   // CRITICAL FIX: When PO is COMPLETED (all PRs fully delivered), update all PRs' pr_status to FULLY_DELIVERED
@@ -14219,13 +15608,25 @@ async function updateSinglePOStatus(poId: string): Promise<void> {
       // Only update PRs that don't already have FULLY_DELIVERED status
       const prsToUpdate = prs.filter(pr => {
         const prId = typeof pr.id === 'string' ? pr.id : String(pr.id || '')
-        return prId && pr.pr_status !== 'FULLY_DELIVERED'
+        return prId && pr.unified_pr_status !== 'FULLY_DELIVERED'
       }).map(pr => typeof pr.id === 'string' ? pr.id : String(pr.id || '')).filter(Boolean)
       
       if (prsToUpdate.length > 0) {
+        // DUAL-WRITE: PR status cascade (behind feature flag)
+        let prUnifiedFields: Record<string, any> = {}
+        if (process.env.DUAL_WRITE_ENABLED === "true") {
+          try {
+            const dualWriteResult = safeDualWritePRStatus('cascade', 'FULLY_DELIVERED' as UnifiedPRStatus, null, null, { source: 'updateSinglePOStatus-cascade' })
+            prUnifiedFields = dualWriteResult.unifiedUpdate
+            console.log(`[updateSinglePOStatus] 🔄 DUAL-WRITE: PR(s) → unified_pr_status=FULLY_DELIVERED`)
+          } catch (dualWriteError: any) {
+            console.error(`[updateSinglePOStatus] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+          }
+        }
+        
         await Order.updateMany(
           { id: { $in: prsToUpdate } },
-          { $set: { pr_status: 'FULLY_DELIVERED' } }
+          { $set: { unified_pr_status: 'FULLY_DELIVERED', unified_status: 'DELIVERED' } }
         )
         console.log(`[updateSinglePOStatus] ✅ Updated ${prsToUpdate.length} PR(s) pr_status to FULLY_DELIVERED for PO ${poId}`)
       }
@@ -14354,31 +15755,47 @@ export async function updateManualShipmentStatus(
         
         if (allShipmentsDelivered) {
           // All shipments are delivered - mark PR as fully delivered
+          const updatePayloadDelivered: Record<string, any> = { 
+            dispatchStatus: 'SHIPPED',
+            deliveryStatus: 'DELIVERED',
+            unified_pr_status: 'FULLY_DELIVERED',
+            unified_status: 'DELIVERED',
+            status: 'Delivered',
+            dispatchedDate: pr.dispatchedDate || new Date()
+          }
+          // DUAL-WRITE: Add unified fields when feature flag is enabled
+          if (process.env.DUAL_WRITE_ENABLED === "true") {
+            updatePayloadDelivered.unified_status = 'DELIVERED'
+            updatePayloadDelivered.unified_status_updated_at = new Date()
+            updatePayloadDelivered.unified_status_updated_by = 'updateManualShipmentStatus'
+            updatePayloadDelivered.unified_pr_status = 'FULLY_DELIVERED'
+            updatePayloadDelivered.unified_pr_status_updated_at = new Date()
+            updatePayloadDelivered.unified_pr_status_updated_by = 'updateManualShipmentStatus'
+            console.log(`[updateManualShipmentStatus] 🔄 DUAL-WRITE: PR ${prId} → unified_status=DELIVERED, unified_pr_status=FULLY_DELIVERED`)
+          }
           await Order.updateOne(
             { id: prId },
-            { 
-              $set: { 
-                dispatchStatus: 'SHIPPED',
-                deliveryStatus: 'DELIVERED',
-                pr_status: 'FULLY_DELIVERED',
-                status: 'Delivered',
-                dispatchedDate: pr.dispatchedDate || new Date()
-              } 
-            }
+            { $set: updatePayloadDelivered }
           )
           console.log(`[updateManualShipmentStatus] ✅ Step 2: Updated PR ${prId} to FULLY_DELIVERED (all ${allShipmentsForPR.length} shipment(s) delivered)`)
           prUpdated = true
         } else if (allShipmentsShipped) {
           // All shipments are shipped but not all delivered - mark PR as dispatched
+          const updatePayloadShipped: Record<string, any> = { 
+            dispatchStatus: 'SHIPPED',
+            status: 'Dispatched',
+            dispatchedDate: pr.dispatchedDate || new Date()
+          }
+          // DUAL-WRITE: Add unified fields when feature flag is enabled
+          if (process.env.DUAL_WRITE_ENABLED === "true") {
+            updatePayloadShipped.unified_status = 'DISPATCHED'
+            updatePayloadShipped.unified_status_updated_at = new Date()
+            updatePayloadShipped.unified_status_updated_by = 'updateManualShipmentStatus'
+            console.log(`[updateManualShipmentStatus] 🔄 DUAL-WRITE: PR ${prId} → unified_status=DISPATCHED`)
+          }
           await Order.updateOne(
             { id: prId },
-            { 
-              $set: { 
-                dispatchStatus: 'SHIPPED',
-                status: 'Dispatched',
-                dispatchedDate: pr.dispatchedDate || new Date()
-              } 
-            }
+            { $set: updatePayloadShipped }
           )
           console.log(`[updateManualShipmentStatus] ✅ Step 2: Updated PR ${prId} to Dispatched (all ${allShipmentsForPR.length} shipment(s) shipped)`)
           prUpdated = true
@@ -14531,14 +15948,61 @@ export async function updatePRDeliveryStatus(
   pr.deliveredDate = deliveryData.deliveredDate
   pr.receivedBy = deliveryData.receivedBy?.trim()
   pr.deliveryRemarks = deliveryData.deliveryRemarks?.trim()
+  
+  // DUAL-WRITE: Delivery status (behind feature flag)
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    console.log(`[updatePRDeliveryStatus] 🔄 DUAL-WRITE: deliveryStatus → ${deliveryStatus}`)
+  }
+  // LEGACY: Set delivery status
   pr.deliveryStatus = deliveryStatus
   pr.items = updatedItems as any
   
   // AUTO-UPDATE: Update Order status based on delivery status
   if (deliveryStatus === 'DELIVERED') {
+    // DUAL-WRITE: Order status to Delivered (behind feature flag)
+    if (process.env.DUAL_WRITE_ENABLED === "true") {
+      try {
+        const previousStatus = pr.status
+        const currentUnified = pr.unified_status || getUnifiedStatusFromLegacy('Order', previousStatus || 'Dispatched')
+        const dualWriteResult = safeDualWriteOrderStatus(
+          prId,
+          'DELIVERED' as UnifiedOrderStatus,
+          previousStatus,
+          currentUnified as string,
+          { updatedBy: deliveryData.receivedBy || 'system', source: 'updatePRDeliveryStatus', metadata: { autoUpdate: true, trigger: 'delivery_confirmed' } }
+        )
+        pr.unified_status = dualWriteResult.unifiedUpdate.unified_status as string
+        pr.unified_status_updated_at = dualWriteResult.unifiedUpdate.unified_status_updated_at as Date
+        pr.unified_status_updated_by = dualWriteResult.unifiedUpdate.unified_status_updated_by as string
+        console.log(`[updatePRDeliveryStatus] 🔄 DUAL-WRITE: status → Delivered (unified: ${pr.unified_status})`)
+      } catch (dualWriteError: any) {
+        console.error(`[updatePRDeliveryStatus] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+      }
+    }
+    // LEGACY: Always update legacy status
     pr.status = 'Delivered'
   } else if (deliveryStatus === 'PARTIALLY_DELIVERED') {
-    pr.status = 'Dispatched' // Keep as Dispatched if partially delivered
+    // DUAL-WRITE: Keep as Dispatched for partial delivery (behind feature flag)
+    if (process.env.DUAL_WRITE_ENABLED === "true") {
+      try {
+        const previousStatus = pr.status
+        const currentUnified = pr.unified_status || getUnifiedStatusFromLegacy('Order', previousStatus || 'Dispatched')
+        const dualWriteResult = safeDualWriteOrderStatus(
+          prId,
+          'DISPATCHED' as UnifiedOrderStatus,
+          previousStatus,
+          currentUnified as string,
+          { updatedBy: deliveryData.receivedBy || 'system', source: 'updatePRDeliveryStatus', metadata: { autoUpdate: true, trigger: 'partial_delivery' } }
+        )
+        pr.unified_status = dualWriteResult.unifiedUpdate.unified_status as string
+        pr.unified_status_updated_at = dualWriteResult.unifiedUpdate.unified_status_updated_at as Date
+        console.log(`[updatePRDeliveryStatus] 🔄 DUAL-WRITE: status → Dispatched (partial delivery)`)
+      } catch (dualWriteError: any) {
+        console.error(`[updatePRDeliveryStatus] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+      }
+    }
+    // LEGACY: Keep as Dispatched if partially delivered
+    pr.status = 'Dispatched'
   }
   // If NOT_DELIVERED, keep current status (should be Dispatched)
   
@@ -14591,7 +16055,7 @@ export async function updatePRDeliveryStatus(
           // All shipments are delivered and PR items are delivered - mark PR as fully delivered
           await Order.updateOne(
             { id: prId },
-            { $set: { pr_status: 'FULLY_DELIVERED' } }
+            { $set: { unified_pr_status: 'FULLY_DELIVERED', unified_status: 'DELIVERED' } }
           )
           console.log(`[updatePRDeliveryStatus] ✅ Marked PR ${prId} as FULLY_DELIVERED (all ${updatedShipments.length} shipment(s) are DELIVERED)`)
         }
@@ -14601,7 +16065,7 @@ export async function updatePRDeliveryStatus(
       if (deliveryStatus === 'DELIVERED') {
         await Order.updateOne(
           { id: prId },
-          { $set: { pr_status: 'FULLY_DELIVERED' } }
+          { $set: { unified_pr_status: 'FULLY_DELIVERED', unified_status: 'DELIVERED' } }
         )
         console.log(`[updatePRDeliveryStatus] ✅ Marked PR ${prId} as FULLY_DELIVERED (no shipments, items fully delivered)`)
       }
@@ -14660,9 +16124,9 @@ export async function updatePRAndPOStatusesFromDelivery(companyId?: string): Pro
   }
   
   try {
-    // Build query for PRs (Orders with PO_CREATED status)
+    // Build query for PRs (Orders with LINKED_TO_PO status)
     const prQuery: any = {
-      pr_status: 'PO_CREATED'
+      unified_pr_status: 'LINKED_TO_PO'
     }
     
     if (companyId) {
@@ -14763,6 +16227,31 @@ export async function updatePRAndPOStatusesFromDelivery(companyId?: string): Pro
           }
           
           if (prUpdated) {
+            // DUAL-WRITE: Update unified fields (behind feature flag)
+            if (process.env.DUAL_WRITE_ENABLED === "true") {
+              try {
+                // Map legacy status to unified status
+                let unifiedStatus: string = 'CREATED'
+                if (newPRStatus === 'Delivered') {
+                  unifiedStatus = 'DELIVERED'
+                } else if (newPRStatus === 'Dispatched') {
+                  unifiedStatus = 'DISPATCHED'
+                } else if (newPRStatus === 'Awaiting fulfilment') {
+                  unifiedStatus = 'IN_PURCHASE_ORDER'
+                } else if (newPRStatus === 'Awaiting approval') {
+                  unifiedStatus = 'PENDING_APPROVAL'
+                }
+                
+                prDoc.unified_status = unifiedStatus
+                prDoc.unified_status_updated_at = new Date()
+                prDoc.unified_status_updated_by = 'system-batch'
+                
+                console.log(`[updatePRAndPOStatusesFromDelivery] 🔄 DUAL-WRITE: PR ${pr.id} → unified_status=${unifiedStatus}`)
+              } catch (dualWriteError: any) {
+                console.error(`[updatePRAndPOStatusesFromDelivery] ❌ DUAL-WRITE error (continuing): ${dualWriteError.message}`)
+              }
+            }
+            
             await prDoc.save()
             result.prsUpdated++
             console.log(`[updatePRAndPOStatusesFromDelivery] Updated PR ${pr.id}: status=${newPRStatus}, dispatchStatus=${newDispatchStatus}, deliveryStatus=${newDeliveryStatus}`)
@@ -14834,17 +16323,17 @@ export async function getApprovedOrdersForCompanyAdmin(companyId: string): Promi
     $and: [
       {
         $or: [
-          { pr_status: 'COMPANY_ADMIN_APPROVED' },
+          { unified_pr_status: 'COMPANY_ADMIN_APPROVED' },
           { company_admin_approved_by: { $exists: true, $ne: null } }
         ]
       },
-      { pr_status: { $ne: 'PO_CREATED' } } // Exclude orders that already have PO created
+      { unified_pr_status: { $ne: 'LINKED_TO_PO' } } // Exclude orders that already have PO created
     ]
   }
   
   // CRITICAL FIX: Don't use populate since Order.employeeId and Order.companyId are string IDs
   const approvedOrders = await Order.find(queryFilter)
-    .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status company_admin_approved_by company_admin_approved_at')
+    .select('id employeeId employeeIdNum employeeName items total status unified_status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status unified_pr_status company_admin_approved_by company_admin_approved_at')
     .sort({ company_admin_approved_at: -1, orderDate: -1 })
     .lean()
   
@@ -14854,17 +16343,57 @@ export async function getApprovedOrdersForCompanyAdmin(companyId: string): Promi
   const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
   const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
   
-  // Add vendorName to orders
-  approvedOrders.forEach((o: any) => {
-    if (!o.vendorName && o.vendorId && vendorMap.has(o.vendorId)) {
-      o.vendorName = vendorMap.get(o.vendorId)
+  // Decrypt employee names by fetching employee records
+  const { decrypt } = require('../utils/encryption')
+  const approvedOrdersWithDetails = await Promise.all(approvedOrders.map(async (o: any) => {
+    const plain = toPlainObject(o)
+    
+    // Add vendorName
+    if (!plain.vendorName && plain.vendorId && vendorMap.has(plain.vendorId)) {
+      plain.vendorName = vendorMap.get(plain.vendorId)
     }
-  })
+    
+    // Manually fetch employee info using string ID and decrypt name
+    if (plain.employeeId && typeof plain.employeeId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.employeeId)) {
+      const employee = await Employee.findOne({ 
+        $or: [
+          { id: plain.employeeId },
+          { employeeId: plain.employeeId }
+        ]
+      }).select('id employeeId firstName lastName email locationId').lean()
+      
+      if (employee) {
+        // Decrypt employee fields since we used .lean()
+        const decryptedEmployee: any = { ...employee }
+        const sensitiveFields = ['firstName', 'lastName', 'email']
+        
+        for (const field of sensitiveFields) {
+          if (decryptedEmployee[field] && typeof decryptedEmployee[field] === 'string' && decryptedEmployee[field].includes(':')) {
+            try {
+              decryptedEmployee[field] = decrypt(decryptedEmployee[field])
+            } catch (error) {
+              // If decryption fails, keep original value
+            }
+          }
+        }
+        
+        // Construct employeeName from decrypted firstName and lastName
+        const decryptedFirstName = decryptedEmployee.firstName || ''
+        const decryptedLastName = decryptedEmployee.lastName || ''
+        const decryptedEmployeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+        plain.employeeName = decryptedEmployeeName
+        
+        plain.employeeId = toPlainObject(decryptedEmployee)
+      }
+    }
+    
+    return plain
+  }))
   
   // Group orders similar to getPendingApprovals
   const parentOrderIds = new Set<string>()
   const standaloneOrders: any[] = []
-  const plainOrders = approvedOrders.map((o: any) => toPlainObject(o))
+  const plainOrders = approvedOrdersWithDetails
   
   for (const order of plainOrders) {
     if (order.parentOrderId) {
@@ -14881,23 +16410,59 @@ export async function getApprovedOrdersForCompanyAdmin(companyId: string): Promi
       companyId: company.id,
       parentOrderId: { $in: Array.from(parentOrderIds) }
     })
-      .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status company_admin_approved_by company_admin_approved_at')
+      .select('id employeeId employeeIdNum employeeName items total status unified_status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status unified_pr_status company_admin_approved_by company_admin_approved_at')
       .lean()
     
     // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
     // Fetch vendor names for child orders
     const childVendorIds = [...new Set(allChildOrders.map((o: any) => o.vendorId).filter(Boolean))]
+    const childVendorMap = new Map<string, string>()
     if (childVendorIds.length > 0) {
       const childVendors = await Vendor.find({ id: { $in: childVendorIds } }).select('id name').lean()
-      const childVendorMap = new Map(childVendors.map((v: any) => [v.id, v.name]))
-      allChildOrders.forEach((o: any) => {
-        if (!o.vendorName && o.vendorId && childVendorMap.has(o.vendorId)) {
-          o.vendorName = childVendorMap.get(o.vendorId)
-        }
-      })
+      childVendors.forEach((v: any) => childVendorMap.set(v.id, v.name))
     }
     
-    const allChildOrdersPlain = allChildOrders.map((o: any) => toPlainObject(o))
+    // Decrypt employee names for child orders
+    const allChildOrdersPlain = await Promise.all(allChildOrders.map(async (o: any) => {
+      const plain = toPlainObject(o)
+      
+      // Add vendorName
+      if (!plain.vendorName && plain.vendorId && childVendorMap.has(plain.vendorId)) {
+        plain.vendorName = childVendorMap.get(plain.vendorId)
+      }
+      
+      // Manually fetch employee info using string ID and decrypt name
+      if (plain.employeeId && typeof plain.employeeId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.employeeId)) {
+        const employee = await Employee.findOne({ 
+          $or: [
+            { id: plain.employeeId },
+            { employeeId: plain.employeeId }
+          ]
+        }).select('id employeeId firstName lastName email locationId').lean()
+        
+        if (employee) {
+          const decryptedEmployee: any = { ...employee }
+          const sensitiveFields = ['firstName', 'lastName', 'email']
+          
+          for (const field of sensitiveFields) {
+            if (decryptedEmployee[field] && typeof decryptedEmployee[field] === 'string' && decryptedEmployee[field].includes(':')) {
+              try {
+                decryptedEmployee[field] = decrypt(decryptedEmployee[field])
+              } catch (error) {
+                // If decryption fails, keep original value
+              }
+            }
+          }
+          
+          const decryptedFirstName = decryptedEmployee.firstName || ''
+          const decryptedLastName = decryptedEmployee.lastName || ''
+          plain.employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+          plain.employeeId = toPlainObject(decryptedEmployee)
+        }
+      }
+      
+      return plain
+    }))
     
     for (const order of allChildOrdersPlain) {
       if (order.parentOrderId) {
@@ -14954,16 +16519,18 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
     return []
   }
   
-  // Find orders with PO created status
+  // Find orders that have had PO created (includes shipped/delivered)
+  // Orders progress: LINKED_TO_PO -> IN_SHIPMENT -> PARTIALLY_DELIVERED -> FULLY_DELIVERED
   // CRITICAL FIX: Order.companyId is a STRING ID (6-digit numeric), not ObjectId
+  // UNIFIED-ONLY: Use unified_pr_status as the single source of truth
   const queryFilter: any = {
     companyId: company.id,
-    pr_status: 'PO_CREATED'
+    unified_pr_status: { $in: ['LINKED_TO_PO', 'IN_SHIPMENT', 'PARTIALLY_DELIVERED', 'FULLY_DELIVERED'] }
   }
   
   // CRITICAL FIX: Don't use populate since Order.employeeId and Order.companyId are string IDs
   const poCreatedOrders = await Order.find(queryFilter)
-    .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status')
+    .select('id employeeId employeeIdNum employeeName items total status unified_status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status unified_pr_status')
     .sort({ orderDate: -1 })
     .lean()
   
@@ -14973,16 +16540,52 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
   const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
   const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
   
-  // Add vendorName to orders
-  poCreatedOrders.forEach((o: any) => {
-    if (!o.vendorName && o.vendorId && vendorMap.has(o.vendorId)) {
-      o.vendorName = vendorMap.get(o.vendorId)
+  // Decrypt employee names by fetching employee records
+  const { decrypt } = require('../utils/encryption')
+  const poCreatedOrdersWithDetails = await Promise.all(poCreatedOrders.map(async (o: any) => {
+    const plain = toPlainObject(o)
+    
+    // Add vendorName
+    if (!plain.vendorName && plain.vendorId && vendorMap.has(plain.vendorId)) {
+      plain.vendorName = vendorMap.get(plain.vendorId)
     }
-  })
+    
+    // Manually fetch employee info using string ID and decrypt name
+    if (plain.employeeId && typeof plain.employeeId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.employeeId)) {
+      const employee = await Employee.findOne({ 
+        $or: [
+          { id: plain.employeeId },
+          { employeeId: plain.employeeId }
+        ]
+      }).select('id employeeId firstName lastName email locationId').lean()
+      
+      if (employee) {
+        const decryptedEmployee: any = { ...employee }
+        const sensitiveFields = ['firstName', 'lastName', 'email']
+        
+        for (const field of sensitiveFields) {
+          if (decryptedEmployee[field] && typeof decryptedEmployee[field] === 'string' && decryptedEmployee[field].includes(':')) {
+            try {
+              decryptedEmployee[field] = decrypt(decryptedEmployee[field])
+            } catch (error) {
+              // If decryption fails, keep original value
+            }
+          }
+        }
+        
+        const decryptedFirstName = decryptedEmployee.firstName || ''
+        const decryptedLastName = decryptedEmployee.lastName || ''
+        plain.employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+        plain.employeeId = toPlainObject(decryptedEmployee)
+      }
+    }
+    
+    return plain
+  }))
   
   // Get PO details for these orders via POOrder mapping
   // CRITICAL FIX: POOrder.order_id stores Order.id (string ID), not Order._id (ObjectId)
-  const orderIds = poCreatedOrders.map((o: any) => o.id).filter(Boolean)
+  const orderIds = poCreatedOrdersWithDetails.map((o: any) => o.id).filter(Boolean)
   const poOrderMappings = await POOrder.find({ order_id: { $in: orderIds } })
     .populate('purchase_order_id')
     .lean()
@@ -15002,7 +16605,7 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
   // Group orders similar to other functions
   const parentOrderIds = new Set<string>()
   const standaloneOrders: any[] = []
-  const plainOrders = poCreatedOrders.map((o: any) => toPlainObject(o))
+  const plainOrders = poCreatedOrdersWithDetails
   
   for (const order of plainOrders) {
     if (order.parentOrderId) {
@@ -15015,15 +16618,64 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
   const orderMap = new Map<string, any[]>()
   if (parentOrderIds.size > 0) {
     // CRITICAL FIX: Order.companyId is a STRING ID (6-digit numeric), not ObjectId
+    // Include all PO-related statuses (not just LINKED_TO_PO)
     const allChildOrders = await Order.find({
       companyId: company.id,
       parentOrderId: { $in: Array.from(parentOrderIds) },
-      pr_status: 'PO_CREATED'
+      unified_pr_status: { $in: ['LINKED_TO_PO', 'IN_SHIPMENT', 'PARTIALLY_DELIVERED', 'FULLY_DELIVERED'] }
     })
-      .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status')
+      .select('id employeeId employeeIdNum employeeName items total status unified_status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date pr_status unified_pr_status')
       .lean()
     
-    const allChildOrdersPlain = allChildOrders.map((o: any) => toPlainObject(o))
+    // Fetch child vendor names
+    const childVendorIds = [...new Set(allChildOrders.map((o: any) => o.vendorId).filter(Boolean))]
+    const childVendorMap = new Map<string, string>()
+    if (childVendorIds.length > 0) {
+      const childVendors = await Vendor.find({ id: { $in: childVendorIds } }).select('id name').lean()
+      childVendors.forEach((v: any) => childVendorMap.set(v.id, v.name))
+    }
+    
+    // Decrypt employee names for child orders
+    const allChildOrdersPlain = await Promise.all(allChildOrders.map(async (o: any) => {
+      const plain = toPlainObject(o)
+      
+      // Add vendorName
+      if (!plain.vendorName && plain.vendorId && childVendorMap.has(plain.vendorId)) {
+        plain.vendorName = childVendorMap.get(plain.vendorId)
+      }
+      
+      // Manually fetch employee info using string ID and decrypt name
+      if (plain.employeeId && typeof plain.employeeId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.employeeId)) {
+        const employee = await Employee.findOne({ 
+          $or: [
+            { id: plain.employeeId },
+            { employeeId: plain.employeeId }
+          ]
+        }).select('id employeeId firstName lastName email locationId').lean()
+        
+        if (employee) {
+          const decryptedEmployee: any = { ...employee }
+          const sensitiveFields = ['firstName', 'lastName', 'email']
+          
+          for (const field of sensitiveFields) {
+            if (decryptedEmployee[field] && typeof decryptedEmployee[field] === 'string' && decryptedEmployee[field].includes(':')) {
+              try {
+                decryptedEmployee[field] = decrypt(decryptedEmployee[field])
+              } catch (error) {
+                // If decryption fails, keep original value
+              }
+            }
+          }
+          
+          const decryptedFirstName = decryptedEmployee.firstName || ''
+          const decryptedLastName = decryptedEmployee.lastName || ''
+          plain.employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+          plain.employeeId = toPlainObject(decryptedEmployee)
+        }
+      }
+      
+      return plain
+    }))
     
     for (const order of allChildOrdersPlain) {
       if (order.parentOrderId) {
@@ -15045,7 +16697,7 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
     const allItems = splitOrders.flatMap(o => o.items || [])
     
     // Get POs for all child orders
-    const childOrderIds = splitOrders.map((o: any) => o._id?.toString()).filter(Boolean)
+    const childOrderIds = splitOrders.map((o: any) => o.id?.toString()).filter(Boolean)
     const childPOs = childOrderIds.flatMap(id => poMap.get(id) || [])
     
     groupedOrders.push({
@@ -15076,6 +16728,86 @@ export async function getPOCreatedOrdersForCompanyAdmin(companyId: string): Prom
   })
   
   return allOrders
+}
+
+/**
+ * Get rejected orders for Company Admin
+ * @param companyId Company ID
+ * @returns Array of rejected orders
+ */
+export async function getRejectedOrdersForCompanyAdmin(companyId: string): Promise<any[]> {
+  await connectDB()
+  
+  const company = await Company.findOne({ id: companyId }).select('_id id name').lean()
+  if (!company) {
+    return []
+  }
+  
+  // Find rejected orders - includes all rejection types
+  const queryFilter: any = {
+    companyId: company.id,
+    $or: [
+      { unified_pr_status: 'REJECTED' },
+      { unified_pr_status: 'REJECTED_BY_SITE_ADMIN' },
+      { unified_pr_status: 'REJECTED_BY_COMPANY_ADMIN' }
+    ]
+  }
+  
+  const rejectedOrders = await Order.find(queryFilter)
+    .select('id employeeId employeeIdNum employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date unified_pr_status rejection_reason rejected_by rejected_at')
+    .sort({ rejected_at: -1, orderDate: -1 })
+    .lean()
+  
+  // Get vendor names
+  const vendorIds = [...new Set(rejectedOrders.map((o: any) => o.vendorId).filter(Boolean))]
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
+  const vendorMap = new Map(vendors.map((v: any) => [v.id, v.name]))
+  
+  // Decrypt employee names by fetching employee records
+  const { decrypt } = require('../utils/encryption')
+  const rejectedOrdersWithDetails = await Promise.all(rejectedOrders.map(async (o: any) => {
+    const plain = toPlainObject(o)
+    
+    // Add vendorName
+    if (!plain.vendorName && plain.vendorId && vendorMap.has(plain.vendorId)) {
+      plain.vendorName = vendorMap.get(plain.vendorId)
+    }
+    
+    // Manually fetch employee info using string ID and decrypt name
+    if (plain.employeeId && typeof plain.employeeId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.employeeId)) {
+      const employee = await Employee.findOne({ 
+        $or: [
+          { id: plain.employeeId },
+          { employeeId: plain.employeeId }
+        ]
+      }).select('id employeeId firstName lastName email locationId').lean()
+      
+      if (employee) {
+        const decryptedEmployee: any = { ...employee }
+        const sensitiveFields = ['firstName', 'lastName', 'email']
+        
+        for (const field of sensitiveFields) {
+          if (decryptedEmployee[field] && typeof decryptedEmployee[field] === 'string' && decryptedEmployee[field].includes(':')) {
+            try {
+              decryptedEmployee[field] = decrypt(decryptedEmployee[field])
+            } catch (error) {
+              // If decryption fails, keep original value
+            }
+          }
+        }
+        
+        // Construct employeeName from decrypted firstName and lastName
+        const decryptedFirstName = decryptedEmployee.firstName || ''
+        const decryptedLastName = decryptedEmployee.lastName || ''
+        plain.employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || 'Employee'
+        plain.employeeId = toPlainObject(decryptedEmployee)
+      }
+    }
+    
+    return plain
+  }))
+  
+  return rejectedOrdersWithDetails
 }
 
 /**
@@ -21613,6 +23345,18 @@ export async function approveReturnRequest(
     }
   )
   
+  // ========================================================================
+  // ELIGIBILITY NOTE: Using Dynamic Calculation System
+  // ========================================================================
+  // Eligibility is NOT incremented here. Instead, consumed eligibility is
+  // calculated dynamically by counting orders and subtracting approved returns.
+  // See: getConsumedEligibility() for the implementation.
+  //
+  // This approved return will automatically restore eligibility when the
+  // employee's remaining eligibility is calculated.
+  // ========================================================================
+  console.log(`[approveReturnRequest] 📊 Eligibility tracking: Return ${returnRequestId} (qty: ${returnRequest.requestedQty}) will be subtracted from consumed eligibility in dynamic calculation`)
+  
   // Get updated return request
   const updatedRequest = await getReturnRequestById(returnRequestId)
   
@@ -22024,6 +23768,18 @@ export async function createGRNByVendor(
   // Generate GRN ID (6-10 digit numeric)
   const grnId = String(Date.now()).slice(-10).padStart(6, '0')
   
+  // DUAL-WRITE: GRN status (behind feature flag)
+  let unifiedGRNFields: Record<string, any> = {}
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    try {
+      const dualWriteResult = safeDualWriteGRNStatus(grnId, 'RAISED' as UnifiedGRNStatus, null, null, { updatedBy: vendorId, source: 'createGRNByVendor' })
+      unifiedGRNFields = dualWriteResult.unifiedUpdate
+      console.log(`[createGRNByVendor] 🔄 DUAL-WRITE: GRN ${grnId} → unified_grn_status=RAISED`)
+    } catch (dualWriteError: any) {
+      console.error(`[createGRNByVendor] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+    }
+  }
+  
   // Create GRN with vendor-led workflow flags
   const grn = await GRN.create({
     id: grnId,
@@ -22278,6 +24034,20 @@ export async function acknowledgeGRN(
   grn.grnAcknowledgedDate = new Date()
   grn.grnAcknowledgedBy = acknowledgedBy.trim()
   
+  // DUAL-WRITE: GRN status (behind feature flag)
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    try {
+      const currentUnified = grn.unified_grn_status || 'RAISED'
+      const dualWriteResult = safeDualWriteGRNStatus(grnId, 'ACKNOWLEDGED' as UnifiedGRNStatus, 'CREATED', currentUnified, { updatedBy: acknowledgedBy, source: 'acknowledgeGRN' })
+      grn.unified_grn_status = dualWriteResult.unifiedUpdate.unified_grn_status
+      grn.unified_grn_status_updated_at = dualWriteResult.unifiedUpdate.unified_grn_status_updated_at
+      grn.unified_grn_status_updated_by = dualWriteResult.unifiedUpdate.unified_grn_status_updated_by
+      console.log(`[acknowledgeGRN] 🔄 DUAL-WRITE: GRN ${grnId} → unified_grn_status=ACKNOWLEDGED`)
+    } catch (dualWriteError: any) {
+      console.error(`[acknowledgeGRN] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+    }
+  }
+  
   await grn.save()
   
   console.log(`[acknowledgeGRN] ✅ Acknowledged GRN: ${grnId} by: ${acknowledgedBy}`)
@@ -22339,6 +24109,20 @@ export async function approveGRN(
   grn.grnStatus = 'APPROVED'
   grn.approvedBy = approvedBy.trim()
   grn.approvedAt = new Date()
+  
+  // DUAL-WRITE: GRN status (behind feature flag)
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    try {
+      const currentUnified = grn.unified_grn_status || 'RAISED'
+      const dualWriteResult = safeDualWriteGRNStatus(grnId, 'APPROVED' as UnifiedGRNStatus, 'RAISED', currentUnified, { updatedBy: approvedBy, source: 'approveGRN' })
+      grn.unified_grn_status = dualWriteResult.unifiedUpdate.unified_grn_status
+      grn.unified_grn_status_updated_at = dualWriteResult.unifiedUpdate.unified_grn_status_updated_at
+      grn.unified_grn_status_updated_by = dualWriteResult.unifiedUpdate.unified_grn_status_updated_by
+      console.log(`[approveGRN] 🔄 DUAL-WRITE: GRN ${grnId} → unified_grn_status=APPROVED`)
+    } catch (dualWriteError: any) {
+      console.error(`[approveGRN] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+    }
+  }
   
   await grn.save()
   
@@ -22526,6 +24310,18 @@ export async function createInvoiceByVendor(
   // Generate Invoice ID (6-10 digit numeric)
   const invoiceId = String(Date.now()).slice(-10).padStart(6, '0')
   
+  // DUAL-WRITE: Invoice status (behind feature flag)
+  let unifiedInvoiceFields: Record<string, any> = {}
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    try {
+      const dualWriteResult = safeDualWriteInvoiceStatus(invoiceId, 'RAISED' as UnifiedInvoiceStatus, null, null, { updatedBy: vendorId, source: 'createInvoiceByVendor' })
+      unifiedInvoiceFields = dualWriteResult.unifiedUpdate
+      console.log(`[createInvoiceByVendor] 🔄 DUAL-WRITE: Invoice ${invoiceId} → unified_invoice_status=RAISED`)
+    } catch (dualWriteError: any) {
+      console.error(`[createInvoiceByVendor] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+    }
+  }
+  
   // Create Invoice with all required fields
   const invoice = await Invoice.create({
     id: invoiceId,
@@ -22546,7 +24342,8 @@ export async function createInvoiceByVendor(
     invoiceStatus: 'RAISED',
     raisedBy: vendorId,
     remarks: remarks?.trim(),
-    taxAmount: taxAmount || 0
+    taxAmount: taxAmount || 0,
+    ...unifiedInvoiceFields, // Include unified fields if flag enabled
   })
   
   // Update GRN to link invoice (but don't change GRN status - keep it APPROVED)
@@ -22660,6 +24457,20 @@ export async function approveInvoice(
   invoice.invoiceStatus = 'APPROVED'
   invoice.approvedBy = approvedBy.trim()
   invoice.approvedAt = new Date()
+  
+  // DUAL-WRITE: Invoice status (behind feature flag)
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    try {
+      const currentUnified = invoice.unified_invoice_status || 'RAISED'
+      const dualWriteResult = safeDualWriteInvoiceStatus(invoiceId, 'APPROVED' as UnifiedInvoiceStatus, 'RAISED', currentUnified, { updatedBy: approvedBy, source: 'approveInvoice' })
+      invoice.unified_invoice_status = dualWriteResult.unifiedUpdate.unified_invoice_status
+      invoice.unified_invoice_status_updated_at = dualWriteResult.unifiedUpdate.unified_invoice_status_updated_at
+      invoice.unified_invoice_status_updated_by = dualWriteResult.unifiedUpdate.unified_invoice_status_updated_by
+      console.log(`[approveInvoice] 🔄 DUAL-WRITE: Invoice ${invoiceId} → unified_invoice_status=APPROVED`)
+    } catch (dualWriteError: any) {
+      console.error(`[approveInvoice] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+    }
+  }
   
   await invoice.save()
   

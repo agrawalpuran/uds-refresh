@@ -12,6 +12,7 @@ import '@/lib/models/ShipmentServiceProvider'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ providerId: string }> }
@@ -26,19 +27,13 @@ export async function POST(
         { error: 'providerId is required' },
         { status: 400 }
       )
+    }
 
     // Parse request body to get test credentials (if provided)
     let testCredentials: any = null
+    let body: any = {}
     try {
-      // Parse JSON body with error handling
-    }
-    let body: any
-      try {
-        body = await request.json()
-      } catch (jsonError: any) {
-        return NextResponse.json({
-          error: 'Invalid JSON in request body'
-        }, { status: 400 })
+      body = await request.json()
       if (body.authConfig) {
         testCredentials = body.authConfig
       }
@@ -55,12 +50,12 @@ export async function POST(
         { error: 'Provider not found' },
         { status: 404 }
       )
+    }
 
     // Get provider with decrypted authConfig using providerRefId (internal use only)
     let provider = providerById
     let authConfig = testCredentials // Use test credentials if provided
     
-    }
     if (!authConfig && providerById.providerRefId) {
       try {
         provider = await getProviderWithAuth(providerById.providerRefId)
@@ -78,8 +73,8 @@ export async function POST(
         { error: 'Provider not found' },
         { status: 404 }
       )
-
     }
+
     if (!authConfig) {
       return NextResponse.json(
         { 
@@ -88,6 +83,7 @@ export async function POST(
         },
         { status: 400 }
       )
+    }
 
     // Initialize provider with auth (from form or stored)
     let providerInstance
@@ -129,6 +125,7 @@ export async function POST(
         },
         { status: 500 }
       )
+    }
 
     // Perform health check
     let healthResult
@@ -154,6 +151,7 @@ export async function POST(
         },
         { status: 500 }
       )
+    }
 
     // Update health status
     await updateShipmentServiceProvider(
@@ -174,7 +172,6 @@ export async function POST(
     })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/shipping-providers/[providerId]/test-connection POST:', error)
-    console.error('API Error in /api/superadmin/shipping-providers/[providerId]/test-connection POST:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -186,6 +183,7 @@ export async function POST(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -195,6 +193,7 @@ export async function POST(
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -204,6 +203,7 @@ export async function POST(
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -212,4 +212,3 @@ export async function POST(
     )
   }
 }
-

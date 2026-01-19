@@ -525,25 +525,52 @@ export default function SiteAdminApprovalsPage() {
                             Approved: {new Date(order.site_admin_approved_at).toLocaleString()}
                           </p>
                         )}
-                        {/* Show PR status badge in All PRs tab */}
-                        {activeTab === 'all-prs' && order.pr_status && (
-                          <div className="mt-2">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                              order.pr_status === 'SITE_ADMIN_APPROVED' || order.pr_status === 'PENDING_COMPANY_ADMIN_APPROVAL'
-                                ? 'bg-green-100 text-green-800'
-                                : order.pr_status === 'COMPANY_ADMIN_APPROVED' || order.pr_status === 'PO_CREATED'
-                                ? 'bg-blue-100 text-blue-800'
-                                : order.pr_status === 'PR_CREATED'
-                                ? 'bg-yellow-100 text-yellow-800'
-                                : 'bg-gray-100 text-gray-800'
-                            }`}>
-                              {order.pr_status.replace(/_/g, ' ')}
-                            </span>
+                        {/* Show PR status and Delivery status badges in All PRs tab */}
+                        {activeTab === 'all-prs' && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {/* PR Status Badge */}
+                            {order.unified_pr_status && (
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                order.unified_pr_status === 'SITE_ADMIN_APPROVED' || order.unified_pr_status === 'PENDING_COMPANY_ADMIN_APPROVAL'
+                                  ? 'bg-green-100 text-green-800'
+                                  : order.unified_pr_status === 'COMPANY_ADMIN_APPROVED' || order.unified_pr_status === 'LINKED_TO_PO'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : order.unified_pr_status === 'DRAFT'
+                                  ? 'bg-yellow-100 text-yellow-800'
+                                  : order.unified_pr_status === 'IN_SHIPMENT' || order.unified_pr_status === 'PARTIALLY_DELIVERED'
+                                  ? 'bg-purple-100 text-purple-800'
+                                  : order.unified_pr_status === 'FULLY_DELIVERED'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}>
+                                PR: {order.unified_pr_status.replace(/_/g, ' ')}
+                              </span>
+                            )}
+                            {/* Delivery Status Badge */}
+                            {order.unified_status && (
+                              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                order.unified_status === 'DELIVERED'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : order.unified_status === 'DISPATCHED'
+                                  ? 'bg-purple-100 text-purple-800'
+                                  : order.unified_status === 'IN_FULFILMENT'
+                                  ? 'bg-indigo-100 text-indigo-800'
+                                  : order.unified_status === 'APPROVED'
+                                  ? 'bg-blue-100 text-blue-800'
+                                  : order.unified_status === 'PENDING_APPROVAL'
+                                  ? 'bg-yellow-100 text-yellow-800'
+                                  : order.unified_status === 'CANCELLED'
+                                  ? 'bg-red-100 text-red-800'
+                                  : 'bg-gray-100 text-gray-800'
+                              }`}>
+                                Delivery: {order.unified_status.replace(/_/g, ' ')}
+                              </span>
+                            )}
                           </div>
                         )}
-                        {activeTab === 'approved' && order.pr_status && (
+                        {activeTab === 'approved' && order.unified_pr_status && (
                           <p className="text-xs text-gray-500 mt-1">
-                            Status: {order.pr_status.replace(/_/g, ' ')}
+                            Status: {order.unified_pr_status.replace(/_/g, ' ')}
                           </p>
                         )}
                       </div>
@@ -800,7 +827,7 @@ export default function SiteAdminApprovalsPage() {
                         </div>
                         <div className="ml-4">
                           <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                            {order.pr_status || 'Pending'}
+                            {order.unified_pr_status || 'Pending'}
                           </span>
                         </div>
                       </div>

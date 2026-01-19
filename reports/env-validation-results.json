@@ -1,0 +1,55 @@
+{
+  "timestamp": "2026-01-15T18:49:24.767Z",
+  "mode": "DRY_RUN",
+  "checks": [
+    {
+      "name": "dotenv Package",
+      "status": "PASS",
+      "message": "dotenv package is installed and available",
+      "details": null
+    },
+    {
+      "name": ".env File",
+      "status": "PASS",
+      "message": ".env.local file exists (Next.js format)",
+      "details": {
+        "path": "C:\\Users\\pagrawal\\OneDrive - CSG Systems Inc\\Personal\\Cursor AI\\uniform-distribution-system\\.env.local"
+      }
+    },
+    {
+      "name": "MONGODB_URI Variable",
+      "status": "PASS",
+      "message": "MONGODB_URI is set and format is valid",
+      "details": {
+        "maskedUri": "mongodb://localhost:27017/uniform-distribution"
+      }
+    },
+    {
+      "name": "mongoose Package",
+      "status": "PASS",
+      "message": "mongoose package is installed (v8.19.3)",
+      "details": {
+        "version": "8.19.3"
+      }
+    },
+    {
+      "name": "Database Ping",
+      "status": "PASS",
+      "message": "Database is reachable and responding",
+      "details": {
+        "pingResult": {
+          "ok": 1
+        }
+      }
+    },
+    {
+      "name": "Reports Directory",
+      "status": "PASS",
+      "message": "/reports directory exists",
+      "details": {
+        "path": "C:\\Users\\pagrawal\\OneDrive - CSG Systems Inc\\Personal\\Cursor AI\\uniform-distribution-system\\reports"
+      }
+    }
+  ],
+  "overallStatus": "PASS"
+}

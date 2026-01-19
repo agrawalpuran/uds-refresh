@@ -1,0 +1,41 @@
+[
+  {
+    "_id": "6969c283e28e33291b66568a",
+    "id": "8538755264",
+    "invoiceId": "8538755264",
+    "invoiceNumber": "INV-GRN16011014-728736",
+    "invoiceDate": "2026-01-16T00:00:00.000Z",
+    "vendorInvoiceNumber": "INV-16011015",
+    "vendorInvoiceDate": "2026-01-16T00:00:00.000Z",
+    "vendorId": "100001",
+    "companyId": "100004",
+    "grnId": "8538671183",
+    "grnNumber": "GRN16011014",
+    "grnApprovedDate": "2026-01-16T04:44:41.347Z",
+    "poNumber": "PO1601846",
+    "prNumbers": [
+      "PR1601845"
+    ],
+    "invoiceItems": [
+      {
+        "productCode": "200002",
+        "productName": "Denim Shirt - Male",
+        "size": "XXL",
+        "quantity": 1,
+        "unitPrice": 0,
+        "lineTotal": 0,
+        "_id": "6969c283e28e33291b66568b"
+      }
+    ],
+    "invoiceAmount": 1099,
+    "invoiceStatus": "APPROVED",
+    "raisedBy": "100001",
+    "remarks": "raising invoice per new workflow",
+    "taxAmount": 0,
+    "createdAt": "2026-01-16T04:45:55.268Z",
+    "updatedAt": "2026-01-16T04:46:13.807Z",
+    "__v": 0,
+    "approvedAt": "2026-01-16T04:46:13.806Z",
+    "approvedBy": "Company Admin"
+  }
+]

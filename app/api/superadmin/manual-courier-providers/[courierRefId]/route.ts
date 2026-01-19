@@ -12,6 +12,7 @@ import {
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ courierRefId: string }> }
@@ -26,10 +27,10 @@ export async function GET(
         { error: 'Courier not found' },
         { status: 404 }
       )
+    }
 
     return NextResponse.json({ courier })
   } catch (error: any) {
-    console.error('[API /superadmin/manual-courier-providers/[courierRefId] GET] Error:', error)
     console.error('[API /superadmin/manual-courier-providers/[courierRefId] GET] Error:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
@@ -42,6 +43,7 @@ export async function GET(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -51,6 +53,7 @@ export async function GET(
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -60,6 +63,7 @@ export async function GET(
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -83,10 +87,11 @@ export async function PUT(
     let body: any
     try {
       body = await request.json()
-    } catch (jsonError: any) {
+    } catch (jsonError) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
     const {
       courierCode,
       courierName,
@@ -102,6 +107,7 @@ export async function PUT(
         { error: 'Courier code must be alphanumeric with hyphens/underscores only' },
         { status: 400 }
       )
+    }
 
     const courier = await updateManualCourierProvider(courierRefId, {
       courierCode,
@@ -115,7 +121,6 @@ export async function PUT(
     return NextResponse.json({ courier })
   } catch (error: any) {
     console.error('[API /superadmin/manual-courier-providers/[courierRefId] PUT] Error:', error)
-    console.error('[API /superadmin/manual-courier-providers/[courierRefId] PUT] Error:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -127,6 +132,7 @@ export async function PUT(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -136,6 +142,7 @@ export async function PUT(
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -145,6 +152,7 @@ export async function PUT(
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -170,7 +178,6 @@ export async function DELETE(
     return NextResponse.json({ success: true })
   } catch (error: any) {
     console.error('[API /superadmin/manual-courier-providers/[courierRefId] DELETE] Error:', error)
-    console.error('[API /superadmin/manual-courier-providers/[courierRefId] DELETE] Error:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -182,6 +189,7 @@ export async function DELETE(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -191,6 +199,7 @@ export async function DELETE(
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -200,6 +209,7 @@ export async function DELETE(
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -208,4 +218,3 @@ export async function DELETE(
     )
   }
 }
-

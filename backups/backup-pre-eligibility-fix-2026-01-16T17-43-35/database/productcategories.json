@@ -1,0 +1,62 @@
+[
+  {
+    "_id": "694ac209a098bb0af5cc7b62",
+    "id": "500002",
+    "name": "Pant",
+    "companyId": "100004",
+    "renewalUnit": "months",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2025-12-23T16:23:37.503Z",
+    "updatedAt": "2025-12-23T16:23:37.503Z",
+    "__v": 0
+  },
+  {
+    "_id": "694ac209a098bb0af5cc7b66",
+    "id": "500003",
+    "name": "Shoe",
+    "companyId": "100004",
+    "renewalUnit": "months",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2025-12-23T16:23:37.526Z",
+    "updatedAt": "2025-12-23T16:23:37.526Z",
+    "__v": 0
+  },
+  {
+    "_id": "694ac209a098bb0af5cc7b6b",
+    "id": "500004",
+    "name": "Jacket",
+    "companyId": "100004",
+    "renewalUnit": "months",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2025-12-23T16:23:37.560Z",
+    "updatedAt": "2025-12-23T16:23:37.560Z",
+    "__v": 0
+  },
+  {
+    "_id": "694ac209a098bb0af5cc7b6f",
+    "id": "500005",
+    "name": "Accessory",
+    "companyId": "100004",
+    "renewalUnit": "months",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2025-12-23T16:23:37.614Z",
+    "updatedAt": "2025-12-23T16:23:37.614Z",
+    "__v": 0
+  },
+  {
+    "_id": "69660483163d864462b86c24",
+    "id": "500001",
+    "name": "Shirt",
+    "companyId": "100004",
+    "renewalUnit": "months",
+    "isSystemCategory": true,
+    "status": "active",
+    "createdAt": "2026-01-13T08:38:27.836Z",
+    "updatedAt": "2026-01-13T08:38:27.836Z",
+    "__v": 0
+  }
+]

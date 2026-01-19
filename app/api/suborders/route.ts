@@ -11,15 +11,17 @@ import { getVendorById } from '@/lib/data-mongodb'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function POST(request: Request) {
   try {
     let body: any
     try {
       body = await request.json()
-    } catch (jsonError: any) {
+    } catch (jsonError) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
     const { order_id, vendor_id, vendor_indent_id } = body
 
     if (!order_id || !vendor_id) {
@@ -27,8 +29,8 @@ export async function POST(request: Request) {
         { error: 'order_id and vendor_id are required' },
         { status: 400 }
       )
-
     }
+
     const suborder = await createOrderSuborder({
       order_id,
       vendor_id,
@@ -67,6 +69,7 @@ export async function POST(request: Request) {
       { status: 500 }
     )
   }
+}
 
 export async function PATCH(request: Request) {
   try {
@@ -74,10 +77,11 @@ export async function PATCH(request: Request) {
     let body: any
     try {
       body = await request.json()
-    } catch (jsonError: any) {
+    } catch (jsonError) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
     const {
       suborder_id,
       shipper_name,
@@ -92,10 +96,10 @@ export async function PATCH(request: Request) {
         { error: 'suborder_id is required' },
         { status: 400 }
       )
+    }
 
     // TODO: Add vendor authorization check if vendorId is provided
 
-    }
     const suborder = await updateSuborderShipping({
       suborder_id,
       shipper_name,
@@ -106,7 +110,6 @@ export async function PATCH(request: Request) {
 
     return NextResponse.json({ success: true, suborder })
   } catch (error: any) {
-    console.error('Error updating suborder:', error)
     console.error('Error updating suborder:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
@@ -119,6 +122,7 @@ export async function PATCH(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -128,6 +132,7 @@ export async function PATCH(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -137,6 +142,7 @@ export async function PATCH(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -155,11 +161,12 @@ export async function GET(request: Request) {
     if (orderId) {
       const suborders = await getSubordersByOrderId(orderId)
       return NextResponse.json({ success: true, suborders })
+    }
 
     if (vendorId) {
-    }
-    const suborders = await getSubordersByVendorId(vendorId)
+      const suborders = await getSubordersByVendorId(vendorId)
       return NextResponse.json({ success: true, suborders })
+    }
 
     return NextResponse.json(
       { error: 'orderId or vendorId is required' },
@@ -177,6 +184,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -186,11 +194,12 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
-

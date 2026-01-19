@@ -34,6 +34,7 @@ function getVendorIdFromRequest(request: Request): string | null {
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ warehouseRefId: string }> }
@@ -77,7 +78,6 @@ export async function GET(
     return NextResponse.json({ warehouse })
   } catch (error: any) {
     console.error('API Error in /api/vendor/warehouses/[warehouseRefId] GET:', error)
-    console.error('API Error in /api/vendor/warehouses/[warehouseRefId] GET:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -89,6 +89,7 @@ export async function GET(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -98,6 +99,7 @@ export async function GET(
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -107,6 +109,7 @@ export async function GET(
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -131,7 +134,7 @@ export async function PUT(
     let body: any
     try {
       body = await request.json()
-    } catch (jsonError: any) {
+    } catch (jsonError) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
@@ -143,13 +146,14 @@ export async function PUT(
         { error: 'warehouseRefId is required' },
         { status: 400 }
       )
-
     }
+
     if (!vendorId) {
       return NextResponse.json(
         { error: 'Vendor ID is required. Please ensure you are logged in as a vendor.' },
         { status: 401 }
       )
+    }
 
     // Verify warehouse exists and belongs to vendor
     const existingWarehouse = await getVendorWarehouseById(warehouseRefId)
@@ -158,13 +162,14 @@ export async function PUT(
         { error: 'Warehouse not found' },
         { status: 404 }
       )
-
     }
+
     if (existingWarehouse.vendorId !== vendorId) {
       return NextResponse.json(
         { error: 'Access denied. This warehouse does not belong to your vendor account.' },
         { status: 403 }
       )
+    }
 
     // Validate pincode if provided
     if (body.pincode && !/^\d{6}$/.test(body.pincode)) {
@@ -172,6 +177,7 @@ export async function PUT(
         { error: 'Pincode must be exactly 6 digits' },
         { status: 400 }
       )
+    }
 
     const warehouse = await updateVendorWarehouse(
       warehouseRefId,
@@ -181,7 +187,6 @@ export async function PUT(
 
     return NextResponse.json({ warehouse })
   } catch (error: any) {
-    console.error('API Error in /api/vendor/warehouses/[warehouseRefId] PUT:', error)
     console.error('API Error in /api/vendor/warehouses/[warehouseRefId] PUT:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
@@ -242,8 +247,8 @@ export async function DELETE(
         { error: 'warehouseRefId is required' },
         { status: 400 }
       )
-
     }
+
     if (!vendorId) {
       return NextResponse.json(
         { error: 'Vendor ID is required. Please ensure you are logged in as a vendor.' },
@@ -272,7 +277,6 @@ export async function DELETE(
     return NextResponse.json({ success: true })
   } catch (error: any) {
     console.error('API Error in /api/vendor/warehouses/[warehouseRefId] DELETE:', error)
-    console.error('API Error in /api/vendor/warehouses/[warehouseRefId] DELETE:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -284,6 +288,7 @@ export async function DELETE(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -293,6 +298,7 @@ export async function DELETE(
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -302,6 +308,7 @@ export async function DELETE(
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -310,4 +317,3 @@ export async function DELETE(
     )
   }
 }
-

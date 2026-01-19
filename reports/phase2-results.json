@@ -1,0 +1,393 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "executedAt": "2026-01-15T18:56:37.212Z",
+    "mode": "DRY_RUN",
+    "status": "COMPLETED",
+    "completedAt": "2026-01-15T18:56:37.651Z"
+  },
+  "checks": {
+    "unifiedCoverage": {
+      "orders": {
+        "total": 1,
+        "withUnified": 1,
+        "coverage": "100.00"
+      },
+      "prs": {
+        "total": 77,
+        "withUnified": 77,
+        "coverage": "100.00"
+      },
+      "purchaseOrders": {
+        "total": 61,
+        "withUnified": 61,
+        "coverage": "100.00"
+      },
+      "grns": {
+        "total": 14,
+        "withUnified": 14,
+        "coverage": "100.00"
+      },
+      "invoices": {
+        "total": 8,
+        "withUnified": 8,
+        "coverage": "100.00"
+      },
+      "status": "PASS",
+      "passCriteria": "≥ 99.9% coverage for all entities"
+    },
+    "statusMismatches": {
+      "orders": {
+        "count": 0,
+        "samples": []
+      },
+      "prs": {
+        "count": 0,
+        "samples": []
+      },
+      "purchaseOrders": {
+        "count": 0,
+        "samples": []
+      },
+      "grns": {
+        "count": 0,
+        "samples": []
+      },
+      "invoices": {
+        "count": 0,
+        "samples": []
+      },
+      "totalMismatches": 0,
+      "status": "PASS",
+      "passCriteria": "0 mismatches"
+    },
+    "cascadeIntegrity": {
+      "deliveredNotUnified": {
+        "count": 0,
+        "samples": []
+      },
+      "dispatchIncomplete": {
+        "count": 0,
+        "samples": []
+      },
+      "prDeliveryIncomplete": {
+        "count": 10,
+        "samples": [
+          {
+            "_id": "69564f0980fa7134ef45acd9",
+            "id": "ORD-1767264009429-6I5LNZPN4-100001",
+            "pr_status": "PO_CREATED",
+            "pr_number": "3443493",
+            "deliveryStatus": "DELIVERED",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69564fb880fa7134ef45aef7",
+            "id": "ORD-1767264184429-R1CY18RIY-100001",
+            "pr_status": "PO_CREATED",
+            "pr_number": "01012600001",
+            "deliveryStatus": "DELIVERED",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69564fe580fa7134ef45b03a",
+            "id": "ORD-1767264229393-LY2961SKF-100003",
+            "pr_status": "PO_CREATED",
+            "pr_number": "01012600001",
+            "deliveryStatus": "DELIVERED",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69566f5c83cfff7909d84269",
+            "id": "ORD-1767272284742-ST7E07N8Y-100001",
+            "pr_status": "PO_CREATED",
+            "pr_number": "01012026100002",
+            "deliveryStatus": "DELIVERED",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "695699ce83cfff7909d85b64",
+            "id": "ORD-1767283150715-K27L2PZ8O-100001",
+            "pr_status": "PO_CREATED",
+            "pr_number": "777777777",
+            "deliveryStatus": "DELIVERED",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69576b88c928feefcb766a8e",
+            "id": "ORD-1767336840968-5RLOKTXBW-100001",
+            "pr_status": "PO_CREATED",
+            "deliveryStatus": "DELIVERED",
+            "pr_number": "23232323",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69576ba4c928feefcb766cc7",
+            "id": "ORD-1767336868539-L0CKWWMZQ-100001",
+            "pr_status": "PO_CREATED",
+            "deliveryStatus": "DELIVERED",
+            "pr_number": "23232323",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69576bbcc928feefcb766e03",
+            "id": "ORD-1767336892036-OQ3QZRWTL-100003",
+            "pr_status": "PO_CREATED",
+            "deliveryStatus": "DELIVERED",
+            "pr_number": "56565656",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69578371aa2ca635eb622107",
+            "id": "ORD-1767342961314-2VGLVI0QQ-100003",
+            "pr_status": "PO_CREATED",
+            "deliveryStatus": "DELIVERED",
+            "pr_number": "098765432",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "695786beaa2ca635eb62273f",
+            "id": "ORD-1767343806183-01MINRKOL-100001",
+            "pr_status": "PO_CREATED",
+            "deliveryStatus": "DELIVERED",
+            "pr_number": "0-98123456",
+            "unified_pr_status": "LINKED_TO_PO"
+          }
+        ]
+      },
+      "shipmentOrderIncomplete": {
+        "count": 0,
+        "samples": []
+      },
+      "totalIncomplete": 10,
+      "status": "FAIL",
+      "passCriteria": "0 incomplete cascades"
+    },
+    "orphanRelationships": {
+      "orphanedShipments": {
+        "count": 0,
+        "samples": []
+      },
+      "prsWithoutShipments": {
+        "count": 10,
+        "samples": [
+          {
+            "_id": "69564f0980fa7134ef45acd9",
+            "id": "ORD-1767264009429-6I5LNZPN4-100001",
+            "pr_number": "3443493",
+            "dispatchStatus": "SHIPPED",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69564fb880fa7134ef45aef7",
+            "id": "ORD-1767264184429-R1CY18RIY-100001",
+            "pr_number": "01012600001",
+            "dispatchStatus": "SHIPPED",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69564fe580fa7134ef45b03a",
+            "id": "ORD-1767264229393-LY2961SKF-100003",
+            "pr_number": "01012600001",
+            "dispatchStatus": "SHIPPED",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69566f5c83cfff7909d84269",
+            "id": "ORD-1767272284742-ST7E07N8Y-100001",
+            "pr_number": "01012026100002",
+            "dispatchStatus": "SHIPPED",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "695699ce83cfff7909d85b64",
+            "id": "ORD-1767283150715-K27L2PZ8O-100001",
+            "pr_number": "777777777",
+            "dispatchStatus": "SHIPPED",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69576b88c928feefcb766a8e",
+            "id": "ORD-1767336840968-5RLOKTXBW-100001",
+            "dispatchStatus": "SHIPPED",
+            "pr_number": "23232323",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69576ba4c928feefcb766cbf",
+            "id": "ORD-1767336868539-L0CKWWMZQ-100002",
+            "dispatchStatus": "SHIPPED",
+            "pr_number": "23232323",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69576ba4c928feefcb766cc7",
+            "id": "ORD-1767336868539-L0CKWWMZQ-100001",
+            "dispatchStatus": "SHIPPED",
+            "pr_number": "23232323",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69576bbcc928feefcb766e03",
+            "id": "ORD-1767336892036-OQ3QZRWTL-100003",
+            "dispatchStatus": "SHIPPED",
+            "pr_number": "56565656",
+            "unified_pr_status": "LINKED_TO_PO"
+          },
+          {
+            "_id": "69576bbcc928feefcb766e0b",
+            "id": "ORD-1767336892036-OQ3QZRWTL-100002",
+            "dispatchStatus": "SHIPPED",
+            "pr_number": "56565656",
+            "unified_pr_status": "LINKED_TO_PO"
+          }
+        ]
+      },
+      "grnsWithoutPOs": {
+        "count": 0,
+        "samples": []
+      },
+      "invoicesWithoutGRNs": {
+        "count": 0,
+        "samples": []
+      },
+      "totalOrphans": 10,
+      "status": "WARN",
+      "passCriteria": "0 orphaned records"
+    },
+    "objectIdRemnants": {
+      "checks": [
+        {
+          "collection": "employees",
+          "field": "id",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "employees",
+          "field": "companyId",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "orders",
+          "field": "id",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "orders",
+          "field": "employeeId",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "orders",
+          "field": "companyId",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "orders",
+          "field": "vendorId",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "vendors",
+          "field": "id",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "productvendors",
+          "field": "productId",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "productvendors",
+          "field": "vendorId",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "vendorinventories",
+          "field": "vendorId",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "vendorinventories",
+          "field": "productId",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "shipments",
+          "field": "id",
+          "hexStringCount": 0,
+          "status": "PASS"
+        },
+        {
+          "collection": "shipments",
+          "field": "vendorId",
+          "hexStringCount": 0,
+          "status": "PASS"
+        }
+      ],
+      "totalRemnants": 0,
+      "status": "PASS",
+      "passCriteria": "0 hex string remnants"
+    },
+    "databaseHealth": {
+      "connectionStatus": {
+        "ping": {
+          "ok": 1
+        },
+        "status": "HEALTHY"
+      },
+      "collections": [
+        {
+          "name": "orders",
+          "count": 78
+        },
+        {
+          "name": "purchaseorders",
+          "count": 61
+        },
+        {
+          "name": "grns",
+          "count": 14
+        },
+        {
+          "name": "invoices",
+          "count": 8
+        },
+        {
+          "name": "shipments",
+          "count": 60
+        },
+        {
+          "name": "employees",
+          "count": 34
+        },
+        {
+          "name": "vendors",
+          "count": 3
+        }
+      ],
+      "indexStats": [],
+      "status": "PASS",
+      "passCriteria": "Database responding and collections accessible"
+    }
+  },
+  "summary": {
+    "totalChecks": 6,
+    "passed": 4,
+    "failed": 1,
+    "warnings": 1,
+    "overallStatus": "FAIL"
+  },
+  "errors": []
+}

@@ -11,16 +11,18 @@ import '@/lib/models/LogisticsProviderTestLog'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function POST(request: Request) {
   try {
     // Parse JSON body with error handling
     let body: any
     try {
       body = await request.json()
-    } catch (jsonError: any) {
+    } catch (jsonError) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
     const { providerId, testType, testParams, executedBy } = body
 
     if (!providerId || !testType) {
@@ -28,15 +30,16 @@ export async function POST(request: Request) {
         { error: 'providerId and testType are required' },
         { status: 400 }
       )
+    }
 
     // Get provider configuration
     const provider = await getShipmentServiceProviderById(providerId)
-    }
     if (!provider) {
       return NextResponse.json(
         { error: 'Provider not found' },
         { status: 404 }
       )
+    }
 
     // Get provider instance (without company credentials for test mode)
     // For testing, we'll use test credentials from request OR stored authConfig
@@ -76,7 +79,7 @@ export async function POST(request: Request) {
       const hasTestCredentials = Object.keys(credentials).length > 0
       console.log(`[provider-test] Using test credentials: ${hasTestCredentials}`)
       if (hasTestCredentials) {
-        console.log(`[provider-test] Test credentials keys: ${Object.keys(credentials).join(', ')`)
+        console.log(`[provider-test] Test credentials keys: ${Object.keys(credentials).join(', ')}`)
       }
       
       providerInstance = await getProviderInstance(
@@ -98,6 +101,7 @@ export async function POST(request: Request) {
         },
         { status: 500 }
       )
+    }
 
     let result: any = {}
     let success = false
@@ -247,7 +251,6 @@ export async function POST(request: Request) {
     })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/provider-test POST:', error)
-    console.error('API Error in /api/superadmin/provider-test POST:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -259,6 +262,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -268,6 +272,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -277,6 +282,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -302,14 +308,13 @@ export async function GET(request: Request) {
         { error: 'providerId is required' },
         { status: 400 }
       )
-
     }
+
     const { getTestLogs } = await import('@/lib/db/provider-test-access')
     const logs = await getTestLogs(providerId, testType, limit)
 
     return NextResponse.json({ logs })
   } catch (error: any) {
-    console.error('API Error in /api/superadmin/provider-test GET:', error)
     console.error('API Error in /api/superadmin/provider-test GET:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
@@ -322,6 +327,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -331,6 +337,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -340,6 +347,7 @@ export async function GET(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -348,4 +356,3 @@ export async function GET(request: Request) {
     )
   }
 }
-

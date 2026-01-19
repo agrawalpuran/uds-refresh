@@ -1,0 +1,228 @@
+{
+  "timestamp": "2026-01-15T19:20:30.287Z",
+  "sections": {
+    "A": {
+      "name": "Unified Field Integrity",
+      "status": "PASS",
+      "score": 100,
+      "details": [
+        {
+          "entity": "Orders",
+          "total": 1,
+          "withUnified": 1,
+          "coverage": "100.00%"
+        },
+        {
+          "entity": "PRs",
+          "total": 77,
+          "withUnified": 77,
+          "coverage": "100.00%"
+        },
+        {
+          "entity": "PurchaseOrders",
+          "total": 0,
+          "withUnified": 0,
+          "coverage": "100%"
+        },
+        {
+          "entity": "GRNs",
+          "total": 0,
+          "withUnified": 0,
+          "coverage": "100%"
+        },
+        {
+          "entity": "Invoices",
+          "total": 0,
+          "withUnified": 0,
+          "coverage": "100%"
+        },
+        {
+          "entity": "Shipments",
+          "total": 0,
+          "withUnified": 0,
+          "coverage": "100%"
+        }
+      ]
+    },
+    "B": {
+      "name": "Status Sync Health",
+      "status": "PASS",
+      "score": 100,
+      "details": []
+    },
+    "C": {
+      "name": "Cascade Integrity",
+      "status": "PASS",
+      "score": 100,
+      "details": []
+    },
+    "D": {
+      "name": "Relationship Graph Health",
+      "status": "PASS",
+      "score": 100,
+      "details": [
+        {
+          "relationship": "Order → Employee",
+          "total": 78,
+          "valid": 78,
+          "orphaned": 0
+        },
+        {
+          "relationship": "Order → Company",
+          "total": 78,
+          "valid": 78,
+          "orphaned": 0
+        },
+        {
+          "relationship": "Order → Vendor",
+          "total": 78,
+          "valid": 78,
+          "orphaned": 0
+        }
+      ]
+    },
+    "E": {
+      "name": "Legacy Field Dependence Impact",
+      "status": "PASS",
+      "score": 83.33333333333334,
+      "details": [
+        {
+          "collection": "orders",
+          "legacyField": "status",
+          "unifiedField": "unified_status",
+          "totalWithLegacy": 78,
+          "totalWithBoth": 78,
+          "migrationPercentage": "100.00%",
+          "status": "SAFE"
+        },
+        {
+          "collection": "orders",
+          "legacyField": "pr_status",
+          "unifiedField": "unified_pr_status",
+          "totalWithLegacy": 78,
+          "totalWithBoth": 77,
+          "migrationPercentage": "98.72%",
+          "status": "WARNING"
+        },
+        {
+          "collection": "purchaseorders",
+          "legacyField": "po_status",
+          "unifiedField": "unified_po_status",
+          "totalWithLegacy": 0,
+          "totalWithBoth": 0,
+          "migrationPercentage": "100.00%",
+          "status": "SAFE"
+        },
+        {
+          "collection": "grns",
+          "legacyField": "grnStatus",
+          "unifiedField": "unified_grn_status",
+          "totalWithLegacy": 0,
+          "totalWithBoth": 0,
+          "migrationPercentage": "100.00%",
+          "status": "SAFE"
+        },
+        {
+          "collection": "invoices",
+          "legacyField": "invoiceStatus",
+          "unifiedField": "unified_invoice_status",
+          "totalWithLegacy": 0,
+          "totalWithBoth": 0,
+          "migrationPercentage": "100.00%",
+          "status": "SAFE"
+        },
+        {
+          "collection": "shipments",
+          "legacyField": "shipmentStatus",
+          "unifiedField": "unified_shipment_status",
+          "totalWithLegacy": 0,
+          "totalWithBoth": 0,
+          "migrationPercentage": "100.00%",
+          "status": "SAFE"
+        }
+      ]
+    },
+    "F": {
+      "name": "Dual-write Stability Score",
+      "status": "PASS",
+      "score": 100,
+      "details": [
+        {
+          "collection": "orders",
+          "field": "unified_status_updated_by",
+          "total": 1,
+          "withDualWriteMarker": 1,
+          "percentage": "100.00%"
+        },
+        {
+          "collection": "orders",
+          "field": "unified_pr_status_updated_by",
+          "total": 77,
+          "withDualWriteMarker": 77,
+          "percentage": "100.00%"
+        },
+        {
+          "check": "Orders with both legacy + unified",
+          "count": 1,
+          "total": 1,
+          "percentage": "100.00%"
+        },
+        {
+          "check": "PRs with both legacy + unified",
+          "count": 77,
+          "total": 77,
+          "percentage": "100.00%"
+        }
+      ]
+    },
+    "G": {
+      "name": "Recommended Flag Flip Sequence",
+      "status": "PASS",
+      "sequence": [
+        {
+          "step": 1,
+          "action": "Set DUAL_WRITE_ENABLED=true (if not already)",
+          "reason": "Ensure all new writes populate both legacy and unified fields",
+          "risk": "LOW",
+          "prerequisite": "Unified coverage ≥ 95%"
+        },
+        {
+          "step": 2,
+          "action": "Set READ_FROM_UNIFIED=true",
+          "reason": "Application now reads from unified fields",
+          "risk": "MEDIUM",
+          "prerequisite": "Status sync health ≥ 98%"
+        },
+        {
+          "step": 3,
+          "action": "Set SAFE_MODE=false",
+          "reason": "Disable safety guards — unified fields are now primary",
+          "risk": "MEDIUM",
+          "prerequisite": "All previous steps successful, monitoring in place"
+        },
+        {
+          "step": 4,
+          "action": "Set DUAL_WRITE_ENABLED=false (future)",
+          "reason": "Stop writing to legacy fields",
+          "risk": "HIGH",
+          "prerequisite": "Stable operation for 7+ days, legacy field deprecation confirmed"
+        },
+        {
+          "step": 5,
+          "action": "Remove legacy fields from schema (future)",
+          "reason": "Final cleanup — schema simplification",
+          "risk": "HIGH",
+          "prerequisite": "All consumers migrated, backup verified"
+        }
+      ],
+      "details": [],
+      "score": 100
+    }
+  },
+  "finalVerdict": "SAFE_MODE CAN BE DISABLED",
+  "summary": {
+    "passed": 7,
+    "failed": 0,
+    "totalScore": 97.61904761904762
+  }
+}

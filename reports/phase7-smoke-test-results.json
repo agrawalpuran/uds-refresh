@@ -1,0 +1,61 @@
+{
+  "tests": {
+    "HEALTH_CHECK": {
+      "status": "PASS",
+      "details": {
+        "mongodb": "OK",
+        "collections": "OK"
+      }
+    },
+    "ORDER_CREATION": {
+      "status": "PASS",
+      "details": {
+        "orderId": "ORD-1767785576613-8RXATAQZQ-100001",
+        "unified_status": "DISPATCHED",
+        "legacy_status": "Dispatched"
+      }
+    },
+    "PR_WORKFLOW": {
+      "status": "PASS",
+      "details": {
+        "totalPRs": 77,
+        "statusDistribution": [
+          {
+            "_id": "DRAFT",
+            "count": 77,
+            "samplePrNumber": "3443493"
+          }
+        ]
+      }
+    },
+    "SHIPMENT_WORKFLOW": {
+      "status": "SKIP",
+      "details": "No shipments in database"
+    },
+    "DELIVERY_COMPLETION": {
+      "status": "PASS",
+      "details": {
+        "deliveredOrders": 0,
+        "fullyDeliveredPRs": 0,
+        "inconsistentDeliveries": 0
+      }
+    },
+    "PO_CREATION": {
+      "status": "SKIP",
+      "details": "No POs in database"
+    },
+    "NO_LEGACY_READBACK": {
+      "status": "PASS",
+      "details": {
+        "note": "READ_FROM_UNIFIED guards not yet implemented (expected)",
+        "dualWriteBlocks": 32,
+        "unifiedStatusUsage": 63,
+        "unifiedPRStatusUsage": 47,
+        "recommendation": "Implement READ_FROM_UNIFIED guards when ready for Phase 3"
+      }
+    }
+  },
+  "legacyFieldAccessDetected": true,
+  "overallStatus": "PASS",
+  "failures": []
+}

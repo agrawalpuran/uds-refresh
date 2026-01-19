@@ -1,0 +1,44 @@
+[
+  {
+    "_id": "695a4a567991cf31860b158a",
+    "packageId": "PKG_MJZMPW4VKUI",
+    "packageName": "Small - Package Uniform",
+    "lengthCm": 40,
+    "breadthCm": 20,
+    "heightCm": 6,
+    "volumetricDivisor": 5000,
+    "isActive": true,
+    "createdBy": "superadmin",
+    "createdAt": "2026-01-04T11:09:10.272Z",
+    "updatedAt": "2026-01-04T11:09:10.272Z",
+    "__v": 0
+  },
+  {
+    "_id": "695a4a977991cf31860b1595",
+    "packageId": "PKG_MJZMRAJ69Y6",
+    "packageName": "Medium - Package Uniform",
+    "lengthCm": 40,
+    "breadthCm": 25,
+    "heightCm": 10,
+    "volumetricDivisor": 5000,
+    "isActive": true,
+    "createdBy": "superadmin",
+    "createdAt": "2026-01-04T11:10:15.573Z",
+    "updatedAt": "2026-01-04T11:10:15.573Z",
+    "__v": 0
+  },
+  {
+    "_id": "695a4ab37991cf31860b159c",
+    "packageId": "PKG_MJZMRW0AW7V",
+    "packageName": "Large - Package Uniform",
+    "lengthCm": 40,
+    "breadthCm": 25,
+    "heightCm": 18,
+    "volumetricDivisor": 5000,
+    "isActive": true,
+    "createdBy": "superadmin",
+    "createdAt": "2026-01-04T11:10:43.404Z",
+    "updatedAt": "2026-01-04T11:10:43.404Z",
+    "__v": 0
+  }
+]

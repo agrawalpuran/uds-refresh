@@ -13,6 +13,7 @@ import {
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ packageId: string }> }
@@ -26,24 +27,24 @@ export async function GET(
         { error: 'packageId is required' },
         { status: 400 }
       )
+    }
 
     await connectDB()
 
     const package_ = await getShipmentPackageById(packageId)
 
-    }
     if (!package_) {
       return NextResponse.json(
         { error: 'Package not found' },
         { status: 404 }
       )
+    }
 
     return NextResponse.json({
       success: true,
       package: package_,
     }, { status: 200 })
   } catch (error: any) {
-    console.error('[packages API] GET Error:', error)
     console.error('[packages API] GET Error:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
@@ -56,6 +57,7 @@ export async function GET(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -65,6 +67,7 @@ export async function GET(
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -74,6 +77,7 @@ export async function GET(
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -98,10 +102,11 @@ export async function PUT(
     let body: any
     try {
       body = await request.json()
-    } catch (jsonError: any) {
+    } catch (jsonError) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
     const { packageName, lengthCm, breadthCm, heightCm, volumetricDivisor, isActive } = body
 
     if (!packageId) {
@@ -109,37 +114,39 @@ export async function PUT(
         { error: 'packageId is required' },
         { status: 400 }
       )
+    }
 
     // Validation
-    }
     if (lengthCm !== undefined && lengthCm <= 0) {
       return NextResponse.json(
         { error: 'lengthCm must be a positive number' },
         { status: 400 }
       )
+    }
 
     if (breadthCm !== undefined && breadthCm <= 0) {
       return NextResponse.json(
         { error: 'breadthCm must be a positive number' },
         { status: 400 }
       )
-
     }
+
     if (heightCm !== undefined && heightCm <= 0) {
       return NextResponse.json(
         { error: 'heightCm must be a positive number' },
         { status: 400 }
       )
+    }
 
     if (volumetricDivisor !== undefined && volumetricDivisor <= 0) {
       return NextResponse.json(
         { error: 'volumetricDivisor must be a positive number' },
         { status: 400 }
       )
+    }
 
     await connectDB()
 
-    }
     const package_ = await updateShipmentPackage(
       packageId,
       {
@@ -164,6 +171,7 @@ export async function PUT(
         { error: error.message },
         { status: 404 }
       )
+    }
     return NextResponse.json(
       {
         error: error.message || 'Unknown error occurred',
@@ -172,6 +180,7 @@ export async function PUT(
       },
       { status: 500 }
     )
+  }
 }
 
 /**
@@ -191,6 +200,7 @@ export async function DELETE(
         { error: 'packageId is required' },
         { status: 400 }
       )
+    }
 
     await connectDB()
 
@@ -207,6 +217,7 @@ export async function DELETE(
         { error: error.message },
         { status: 404 }
       )
+    }
     return NextResponse.json(
       {
         error: error.message || 'Unknown error occurred',
@@ -215,5 +226,5 @@ export async function DELETE(
       },
       { status: 500 }
     )
+  }
 }
-

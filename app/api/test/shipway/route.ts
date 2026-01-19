@@ -23,6 +23,7 @@ import '@/lib/models/SystemShippingConfig'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function POST(request: Request) {
   try {
     // Only allow in development mode
@@ -31,17 +32,18 @@ export async function POST(request: Request) {
         { error: 'Test endpoint not available in production' },
         { status: 403 }
       )
-
     }
+
     const { searchParams } = new URL(request.url)
     // Parse JSON body with error handling
     let body: any
     try {
       body = await request.json()
-    } catch (jsonError: any) {
+    } catch (jsonError) {
       return NextResponse.json({
         error: 'Invalid JSON in request body'
       }, { status: 400 })
+    }
     const { apiKey, apiSecret, testType = 'all', pincode, payload } = body
 
     // Get provider (Shipway or Mock) from query params or default to SHIPWAY
@@ -52,10 +54,10 @@ export async function POST(request: Request) {
         { error: `${providerCode} provider not configured. Please set it up via Super Admin → Logistics & Shipping` },
         { status: 404 }
       )
+    }
 
     // Initialize provider based on provider code
     let provider: any
-    }
     if (providerCode === 'MOCK') {
       provider = new MockProvider(providerDoc.providerId)
       await provider.initialize({
@@ -72,6 +74,7 @@ export async function POST(request: Request) {
           { error: 'Shiprocket requires email and password. Provide via apiKey/email and apiSecret/password in request body, or set SHIPROCKET_EMAIL and SHIPROCKET_PASSWORD in environment.' },
           { status: 400 }
         )
+      }
       
       provider = new ShiprocketProvider(providerDoc.providerId)
       await provider.initialize({
@@ -190,7 +193,6 @@ export async function POST(request: Request) {
     return NextResponse.json(results)
   } catch (error: any) {
     console.error('API Error in /api/test/shipway POST:', error)
-    console.error('API Error in /api/test/shipway POST:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -202,6 +204,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -211,6 +214,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -220,6 +224,7 @@ export async function POST(request: Request) {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -233,7 +238,7 @@ export async function POST(request: Request) {
  * GET /api/test/shipway
  * Get Shipway provider configuration and test status
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     // Only allow in development mode
     if (process.env.NODE_ENV === 'production') {
@@ -241,9 +246,9 @@ export async function GET() {
         { error: 'Test endpoint not available in production' },
         { status: 403 }
       )
+    }
 
     const config = await getSystemShippingConfig()
-    }
     const { searchParams } = new URL(request.url)
     const providerCode = searchParams.get('providerCode') || 'SHIPWAY'
     const providerDoc = await ShipmentServiceProvider.findOne({ providerCode }).lean()
@@ -270,7 +275,6 @@ export async function GET() {
     })
   } catch (error: any) {
     console.error('API Error in /api/test/shipway GET:', error)
-    console.error('API Error in /api/test/shipway GET:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -282,6 +286,7 @@ export async function GET() {
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -291,6 +296,7 @@ export async function GET() {
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -300,6 +306,7 @@ export async function GET() {
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -308,4 +315,3 @@ export async function GET() {
     )
   }
 }
-

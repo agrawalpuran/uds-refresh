@@ -1,0 +1,44 @@
+[
+  {
+    "_id": "69699de25d133dcf33790874",
+    "id": "PO-100004-1768529378978-MMWART",
+    "companyId": "100004",
+    "vendorId": "100001",
+    "client_po_number": "PO1601739",
+    "po_date": "2026-01-16T00:00:00.000Z",
+    "po_status": "COMPLETED",
+    "created_by_user_id": "300021",
+    "createdAt": "2026-01-16T02:09:38.981Z",
+    "updatedAt": "2026-01-16T04:31:40.779Z",
+    "__v": 0,
+    "unified_po_status": "IN_FULFILMENT",
+    "unified_po_status_updated_at": "2026-01-16T02:23:35.176Z",
+    "unified_po_status_updated_by": "migration-fix"
+  },
+  {
+    "_id": "6969ada123873d81f68fc979",
+    "id": "PO-100004-1768533409715-3T46VK",
+    "companyId": "100004",
+    "vendorId": "100001",
+    "client_po_number": "PO1601846",
+    "po_date": "2026-01-16T00:00:00.000Z",
+    "po_status": "COMPLETED",
+    "created_by_user_id": "300021",
+    "createdAt": "2026-01-16T03:16:49.718Z",
+    "updatedAt": "2026-01-16T04:43:53.277Z",
+    "__v": 0
+  },
+  {
+    "_id": "696a26b6cac6b180c9b522c2",
+    "id": "PO-100004-1768564406509-CUB04E",
+    "companyId": "100004",
+    "vendorId": "100001",
+    "client_po_number": "PO16011723",
+    "po_date": "2026-01-16T00:00:00.000Z",
+    "po_status": "IN_FULFILMENT",
+    "created_by_user_id": "300021",
+    "createdAt": "2026-01-16T11:53:26.511Z",
+    "updatedAt": "2026-01-16T11:54:53.660Z",
+    "__v": 0
+  }
+]

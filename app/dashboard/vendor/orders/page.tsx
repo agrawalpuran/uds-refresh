@@ -1,11 +1,11 @@
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
-import { Search, CheckCircle, XCircle, Package, Truck, Warehouse } from 'lucide-react'
+import { Search, CheckCircle, XCircle, Package, Truck, Warehouse, MapPin } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { getAllOrders, getOrdersByVendor, updateOrderStatus } from '@/lib/data-mongodb'
-import { maskEmployeeName, maskAddress } from '@/lib/utils/data-masking'
+// Employee names are now pre-masked by the backend
 
 interface Warehouse {
   warehouseRefId: string
@@ -1224,7 +1224,7 @@ export default function VendorOrdersPage() {
                           {pr.prDate && (
                             <p className="text-xs text-gray-500">PR Date: {new Date(pr.prDate).toLocaleDateString()}</p>
                           )}
-                          <p className="text-xs text-gray-600 truncate">Employee: {maskEmployeeName(pr.employeeName || 'N/A')}</p>
+                          <p className="text-xs text-gray-600 truncate">Employee: {pr.employeeName || 'N/A'}</p>
                         </div>
 
                         {/* Products under this PR */}
@@ -1297,7 +1297,7 @@ export default function VendorOrdersPage() {
                 <div className="flex items-start justify-between mb-3 gap-2">
                   <div className="flex-1 min-w-0">
                     <h3 className="text-sm font-bold text-gray-900 truncate mb-1">PR: {order.prNumber || 'N/A'}</h3>
-                    <p className="text-xs text-gray-600 truncate">Employee: {maskEmployeeName(order.employeeName || 'N/A')}</p>
+                    <p className="text-xs text-gray-600 truncate">Employee: {order.employeeName || 'N/A'}</p>
                     <p className="text-xs text-gray-600 truncate">Date: {new Date(order.orderDate).toLocaleDateString()}</p>
                     <p className="text-xs text-yellow-600 truncate font-medium">⚠️ No PO assigned</p>
                   </div>
@@ -2085,26 +2085,72 @@ export default function VendorOrdersPage() {
                 </span>
               </div>
 
-              {/* Dispatch From Section */}
-              {manualShipmentForm.warehouse && (
-                <div className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                  <label className="block text-xs font-semibold text-gray-700 mb-2 flex items-center gap-1.5">
-                    <Warehouse className="h-3.5 w-3.5" />
-                    Dispatch From
-                  </label>
-                  <div className="text-xs text-gray-900 space-y-0.5">
-                    <div className="font-medium">{manualShipmentForm.warehouse.warehouseName}</div>
-                    <div className="text-gray-600">
-                      {manualShipmentForm.warehouse.addressLine1}
-                      {manualShipmentForm.warehouse.addressLine2 && `, ${manualShipmentForm.warehouse.addressLine2}`}
+              {/* From and To Address Section */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                {/* Dispatch From Section */}
+                {manualShipmentForm.warehouse && (
+                  <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                    <label className="block text-xs font-semibold text-blue-700 mb-2 flex items-center gap-1.5">
+                      <Warehouse className="h-3.5 w-3.5" />
+                      From Address (Warehouse)
+                    </label>
+                    <div className="text-xs text-gray-900 space-y-0.5">
+                      <div className="font-medium">{manualShipmentForm.warehouse.warehouseName}</div>
+                      <div className="text-gray-600">
+                        {manualShipmentForm.warehouse.addressLine1}
+                        {manualShipmentForm.warehouse.addressLine2 && `, ${manualShipmentForm.warehouse.addressLine2}`}
+                      </div>
+                      <div className="text-gray-600">
+                        {manualShipmentForm.warehouse.city}, {manualShipmentForm.warehouse.state} - {manualShipmentForm.warehouse.pincode}
+                      </div>
+                      <div className="text-gray-600">{manualShipmentForm.warehouse.country}</div>
                     </div>
-                    <div className="text-gray-600">
-                      {manualShipmentForm.warehouse.city}, {manualShipmentForm.warehouse.state} - {manualShipmentForm.warehouse.pincode}
-                    </div>
-                    <div className="text-gray-600">{manualShipmentForm.warehouse.country}</div>
                   </div>
+                )}
+
+                {/* Ship To Section */}
+                <div className="p-3 bg-green-50 rounded-lg border border-green-200">
+                  <label className="block text-xs font-semibold text-green-700 mb-2 flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5" />
+                    To Address (Employee)
+                  </label>
+                  {manualShipmentForm.prs.length === 1 ? (
+                    // Single PR - show delivery address directly
+                    manualShipmentForm.prs[0].hasValidAddress && manualShipmentForm.prs[0].deliveryAddress ? (
+                      <div className="text-xs text-gray-900 space-y-0.5">
+                        <div className="font-medium">{manualShipmentForm.prs[0].employeeName}</div>
+                        <div className="text-gray-600">
+                          {manualShipmentForm.prs[0].deliveryAddress.line1}
+                          {manualShipmentForm.prs[0].deliveryAddress.line2 && `, ${manualShipmentForm.prs[0].deliveryAddress.line2}`}
+                        </div>
+                        {manualShipmentForm.prs[0].deliveryAddress.line3 && (
+                          <div className="text-gray-600">{manualShipmentForm.prs[0].deliveryAddress.line3}</div>
+                        )}
+                        <div className="text-gray-600">
+                          {manualShipmentForm.prs[0].deliveryAddress.city}, {manualShipmentForm.prs[0].deliveryAddress.state} - {manualShipmentForm.prs[0].deliveryAddress.pincode}
+                        </div>
+                        <div className="text-gray-600">{manualShipmentForm.prs[0].deliveryAddress.country}</div>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-red-600">
+                        <span className="font-medium">⚠️ Address not available</span>
+                        <p className="mt-1">Employee address is missing or incomplete.</p>
+                      </div>
+                    )
+                  ) : (
+                    // Multiple PRs - show summary
+                    <div className="text-xs text-gray-600">
+                      <div className="font-medium text-gray-900">{manualShipmentForm.prs.length} different delivery addresses</div>
+                      <p className="mt-1">See individual PR details below for specific addresses.</p>
+                      {manualShipmentForm.prs.filter(pr => !pr.hasValidAddress).length > 0 && (
+                        <p className="mt-1 text-red-600">
+                          ⚠️ {manualShipmentForm.prs.filter(pr => !pr.hasValidAddress).length} PR(s) have missing addresses
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
 
               {/* PR-Wise Shipment Details */}
               <div className="mb-4">

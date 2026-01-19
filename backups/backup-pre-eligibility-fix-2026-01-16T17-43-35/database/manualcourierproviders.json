@@ -1,0 +1,80 @@
+[
+  {
+    "_id": "69592bae2907c9ae3907e266",
+    "courierRefId": "MCP_MJYF117L686",
+    "courierCode": "DTDC",
+    "courierName": "DTDC Surface",
+    "isActive": true,
+    "contactWebsite": "",
+    "supportPhone": "",
+    "remarks": "",
+    "createdAt": "2026-01-03T14:46:06.954Z",
+    "updatedAt": "2026-01-03T14:46:06.954Z",
+    "__v": 0
+  },
+  {
+    "_id": "69592bc72907c9ae3907e26e",
+    "courierRefId": "MCP_MJYF1KAUIZC",
+    "courierCode": "UPS",
+    "courierName": "UPS Surface Shipping",
+    "isActive": true,
+    "contactWebsite": "",
+    "supportPhone": "",
+    "remarks": "",
+    "createdAt": "2026-01-03T14:46:31.687Z",
+    "updatedAt": "2026-01-03T14:46:31.687Z",
+    "__v": 0
+  },
+  {
+    "_id": "69592be42907c9ae3907e272",
+    "courierRefId": "MCP_MJYF26CKK2V",
+    "courierCode": "BLUEDART",
+    "courierName": "Blue Dart Surface",
+    "isActive": true,
+    "contactWebsite": "",
+    "supportPhone": "",
+    "remarks": "",
+    "createdAt": "2026-01-03T14:47:00.261Z",
+    "updatedAt": "2026-01-03T14:47:00.261Z",
+    "__v": 0
+  },
+  {
+    "_id": "69592c032907c9ae3907e27e",
+    "courierRefId": "MCP_MJYF2UBD9QA",
+    "courierCode": "AMAZON",
+    "courierName": "Amazon Surface",
+    "isActive": true,
+    "contactWebsite": "",
+    "supportPhone": "",
+    "remarks": "",
+    "createdAt": "2026-01-03T14:47:31.323Z",
+    "updatedAt": "2026-01-03T14:47:31.323Z",
+    "__v": 0
+  },
+  {
+    "_id": "69592c222907c9ae3907e282",
+    "courierRefId": "MCP_MJYF3IAOQAE",
+    "courierCode": "SHADOWFAX",
+    "courierName": "Shadowfax Surface",
+    "isActive": true,
+    "contactWebsite": "",
+    "supportPhone": "",
+    "remarks": "",
+    "createdAt": "2026-01-03T14:48:02.403Z",
+    "updatedAt": "2026-01-03T14:48:02.403Z",
+    "__v": 0
+  },
+  {
+    "_id": "69592c3b2907c9ae3907e28e",
+    "courierRefId": "MCP_MJYF41D8XNG",
+    "courierCode": "OTHERS",
+    "courierName": "Others - Surface",
+    "isActive": true,
+    "contactWebsite": "",
+    "supportPhone": "",
+    "remarks": "",
+    "createdAt": "2026-01-03T14:48:27.119Z",
+    "updatedAt": "2026-01-03T14:48:27.119Z",
+    "__v": 0
+  }
+]

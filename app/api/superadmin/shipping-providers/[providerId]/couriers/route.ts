@@ -9,6 +9,7 @@ import '@/lib/models/ShipmentServiceProvider'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ providerId: string }> }
@@ -22,14 +23,15 @@ export async function GET(
         { error: 'providerId is required' },
         { status: 400 }
       )
+    }
 
     const provider = await getShipmentServiceProviderById(providerId)
-    }
     if (!provider) {
       return NextResponse.json(
         { error: 'Provider not found' },
         { status: 404 }
       )
+    }
 
     return NextResponse.json({
       success: true,
@@ -37,7 +39,6 @@ export async function GET(
       count: provider.supportedCouriers?.length || 0,
     })
   } catch (error: any) {
-    console.error('API Error in /api/superadmin/shipping-providers/[providerId]/couriers GET:', error)
     console.error('API Error in /api/superadmin/shipping-providers/[providerId]/couriers GET:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
@@ -50,6 +51,7 @@ export async function GET(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -59,6 +61,7 @@ export async function GET(
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -68,6 +71,7 @@ export async function GET(
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -94,16 +98,17 @@ export async function PUT(
         { error: 'providerId is required' },
         { status: 400 }
       )
+    }
 
     // Parse JSON body with error handling
-    }
     let body: any
     try {
       body = await request.json()
-    } catch (jsonError: any) {
+    } catch (jsonError) {
       return NextResponse.json({ 
         error: 'Invalid JSON in request body' 
       }, { status: 400 })
+    }
     const { couriers } = body
 
     if (!Array.isArray(couriers)) {
@@ -111,6 +116,7 @@ export async function PUT(
         { error: 'couriers must be an array' },
         { status: 400 }
       )
+    }
 
     // Get current provider to merge with existing couriers
     const currentProvider = await getShipmentServiceProviderById(providerId)
@@ -119,10 +125,10 @@ export async function PUT(
         { error: 'Provider not found' },
         { status: 404 }
       )
+    }
 
     // Merge couriers: Update existing by courierCode, add new ones
     const existingCouriers = currentProvider.supportedCouriers || []
-    }
     const courierMap = new Map<string, any>()
 
     // First, add all existing couriers to map
@@ -183,7 +189,6 @@ export async function PUT(
     })
   } catch (error: any) {
     console.error('API Error in /api/superadmin/shipping-providers/[providerId]/couriers PUT:', error)
-    console.error('API Error in /api/superadmin/shipping-providers/[providerId]/couriers PUT:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -195,6 +200,7 @@ export async function PUT(
         { error: errorMessage },
         { status: 400 }
       )
+    }
     
     // Return 404 for not found errors
     if (errorMessage.includes('not found') || 
@@ -204,6 +210,7 @@ export async function PUT(
         { error: errorMessage },
         { status: 404 }
       )
+    }
     
     // Return 401 for authentication errors
     if (errorMessage.includes('Unauthorized') ||
@@ -213,6 +220,7 @@ export async function PUT(
         { error: errorMessage },
         { status: 401 }
       )
+    }
     
     // Return 500 for server errors
     return NextResponse.json(
@@ -221,4 +229,3 @@ export async function PUT(
     )
   }
 }
-

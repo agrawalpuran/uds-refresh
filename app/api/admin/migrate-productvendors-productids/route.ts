@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { connectDB } from '@/lib/db/connect'
+import connectDB from '@/lib/db/mongodb'
 import mongoose from 'mongoose'
 import Uniform from '@/lib/models/Uniform'
 import Vendor from '@/lib/models/Vendor'
@@ -74,7 +74,8 @@ export async function GET(request: Request) {
       needsMigration: stats.productIdObjectIdFormat > 0 || stats.vendorIdObjectIdFormat > 0 || stats.invalidFormat > 0
     }, { status: 200 })
     
-  } catch (error: any) {
+  } catch (error) {
+    const err = error as any;
     console.error('[Migration] Stats check failed:', error)
     return NextResponse.json({
       success: false,
@@ -202,7 +203,8 @@ export async function POST(request: Request) {
         } else {
           results.skipped++
         }
-      } catch (error: any) {
+      } catch (error) {
+    const err = error as any;
         results.errors.push(`Error migrating ProductVendor ${pv._id}: ${error.message}`)
         console.error(`[Migration] ❌ Error migrating ProductVendor ${pv._id}:`, error)
       }
@@ -216,7 +218,8 @@ export async function POST(request: Request) {
       results
     }, { status: 200 })
     
-  } catch (error: any) {
+  } catch (error) {
+    const err = error as any;
     console.error('[Migration] Migration failed:', error)
     return NextResponse.json({
       success: false,

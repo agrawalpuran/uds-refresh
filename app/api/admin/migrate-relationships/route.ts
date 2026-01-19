@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { connectDB } from '@/lib/db/connect'
+import connectDB from '@/lib/db/mongodb'
 import mongoose from 'mongoose'
 import Uniform from '@/lib/models/Uniform'
 import Company from '@/lib/models/Company'
@@ -78,7 +78,8 @@ export async function GET(request: Request) {
                       stats.productCompanies.invalidFormat > 0 || stats.productVendors.invalidFormat > 0
     }, { status: 200 })
     
-  } catch (error: any) {
+  } catch (error) {
+    const err = error as any;
     console.error('[Migration] Stats check failed:', error)
     return NextResponse.json({
       success: false,
@@ -212,7 +213,8 @@ export async function POST(request: Request) {
         } else {
           results.productCompanies.skipped++
         }
-      } catch (error: any) {
+      } catch (error) {
+    const err = error as any;
         results.productCompanies.errors.push(`Error migrating ProductCompany ${rel._id}: ${error.message}`)
         console.error(`[Migration] Error migrating ProductCompany ${rel._id}:`, error)
       }
@@ -318,7 +320,8 @@ export async function POST(request: Request) {
         } else {
           results.productVendors.skipped++
         }
-      } catch (error: any) {
+      } catch (error) {
+    const err = error as any;
         results.productVendors.errors.push(`Error migrating ProductVendor ${rel._id}: ${error.message}`)
         console.error(`[Migration] Error migrating ProductVendor ${rel._id}:`, error)
       }
@@ -332,7 +335,8 @@ export async function POST(request: Request) {
       results
     }, { status: 200 })
     
-  } catch (error: any) {
+  } catch (error) {
+    const err = error as any;
     console.error('[Migration] Migration failed:', error)
     return NextResponse.json({
       success: false,

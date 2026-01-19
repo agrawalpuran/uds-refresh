@@ -1,0 +1,191 @@
+{
+  "timestamp": "2026-01-16T02:24:36.069Z",
+  "mode": "READ_ONLY_SIMULATION",
+  "unifiedFieldCoverage": {
+    "orders": {
+      "total": 1,
+      "covered": 1,
+      "percentage": "100.00"
+    },
+    "prs": {
+      "total": 78,
+      "covered": 78,
+      "percentage": "100.00"
+    },
+    "pos": {
+      "total": 1,
+      "covered": 1,
+      "percentage": "100.00"
+    },
+    "grns": {
+      "total": 0,
+      "covered": 0,
+      "percentage": 100
+    },
+    "invoices": {
+      "total": 0,
+      "covered": 0,
+      "percentage": 100
+    },
+    "shipments": {
+      "total": 3,
+      "covered": 3,
+      "percentage": "100.00"
+    },
+    "overallScore": "100.00"
+  },
+  "statusConsistency": {
+    "orders": {
+      "total": 1,
+      "consistent": 1,
+      "mismatches": []
+    },
+    "prs": {
+      "total": 78,
+      "consistent": 78,
+      "mismatches": []
+    },
+    "pos": {
+      "total": 1,
+      "consistent": 1,
+      "mismatches": []
+    },
+    "grns": {
+      "total": 0,
+      "consistent": 0,
+      "mismatches": []
+    },
+    "invoices": {
+      "total": 0,
+      "consistent": 0,
+      "mismatches": []
+    },
+    "shipments": {
+      "total": 3,
+      "consistent": 3,
+      "mismatches": []
+    },
+    "overallConsistencyRate": "100.00"
+  },
+  "cascadeIntegrity": {
+    "orderToShipment": {
+      "valid": 1,
+      "invalid": 0,
+      "issues": []
+    },
+    "shipmentToDelivery": {
+      "valid": 3,
+      "invalid": 0,
+      "issues": []
+    },
+    "prToPO": {
+      "valid": 1,
+      "invalid": 0,
+      "issues": []
+    },
+    "poToGRN": {
+      "valid": 0,
+      "invalid": 0,
+      "issues": []
+    },
+    "grnToInvoice": {
+      "valid": 0,
+      "invalid": 0,
+      "issues": []
+    },
+    "overallIntegrityScore": "100.00"
+  },
+  "legacyFieldDependencies": {
+    "activeReferences": [
+      {
+        "collection": "orders",
+        "field": "status",
+        "recordCount": 79,
+        "status": "ACTIVE"
+      },
+      {
+        "collection": "orders",
+        "field": "pr_status",
+        "recordCount": 79,
+        "status": "ACTIVE"
+      },
+      {
+        "collection": "orders",
+        "field": "dispatchStatus",
+        "recordCount": 2,
+        "status": "ACTIVE"
+      },
+      {
+        "collection": "orders",
+        "field": "deliveryStatus",
+        "recordCount": 2,
+        "status": "ACTIVE"
+      },
+      {
+        "collection": "purchaseorders",
+        "field": "po_status",
+        "recordCount": 1,
+        "status": "ACTIVE"
+      },
+      {
+        "collection": "shipments",
+        "field": "shipmentStatus",
+        "recordCount": 3,
+        "status": "ACTIVE"
+      }
+    ],
+    "deprecatedFieldsStillUsed": [],
+    "safeToRemove": [
+      {
+        "collection": "orders",
+        "field": "status",
+        "reason": "All 79 records have unified field populated"
+      },
+      {
+        "collection": "orders",
+        "field": "pr_status",
+        "reason": "All 79 records have unified field populated"
+      },
+      {
+        "collection": "purchaseorders",
+        "field": "po_status",
+        "reason": "All 1 records have unified field populated"
+      },
+      {
+        "collection": "shipments",
+        "field": "shipmentStatus",
+        "reason": "All 3 records have unified field populated"
+      }
+    ],
+    "requiresAttention": []
+  },
+  "dualWriteVerification": {
+    "ordersWithBothFields": 1,
+    "prsWithBothFields": 78,
+    "posWithBothFields": 1,
+    "grnsWithBothFields": 0,
+    "invoicesWithBothFields": 0,
+    "shipmentsWithBothFields": 3,
+    "syncPercentage": "100.00"
+  },
+  "safeModeReadiness": {
+    "unifiedCoverageReady": true,
+    "cascadeIntegrityReady": true,
+    "legacyDependenciesCleared": true,
+    "dualWriteStable": true,
+    "overallReadiness": "READY",
+    "blockers": [],
+    "warnings": [],
+    "recommendations": [
+      "System is ready for SAFE_MODE deactivation",
+      "Recommend running one final regression test before deactivation"
+    ]
+  },
+  "summary": {
+    "totalChecks": 6,
+    "passed": 6,
+    "failed": 0,
+    "warnings": 0,
+    "overallStatus": "PASS"
+  }
+}
