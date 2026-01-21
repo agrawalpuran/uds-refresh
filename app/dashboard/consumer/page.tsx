@@ -1098,8 +1098,8 @@ export default function ConsumerDashboard() {
                       </div>
                     )}
                     
-                    <div className="mb-3">
-                      <label className="block text-xs font-medium text-neutral-700 mb-1.5">Size</label>
+                    <div className="mb-3 flex items-center gap-2">
+                      <label className="text-xs font-medium text-neutral-700">Size</label>
                       <select
                         value={selectedSize}
                         onChange={(e) => {
@@ -1111,7 +1111,7 @@ export default function ConsumerDashboard() {
                             }))
                           }
                         }}
-                        className="input-modern text-xs py-2"
+                        className="input-modern text-xs py-1.5 px-2"
                       >
                         {uniform.sizes.map((size) => (
                           <option key={size} value={size}>{size}</option>
@@ -1140,16 +1140,11 @@ export default function ConsumerDashboard() {
                         </button>
                       </div>
                     </div>
-                    {!canAddMore && currentQuantity > 0 && !company?.allowPersonalPayments && (
-                      <p className="text-xs text-red-600 mt-1">
-                        Maximum {maxAllowed} allowed for {uniform.category}
-                      </p>
-                    )}
-                    {currentQuantity === 0 && eligibility > 0 && (
+                    {eligibility > 0 && (
                       <p className="text-xs text-gray-500 mt-1">
                         {company?.allowPersonalPayments 
-                          ? `You can order ${eligibility} ${uniform.category}(s) under eligibility. Additional items can be purchased with personal payment.`
-                          : `You can order up to ${eligibility} ${uniform.category}(s)`
+                          ? `You can order up to ${Math.max(0, eligibility - totalForCategory)} ${uniform.category}(s)`
+                          : `You can order up to ${Math.max(0, eligibility - totalForCategory)} ${uniform.category}(s)`
                         }
                       </p>
                     )}

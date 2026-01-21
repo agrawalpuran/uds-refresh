@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import connectDB from '@/lib/db/mongodb'
 import { updatePRShipmentStatus } from '@/lib/db/data-access'
 import { generateShippingId } from '@/lib/db/shipping-config-access'
+import { decrementVendorStockOnDispatch } from '@/lib/services/vendor-inventory-service'
 // Ensure models are registered
 import '@/lib/models/Order'
 import '@/lib/models/Shipment'
@@ -110,14 +111,27 @@ export async function POST(request: Request) {
         
         // Validate status based on order type
         if (isReplacementOrder) {
-          // Replacement orders should be in approved status or similar (not Dispatched/Delivered)
-          const validReplacementStatuses = ['Approved', 'Processing', 'Pending', 'APPROVED', 'PROCESSING', 'PENDING']
+          // For replacement orders, check dispatchStatus (not just status) to determine if already shipped
+          // This handles the case where status was updated but dispatchStatus wasn't
+          const dispatchStatus = order.dispatchStatus
+          const deliveryStatus = order.deliveryStatus
           const currentStatus = order.status || order.orderStatus
-          if (currentStatus && ['Dispatched', 'Delivered', 'DISPATCHED', 'DELIVERED', 'Cancelled', 'CANCELLED'].includes(currentStatus)) {
-            errors.push(`Replacement order ${prData.prNumber} already in ${currentStatus} status`)
+          
+          // Only reject if dispatchStatus indicates already shipped/delivered
+          if (dispatchStatus === 'SHIPPED' || dispatchStatus === 'IN_TRANSIT' || dispatchStatus === 'DISPATCHED') {
+            errors.push(`Replacement order ${prData.prNumber} already shipped (dispatchStatus: ${dispatchStatus})`)
             continue
           }
-          console.log(`[Manual Shipment] Processing REPLACEMENT order ${prData.prNumber} (status: ${currentStatus})`)
+          if (deliveryStatus === 'DELIVERED' || deliveryStatus === 'FULLY_DELIVERED') {
+            errors.push(`Replacement order ${prData.prNumber} already delivered`)
+            continue
+          }
+          // Also reject if cancelled
+          if (currentStatus && ['Cancelled', 'CANCELLED'].includes(currentStatus)) {
+            errors.push(`Replacement order ${prData.prNumber} is cancelled`)
+            continue
+          }
+          console.log(`[Manual Shipment] Processing REPLACEMENT order ${prData.prNumber} (status: ${currentStatus}, dispatchStatus: ${dispatchStatus || 'N/A'})`)
         } else {
           // Regular PRs must be in LINKED_TO_PO status
           if (order.unified_pr_status !== 'LINKED_TO_PO') {
@@ -149,14 +163,13 @@ export async function POST(request: Request) {
         }
 
         // Create shipment record with all available fields
+        // For replacement orders, frontend sends orderId as prNumber (prNumber is required in Shipment model)
         const shipmentData: any = {
           shipmentId,
-          prNumber: isReplacementOrder ? undefined : prData.prNumber,
+          prNumber: prData.prNumber, // Always use prNumber (frontend sends orderId for replacement orders)
           poNumber: poNumber || undefined,
           vendorId: String(vendorId),
           shipmentMode: 'MANUAL' as const,
-          // For replacement orders, store the order ID
-          orderId: isReplacementOrder ? prData.prId : undefined,
           // Manual shipment fields
           modeOfTransport: prData.modeOfTransport,
           dispatchedDate,
@@ -188,12 +201,15 @@ export async function POST(request: Request) {
         // Update order status based on order type
         if (isReplacementOrder) {
           // For replacement orders, update order status directly to Dispatched
+          // CRITICAL: Must update dispatchStatus to 'SHIPPED' for getOrdersByVendor status correction to work
           await Order.findOneAndUpdate(
             { id: prData.prId },
             {
               $set: {
                 status: 'Dispatched',
                 orderStatus: 'Dispatched',
+                dispatchStatus: 'SHIPPED',           // Required for status display
+                deliveryStatus: 'NOT_DELIVERED',     // Initial delivery status
                 dispatchedDate,
                 modeOfTransport: orderModeOfTransport,
                 trackingNumber: prData.shipmentNumber || undefined,
@@ -201,7 +217,41 @@ export async function POST(request: Request) {
               }
             }
           )
-          console.log(`[Manual Shipment] ✅ Updated replacement order ${prData.prId} to Dispatched`)
+          console.log(`[Manual Shipment] ✅ Updated replacement order ${prData.prId} to Dispatched (dispatchStatus=SHIPPED)`)
+          
+          // CRITICAL: Decrement inventory for the replacement items being shipped
+          // This was missing - replacement orders need inventory decrement just like regular orders
+          try {
+            const orderItemsForInventory = order.items?.map((item: any) => ({
+              uniformId: typeof item.uniformId === 'object' 
+                ? (item.uniformId.id || String(item.uniformId._id || item.uniformId))
+                : String(item.uniformId),
+              size: item.size,
+              quantity: item.quantity,
+            })) || []
+            
+            if (orderItemsForInventory.length > 0) {
+              console.log(`[Manual Shipment] 📦 Decrementing inventory for replacement order ${prData.prId}:`, orderItemsForInventory)
+              const inventoryResult = await decrementVendorStockOnDispatch(
+                String(vendorId),
+                orderItemsForInventory,
+                prData.prId
+              )
+              
+              if (inventoryResult.success) {
+                console.log(`[Manual Shipment] ✅ Inventory decremented for replacement order:`, {
+                  orderId: prData.prId,
+                  decrements: inventoryResult.decrements?.length || 0,
+                })
+              } else if (inventoryResult.errors?.length > 0) {
+                console.error(`[Manual Shipment] ⚠️ Inventory decrement had errors:`, inventoryResult.errors)
+                // Don't fail the shipment, just log the warning
+              }
+            }
+          } catch (inventoryError: any) {
+            console.error(`[Manual Shipment] ⚠️ Inventory decrement failed:`, inventoryError.message)
+            // Don't fail the shipment creation, just log the error
+          }
         } else {
           // Update PR shipment status using existing function
           // This ensures consistency with automatic shipment flow

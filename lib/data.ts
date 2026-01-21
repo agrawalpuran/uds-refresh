@@ -27,6 +27,21 @@ export interface Vendor {
   secondaryColor: string
   accentColor: string
   theme: 'light' | 'dark' | 'custom'
+  // Structured address fields (optional for backward compatibility)
+  address_line_1?: string
+  address_line_2?: string
+  address_line_3?: string
+  city?: string
+  state?: string
+  pincode?: string
+  country?: string
+  // Compliance & Banking Details (optional for backward compatibility)
+  registration_number?: string
+  gst_number?: string
+  bank_name?: string
+  branch_address?: string
+  ifsc_code?: string
+  account_number?: string
 }
 
 export interface Company {

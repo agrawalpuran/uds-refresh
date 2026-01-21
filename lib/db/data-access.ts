@@ -2329,6 +2329,21 @@ export async function createVendor(vendorData: {
   secondaryColor: string
   accentColor: string
   theme?: 'light' | 'dark' | 'custom'
+  // Address fields
+  address_line_1: string
+  address_line_2?: string
+  address_line_3?: string
+  city: string
+  state: string
+  pincode: string
+  country?: string
+  // Compliance & Banking Details
+  registration_number?: string
+  gst_number: string
+  bank_name?: string
+  branch_address?: string
+  ifsc_code?: string
+  account_number?: string
 }): Promise<any> {
   await connectDB()
   
@@ -2391,6 +2406,21 @@ export async function createVendor(vendorData: {
     secondaryColor: vendorData.secondaryColor,
     accentColor: vendorData.accentColor,
     theme: vendorData.theme || 'light',
+    // Address fields
+    address_line_1: vendorData.address_line_1,
+    address_line_2: vendorData.address_line_2 || '',
+    address_line_3: vendorData.address_line_3 || '',
+    city: vendorData.city,
+    state: vendorData.state,
+    pincode: vendorData.pincode,
+    country: vendorData.country || 'India',
+    // Compliance & Banking Details
+    registration_number: vendorData.registration_number || '',
+    gst_number: vendorData.gst_number,
+    bank_name: vendorData.bank_name || '',
+    branch_address: vendorData.branch_address || '',
+    ifsc_code: vendorData.ifsc_code || '',
+    account_number: vendorData.account_number || '',
   }
   
   const newVendor = await Vendor.create(vendorDataToCreate)
@@ -2407,11 +2437,34 @@ export async function updateVendor(vendorId: string, vendorData: {
   secondaryColor?: string
   accentColor?: string
   theme?: 'light' | 'dark' | 'custom'
+  // Address fields
+  address_line_1?: string
+  address_line_2?: string
+  address_line_3?: string
+  city?: string
+  state?: string
+  pincode?: string
+  country?: string
+  // Compliance & Banking Details
+  registration_number?: string
+  gst_number?: string
+  bank_name?: string
+  branch_address?: string
+  ifsc_code?: string
+  account_number?: string
 }): Promise<any> {
   await connectDB()
   
   console.log(`[updateVendor] Starting update for vendorId: ${vendorId}`)
-  console.log(`[updateVendor] Update data:`, vendorData)
+  console.log(`[updateVendor] Received vendorData - compliance fields:`, {
+    registration_number: vendorData.registration_number,
+    gst_number: vendorData.gst_number,
+    bank_name: vendorData.bank_name,
+    branch_address: vendorData.branch_address,
+    ifsc_code: vendorData.ifsc_code,
+    account_number: vendorData.account_number
+  })
+  console.log(`[updateVendor] Full update data:`, vendorData)
   
   // Find vendor by id field (not _id)
   let vendor = await Vendor.findOne({ id: vendorId })
@@ -2448,16 +2501,32 @@ export async function updateVendor(vendorId: string, vendorData: {
   }
   
   // Build update object with only provided fields
+  // Note: We only include non-empty values to avoid overwriting existing data with empty strings
   const updateData: any = {}
-  if (vendorData.name !== undefined) updateData.name = vendorData.name
-  if (vendorData.email !== undefined) updateData.email = vendorData.email
-  if (vendorData.phone !== undefined) updateData.phone = vendorData.phone
-  if (vendorData.logo !== undefined) updateData.logo = vendorData.logo
-  if (vendorData.website !== undefined) updateData.website = vendorData.website
-  if (vendorData.primaryColor !== undefined) updateData.primaryColor = vendorData.primaryColor
-  if (vendorData.secondaryColor !== undefined) updateData.secondaryColor = vendorData.secondaryColor
-  if (vendorData.accentColor !== undefined) updateData.accentColor = vendorData.accentColor
+  if (vendorData.name !== undefined && vendorData.name !== '') updateData.name = vendorData.name
+  if (vendorData.email !== undefined && vendorData.email !== '') updateData.email = vendorData.email
+  if (vendorData.phone !== undefined && vendorData.phone !== '') updateData.phone = vendorData.phone
+  if (vendorData.logo !== undefined && vendorData.logo !== '') updateData.logo = vendorData.logo
+  if (vendorData.website !== undefined && vendorData.website !== '') updateData.website = vendorData.website
+  if (vendorData.primaryColor !== undefined && vendorData.primaryColor !== '') updateData.primaryColor = vendorData.primaryColor
+  if (vendorData.secondaryColor !== undefined && vendorData.secondaryColor !== '') updateData.secondaryColor = vendorData.secondaryColor
+  if (vendorData.accentColor !== undefined && vendorData.accentColor !== '') updateData.accentColor = vendorData.accentColor
   if (vendorData.theme !== undefined) updateData.theme = vendorData.theme
+  // Address fields - include even if empty (user might want to clear them)
+  if (vendorData.address_line_1 !== undefined && vendorData.address_line_1 !== '') updateData.address_line_1 = vendorData.address_line_1
+  if (vendorData.address_line_2 !== undefined) updateData.address_line_2 = vendorData.address_line_2 || '' // Allow empty for optional fields
+  if (vendorData.address_line_3 !== undefined) updateData.address_line_3 = vendorData.address_line_3 || '' // Allow empty for optional fields
+  if (vendorData.city !== undefined && vendorData.city !== '') updateData.city = vendorData.city
+  if (vendorData.state !== undefined && vendorData.state !== '') updateData.state = vendorData.state
+  if (vendorData.pincode !== undefined && vendorData.pincode !== '') updateData.pincode = vendorData.pincode
+  if (vendorData.country !== undefined && vendorData.country !== '') updateData.country = vendorData.country
+  // Compliance & Banking Details - include all fields when passed (validators allow empty strings)
+  if (vendorData.registration_number !== undefined) updateData.registration_number = vendorData.registration_number
+  if (vendorData.gst_number !== undefined) updateData.gst_number = vendorData.gst_number // Schema validator allows empty
+  if (vendorData.bank_name !== undefined) updateData.bank_name = vendorData.bank_name
+  if (vendorData.branch_address !== undefined) updateData.branch_address = vendorData.branch_address
+  if (vendorData.ifsc_code !== undefined) updateData.ifsc_code = vendorData.ifsc_code // Schema validator allows empty
+  if (vendorData.account_number !== undefined) updateData.account_number = vendorData.account_number
   
   console.log(`[updateVendor] Update data to apply:`, updateData)
   console.log(`[updateVendor] Query filter: { id: ${vendorId} }`)
@@ -2500,6 +2569,26 @@ export async function updateVendor(vendorId: string, vendorData: {
   }
   
   console.log(`[updateVendor] ✅ Update successful for vendor ${vendorId}`)
+  console.log(`[updateVendor] Updated vendor compliance fields after save:`, {
+    registration_number: updatedVendor.registration_number,
+    gst_number: updatedVendor.gst_number,
+    bank_name: updatedVendor.bank_name,
+    branch_address: updatedVendor.branch_address,
+    ifsc_code: updatedVendor.ifsc_code,
+    account_number: updatedVendor.account_number
+  })
+  
+  // Verify the update by re-fetching from DB
+  const verifyVendor = await Vendor.findOne({ id: vendorId }).lean()
+  console.log(`[updateVendor] Verification read - compliance fields in DB:`, {
+    registration_number: verifyVendor?.registration_number,
+    gst_number: verifyVendor?.gst_number,
+    bank_name: verifyVendor?.bank_name,
+    branch_address: verifyVendor?.branch_address,
+    ifsc_code: verifyVendor?.ifsc_code,
+    account_number: verifyVendor?.account_number
+  })
+  
   return toPlainObject(updatedVendor)
 }
 
@@ -5553,6 +5642,9 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
               if (employee.designation && typeof employee.designation === 'string' && employee.designation.includes(':')) {
                 try { employee.designation = decrypt(employee.designation) } catch {}
               }
+              if (employee.location && typeof employee.location === 'string' && employee.location.includes(':')) {
+                try { employee.location = decrypt(employee.location) } catch {}
+              }
               // Convert companyId from ObjectId to numeric ID
               if (employee.companyId) {
                 const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
@@ -5611,7 +5703,7 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
   // Decrypt email and other sensitive fields if they're still encrypted
   if (employee) {
     const { decrypt } = require('../utils/encryption')
-    const sensitiveFields = ['email', 'mobile', 'address', 'firstName', 'lastName', 'designation']
+    const sensitiveFields = ['email', 'mobile', 'address', 'firstName', 'lastName', 'designation', 'location']
     const addressFields = ['address_line_1', 'address_line_2', 'address_line_3', 'city', 'state', 'pincode']
     
     // Decrypt sensitive fields

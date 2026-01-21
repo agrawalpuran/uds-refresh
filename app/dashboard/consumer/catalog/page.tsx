@@ -886,16 +886,29 @@ export default function ConsumerCatalogPage() {
                 <h3 className="font-bold text-slate-900 text-lg">Your Eligibility, Order new by selecting from below Catalog items</h3>
               </div>
               {/* CRITICAL FIX: Dynamically render ALL categories, not just legacy 4 */}
-              {/* Get all categories with eligibility > 0 */}
+              {/* Get all categories with eligibility > 0 AND have at least one product visible */}
               {(() => {
                 // Combine legacy and dynamic eligibility
                 const allEligibility = { ...totalEligibility, ...dynamicEligibility }
                 const allConsumed = { ...consumedEligibility, ...dynamicConsumedEligibility }
                 
-                // Get all categories that have eligibility > 0
+                // Get unique categories from visible products (after gender filtering)
+                const visibleCategories = new Set(
+                  filteredUniforms.map(u => u.category?.toLowerCase().trim()).filter(Boolean)
+                )
+                
+                // Get all categories that have eligibility > 0 AND have at least one visible product
                 const eligibleCategories = Object.keys(allEligibility).filter(cat => {
                   const total = allEligibility[cat] || 0
-                  return total > 0
+                  if (total <= 0) return false
+                  
+                  // Only show categories that have at least one product visible after gender filter
+                  const normalizedCat = cat.toLowerCase().trim()
+                  // Handle belt/accessory variations
+                  const categoryMatches = visibleCategories.has(normalizedCat) ||
+                    (normalizedCat === 'accessory' && visibleCategories.has('belt')) ||
+                    (normalizedCat === 'belt' && visibleCategories.has('accessory'))
+                  return categoryMatches
                 })
                 
                 // Sort: legacy categories first (shirt, pant, shoe, jacket), then others alphabetically
@@ -1235,16 +1248,11 @@ export default function ConsumerCatalogPage() {
                         <Plus className="h-4 w-4" />
                       </button>
                     </div>
-                    {!canAddMore && currentQuantity > 0 && !company?.allowPersonalPayments && (
-                      <p className="text-xs text-red-600 mt-1">
-                        Maximum {maxAllowed} allowed for {uniform.category}
-                      </p>
-                    )}
-                    {currentQuantity === 0 && (
+                    {eligibility > 0 && (
                       <p className="text-xs text-gray-500 mt-1">
                         {company?.allowPersonalPayments 
-                          ? `You can order ${eligibility} ${uniform.category}(s) under eligibility. Additional items can be purchased with personal payment.`
-                          : `You can order up to ${eligibility} ${uniform.category}(s)`
+                          ? `You can order up to ${Math.max(0, eligibility - totalForCategory)} ${uniform.category}(s)`
+                          : `You can order up to ${Math.max(0, eligibility - totalForCategory)} ${uniform.category}(s)`
                         }
                       </p>
                     )}

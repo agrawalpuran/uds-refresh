@@ -3,13 +3,14 @@
 import DashboardLayout from '@/components/DashboardLayout'
 import { Package, FileText, Plus, Eye, X, Receipt } from 'lucide-react'
 import { useState, useEffect } from 'react'
-import { getPOsEligibleForGRN, getGRNsByVendor, createGRNByVendor, createInvoiceByVendor, getInvoicesByVendor, getProductsByVendor } from '@/lib/data-mongodb'
+import { getPOsEligibleForGRN, getGRNsByVendor, createGRNByVendor, createInvoiceByVendor, getInvoicesByVendor, getProductsByVendor, getVendorById } from '@/lib/data-mongodb'
 import Link from 'next/link'
 
 export default function VendorGRNPage() {
   const [vendorId, setVendorId] = useState<string>('')
   const [activeTab, setActiveTab] = useState<'eligible' | 'my-grns' | 'my-invoices'>('eligible')
   const [selectedInvoice, setSelectedInvoice] = useState<any>(null)
+  const [selectedVendorDetails, setSelectedVendorDetails] = useState<any>(null)
   const [showInvoiceViewModal, setShowInvoiceViewModal] = useState(false)
   const [eligiblePOs, setEligiblePOs] = useState<any[]>([])
   const [myGRNs, setMyGRNs] = useState<any[]>([])
@@ -503,9 +504,21 @@ export default function VendorGRNPage() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm">
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               setSelectedInvoice(invoice)
                               setShowInvoiceViewModal(true)
+                              // Fetch vendor details for display
+                              if (invoice.vendorId) {
+                                try {
+                                  const vendor = await getVendorById(invoice.vendorId)
+                                  setSelectedVendorDetails(vendor)
+                                } catch (error) {
+                                  console.error('Error fetching vendor details:', error)
+                                  setSelectedVendorDetails(null)
+                                }
+                              } else {
+                                setSelectedVendorDetails(null)
+                              }
                             }}
                             className="inline-flex items-center px-3 py-1 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
                           >
@@ -1086,6 +1099,7 @@ export default function VendorGRNPage() {
                     onClick={() => {
                       setShowInvoiceViewModal(false)
                       setSelectedInvoice(null)
+                      setSelectedVendorDetails(null)
                     }}
                     className="text-gray-400 hover:text-gray-500"
                   >
@@ -1094,19 +1108,46 @@ export default function VendorGRNPage() {
                 </div>
                 
                 <div className="space-y-6">
-                  {/* System Invoice Details */}
-                  <div className="bg-blue-50 p-4 rounded-md">
-                    <h4 className="text-sm font-medium text-gray-900 mb-3">System Invoice Details (Internal)</h4>
+                  {/* Vendor Company Details - Displayed at top of invoice */}
+                  <div className="bg-indigo-50 p-4 rounded-md border border-indigo-200">
+                    <h4 className="text-sm font-semibold text-indigo-900 mb-3">Vendor Details</h4>
                     <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">System Invoice Number</label>
-                        <p className="mt-1 text-sm text-gray-900">{selectedInvoice.invoiceNumber || 'N/A'}</p>
+                      <div className="col-span-2">
+                        <label className="block text-sm font-medium text-gray-700">Vendor Name</label>
+                        <p className="mt-1 text-base text-gray-900 font-semibold">
+                          {selectedVendorDetails?.name || 'N/A'}
+                        </p>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-sm font-medium text-gray-700">Address</label>
+                        <p className="mt-1 text-sm text-gray-900">
+                          {selectedVendorDetails?.address_line_1 && (
+                            <>{selectedVendorDetails.address_line_1}<br /></>
+                          )}
+                          {selectedVendorDetails?.address_line_2 && (
+                            <>{selectedVendorDetails.address_line_2}<br /></>
+                          )}
+                          {selectedVendorDetails?.address_line_3 && (
+                            <>{selectedVendorDetails.address_line_3}<br /></>
+                          )}
+                          {[
+                            selectedVendorDetails?.city,
+                            selectedVendorDetails?.state,
+                            selectedVendorDetails?.pincode
+                          ].filter(Boolean).join(', ') || ''}
+                          {selectedVendorDetails?.country && (
+                            <><br />{selectedVendorDetails.country}</>
+                          )}
+                          {!selectedVendorDetails?.address_line_1 && !selectedVendorDetails?.city && 'N/A'}
+                        </p>
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-gray-700">System Invoice Date</label>
-                        <p className="mt-1 text-sm text-gray-900">
-                          {selectedInvoice.invoiceDate ? new Date(selectedInvoice.invoiceDate).toLocaleDateString() : 'N/A'}
-                        </p>
+                        <label className="block text-sm font-medium text-gray-700">Registration Number</label>
+                        <p className="mt-1 text-sm text-gray-900">{selectedVendorDetails?.registration_number || 'N/A'}</p>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">GST Number</label>
+                        <p className="mt-1 text-sm text-gray-900">{selectedVendorDetails?.gst_number || 'N/A'}</p>
                       </div>
                     </div>
                   </div>
@@ -1200,6 +1241,39 @@ export default function VendorGRNPage() {
                     <span className="text-xl font-bold text-gray-900">₹{selectedInvoice.invoiceAmount?.toFixed(2) || '0.00'}</span>
                   </div>
 
+                  {/* Vendor Bank Details Section - Only displayed if bank data exists */}
+                  {selectedVendorDetails && (selectedVendorDetails.bank_name || selectedVendorDetails.account_number || selectedVendorDetails.ifsc_code) && (
+                    <div className="bg-green-50 p-4 rounded-md border border-green-200">
+                      <h4 className="text-sm font-semibold text-green-900 mb-3">Bank Details for Payment</h4>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        {selectedVendorDetails.bank_name && (
+                          <div>
+                            <label className="block text-gray-600">Bank Name</label>
+                            <p className="mt-1 text-gray-900 font-medium">{selectedVendorDetails.bank_name}</p>
+                          </div>
+                        )}
+                        {selectedVendorDetails.branch_address && (
+                          <div>
+                            <label className="block text-gray-600">Branch Address</label>
+                            <p className="mt-1 text-gray-900 font-medium">{selectedVendorDetails.branch_address}</p>
+                          </div>
+                        )}
+                        {selectedVendorDetails.ifsc_code && (
+                          <div>
+                            <label className="block text-gray-600">IFSC Code</label>
+                            <p className="mt-1 text-gray-900 font-medium">{selectedVendorDetails.ifsc_code}</p>
+                          </div>
+                        )}
+                        {selectedVendorDetails.account_number && (
+                          <div>
+                            <label className="block text-gray-600">Account Number</label>
+                            <p className="mt-1 text-gray-900 font-medium">{selectedVendorDetails.account_number}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Status and Approval Info */}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -1242,6 +1316,7 @@ export default function VendorGRNPage() {
                     onClick={() => {
                       setShowInvoiceViewModal(false)
                       setSelectedInvoice(null)
+                      setSelectedVendorDetails(null)
                     }}
                     className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
                   >

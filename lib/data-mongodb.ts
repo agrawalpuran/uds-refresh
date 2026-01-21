@@ -429,6 +429,21 @@ export async function createVendor(vendorData: {
   secondaryColor: string
   accentColor: string
   theme?: 'light' | 'dark' | 'custom'
+  // Address fields
+  address_line_1: string
+  address_line_2?: string
+  address_line_3?: string
+  city: string
+  state: string
+  pincode: string
+  country?: string
+  // Compliance & Banking Details
+  registration_number?: string
+  gst_number: string
+  bank_name?: string
+  branch_address?: string
+  ifsc_code?: string
+  account_number?: string
 }): Promise<any> {
   try {
     return await fetchAPI<any>('/vendors', {
@@ -451,6 +466,21 @@ export async function updateVendor(vendorId: string, vendorData: {
   secondaryColor?: string
   accentColor?: string
   theme?: 'light' | 'dark' | 'custom'
+  // Address fields
+  address_line_1?: string
+  address_line_2?: string
+  address_line_3?: string
+  city?: string
+  state?: string
+  pincode?: string
+  country?: string
+  // Compliance & Banking Details
+  registration_number?: string
+  gst_number?: string
+  bank_name?: string
+  branch_address?: string
+  ifsc_code?: string
+  account_number?: string
 }): Promise<any> {
   try {
     return await fetchAPI<any>('/vendors', {

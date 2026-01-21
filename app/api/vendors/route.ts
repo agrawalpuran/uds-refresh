@@ -135,6 +135,42 @@ export async function POST(request: Request) {
       }, { status: 400 })
     }
 
+    // Validate mandatory address fields
+    if (!body.address_line_1 || !body.city || !body.state || !body.pincode) {
+      return NextResponse.json({ 
+        error: 'Address fields (address_line_1, city, state, pincode) are required' 
+      }, { status: 400 })
+    }
+
+    // Validate mandatory GST number
+    if (!body.gst_number) {
+      return NextResponse.json({ 
+        error: 'GST Number is required' 
+      }, { status: 400 })
+    }
+
+    // Validate GST number format
+    const gstPattern = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/
+    if (!gstPattern.test(body.gst_number)) {
+      return NextResponse.json({ 
+        error: 'Invalid GST Number format. Must be 15 alphanumeric characters (e.g., 22AAAAA0000A1Z5)' 
+      }, { status: 400 })
+    }
+
+    // Validate pincode format
+    if (!/^\d{6}$/.test(body.pincode)) {
+      return NextResponse.json({ 
+        error: 'Invalid pincode format. Must be exactly 6 digits' 
+      }, { status: 400 })
+    }
+
+    // Validate IFSC code format if provided
+    if (body.ifsc_code && !/^[A-Z]{4}0[A-Z0-9]{6}$/.test(body.ifsc_code)) {
+      return NextResponse.json({ 
+        error: 'Invalid IFSC Code format. Must be 11 characters (e.g., SBIN0001234)' 
+      }, { status: 400 })
+    }
+
     const vendor = await createVendor(body)
     return NextResponse.json(vendor)
   } catch (error: any) {

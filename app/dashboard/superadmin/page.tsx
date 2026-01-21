@@ -285,7 +285,22 @@ export default function SuperAdminPage() {
           primaryColor: vendor.primaryColor,
           secondaryColor: vendor.secondaryColor,
           accentColor: vendor.accentColor,
-          theme: vendor.theme as 'light' | 'dark' | 'custom'
+          theme: vendor.theme as 'light' | 'dark' | 'custom',
+          // Address fields
+          address_line_1: vendor.address_line_1,
+          address_line_2: vendor.address_line_2,
+          address_line_3: vendor.address_line_3,
+          city: vendor.city,
+          state: vendor.state,
+          pincode: vendor.pincode,
+          country: vendor.country,
+          // Compliance & Banking Details
+          registration_number: vendor.registration_number,
+          gst_number: vendor.gst_number,
+          bank_name: vendor.bank_name,
+          branch_address: vendor.branch_address,
+          ifsc_code: vendor.ifsc_code,
+          account_number: vendor.account_number,
         })
         // Reload vendors list
         const updatedVendors = await getAllVendors()
@@ -302,7 +317,22 @@ export default function SuperAdminPage() {
           primaryColor: vendor.primaryColor || '#2563eb',
           secondaryColor: vendor.secondaryColor || '#1e40af',
           accentColor: vendor.accentColor || '#3b82f6',
-          theme: (vendor.theme as 'light' | 'dark' | 'custom') || 'light'
+          theme: (vendor.theme as 'light' | 'dark' | 'custom') || 'light',
+          // Address fields (mandatory)
+          address_line_1: vendor.address_line_1 || '',
+          address_line_2: vendor.address_line_2,
+          address_line_3: vendor.address_line_3,
+          city: vendor.city || '',
+          state: vendor.state || '',
+          pincode: vendor.pincode || '',
+          country: vendor.country || 'India',
+          // Compliance & Banking Details
+          registration_number: vendor.registration_number,
+          gst_number: vendor.gst_number || '',
+          bank_name: vendor.bank_name,
+          branch_address: vendor.branch_address,
+          ifsc_code: vendor.ifsc_code,
+          account_number: vendor.account_number,
         })
         // Reload vendors list
         const updatedVendors = await getAllVendors()
@@ -1120,6 +1150,21 @@ export default function SuperAdminPage() {
                         secondaryColor: formData.get('secondaryColor') as string,
                         accentColor: formData.get('accentColor') as string,
                         theme: (formData.get('theme') as 'light' | 'dark' | 'custom') || 'light',
+                        // Address fields
+                        address_line_1: formData.get('address_line_1') as string,
+                        address_line_2: formData.get('address_line_2') as string || undefined,
+                        address_line_3: formData.get('address_line_3') as string || undefined,
+                        city: formData.get('city') as string,
+                        state: formData.get('state') as string,
+                        pincode: formData.get('pincode') as string,
+                        country: (formData.get('country') as string) || 'India',
+                        // Compliance & Banking Details - pass actual values (empty string if not filled)
+                        registration_number: formData.get('registration_number') as string,
+                        gst_number: formData.get('gst_number') as string,
+                        bank_name: formData.get('bank_name') as string,
+                        branch_address: formData.get('branch_address') as string,
+                        ifsc_code: formData.get('ifsc_code') as string,
+                        account_number: formData.get('account_number') as string,
                       }
                       await handleSaveVendor(vendorData)
                     }}
@@ -1246,6 +1291,171 @@ export default function SuperAdminPage() {
                         <option value="custom">Custom</option>
                       </select>
                     </div>
+
+                    {/* Address Section */}
+                    <div className="border-t border-gray-200 pt-4 mt-4">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Address Details</h3>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Address Line 1 *</label>
+                          <input
+                            type="text"
+                            name="address_line_1"
+                            defaultValue={editingVendor.address_line_1 || ''}
+                            required
+                            placeholder="House/Building/Street"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Address Line 2</label>
+                            <input
+                              type="text"
+                              name="address_line_2"
+                              defaultValue={editingVendor.address_line_2 || ''}
+                              placeholder="Area/Locality (Optional)"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Address Line 3</label>
+                            <input
+                              type="text"
+                              name="address_line_3"
+                              defaultValue={editingVendor.address_line_3 || ''}
+                              placeholder="Landmark (Optional)"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">City *</label>
+                            <input
+                              type="text"
+                              name="city"
+                              defaultValue={editingVendor.city || ''}
+                              required
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">State *</label>
+                            <input
+                              type="text"
+                              name="state"
+                              defaultValue={editingVendor.state || ''}
+                              required
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Pincode *</label>
+                            <input
+                              type="text"
+                              name="pincode"
+                              defaultValue={editingVendor.pincode || ''}
+                              required
+                              pattern="[0-9]{6}"
+                              placeholder="6-digit pincode"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Country *</label>
+                            <input
+                              type="text"
+                              name="country"
+                              defaultValue={editingVendor.country || 'India'}
+                              required
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Compliance & Banking Section */}
+                    <div className="border-t border-gray-200 pt-4 mt-4">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">Compliance & Banking Details</h3>
+                      <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Registration Number</label>
+                            <input
+                              type="text"
+                              name="registration_number"
+                              defaultValue={editingVendor.registration_number || ''}
+                              placeholder="Business Registration No. (Optional)"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">GST Number *</label>
+                            <input
+                              type="text"
+                              name="gst_number"
+                              defaultValue={editingVendor.gst_number || ''}
+                              required
+                              pattern="[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}"
+                              placeholder="e.g., 22AAAAA0000A1Z5"
+                              title="GST Number must be 15 alphanumeric characters (e.g., 22AAAAA0000A1Z5)"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Bank Name</label>
+                            <input
+                              type="text"
+                              name="bank_name"
+                              defaultValue={editingVendor.bank_name || ''}
+                              placeholder="Bank Name (Optional)"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Branch Address</label>
+                            <input
+                              type="text"
+                              name="branch_address"
+                              defaultValue={editingVendor.branch_address || ''}
+                              placeholder="Branch Address (Optional)"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">IFSC Code</label>
+                            <input
+                              type="text"
+                              name="ifsc_code"
+                              defaultValue={editingVendor.ifsc_code || ''}
+                              pattern="[A-Z]{4}0[A-Z0-9]{6}"
+                              placeholder="e.g., SBIN0001234 (Optional)"
+                              title="IFSC Code must be 11 characters (e.g., SBIN0001234)"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Account Number</label>
+                            <input
+                              type="text"
+                              name="account_number"
+                              defaultValue={editingVendor.account_number || ''}
+                              placeholder="Account Number (Optional)"
+                              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
                     {editingVendor.id && (
                       <div className="bg-gray-50 p-3 rounded-lg">
                         <p className="text-sm text-gray-600">
