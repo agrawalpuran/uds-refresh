@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { 
   LayoutDashboard, Package, Users, FileText, BarChart3, 
-  Settings, LogOut, MapPin, ShoppingCart, Upload, Shield, Warehouse, MessageSquare, Menu, X, RefreshCw, Layers, Tag, Link2, ChevronDown, ChevronRight, Truck, Plus
+  Settings, LogOut, MapPin, ShoppingCart, Upload, Shield, Warehouse, MessageSquare, Menu, X, RefreshCw, Layers, Tag, Link2, ChevronDown, ChevronRight, Truck, Plus, Mail
 } from 'lucide-react'
 import { mockEmployees, mockCompanies, getVendorById, getCompanyById, getEmployeeByEmail } from '@/lib/data'
 import { getCompanyById as getCompanyByIdAPI, getBranchByAdminEmail, getCompanyByAdminEmail, getLocationByAdminEmail, getEmployeeByEmail as getEmployeeByEmailAPI, getVendorById as getVendorByIdAPI } from '@/lib/data-mongodb'
@@ -613,6 +613,7 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
     { name: 'Workflow Configuration', href: '/dashboard/superadmin/workflow-config', icon: Settings },
     { name: 'Categories', href: '/dashboard/superadmin/categories', icon: Tag },
     { name: 'Logistics & Shipping', href: '/dashboard/superadmin/logistics', icon: Truck },
+    { name: 'Notifications', href: '/dashboard/superadmin/notifications', icon: Mail },
     // Only show "Create Test Order" menu item if feature is enabled
     ...(testOrdersEnabled ? [{ name: 'Create Test Order', href: '/dashboard/superadmin/create-test-order', icon: Plus }] : []),
   ]

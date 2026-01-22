@@ -48,6 +48,7 @@
     "migrate-to-atlas": "node scripts/migrate-to-atlas.js",
     "migrate-data-to-atlas": "node scripts/migrate-data-to-atlas.js",
     "push-github": "powershell -ExecutionPolicy Bypass -File push-to-github.ps1",
+    "push-dev": "powershell -ExecutionPolicy Bypass -File push-to-dev.ps1",
     "verify-deployment": "node scripts/verify-vercel-deployment.js",
     "sync-shipments": "node scripts/sync-shipment-statuses.js",
     "test-shipway": "node scripts/test-shipway-integration.js",
@@ -72,6 +73,7 @@
     "validate:string-ids": "node scripts/validate-string-ids.js"
   },
   "dependencies": {
+    "@types/nodemailer": "^7.0.5",
     "adm-zip": "^0.5.16",
     "archiver": "^7.0.1",
     "autoprefixer": "10.4.23",
@@ -79,6 +81,7 @@
     "lucide-react": "^0.553.0",
     "mongoose": "^8.19.3",
     "next": "^16.1.1",
+    "nodemailer": "^7.0.12",
     "postcss": "8.5.6",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",

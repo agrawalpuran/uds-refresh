@@ -82,6 +82,11 @@ import {
   validateInventoryForDispatch,
 } from '../services/vendor-inventory-service'
 
+// =============================================================================
+// NOTIFICATION SERVICE (Phase 1: Simple Email Notifications)
+// =============================================================================
+import { sendOrderStatusNotification, sendOrderDeliveredNotification } from '../services/NotificationService'
+
 // Ensure Branch model is registered
 if (!mongoose.models.Branch) {
   require('../models/Branch')
@@ -12481,6 +12486,59 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
   
   await order.save()
   console.log(`[updateOrderStatus] ✅ Order status updated: ${previousStatus} -> ${status}`)
+  
+  // ========================================================================
+  // EMAIL NOTIFICATION (Phase 1: Simple, Synchronous)
+  // ========================================================================
+  // Send email notification to employee when order status changes.
+  // This is non-blocking - notification failures don't affect order update.
+  // ========================================================================
+  if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true') {
+    try {
+      // Get employee details for notification
+      const employee = await Employee.findOne({ id: orderRaw.employeeId }).lean()
+      if (employee?.email) {
+        // Decrypt email if needed
+        let employeeEmail = employee.email
+        let employeeName = `${employee.firstName || ''} ${employee.lastName || ''}`.trim() || 'Customer'
+        
+        // Decrypt fields if they're encrypted (contain ':')
+        const { decrypt } = require('../utils/encryption')
+        if (employeeEmail.includes(':')) {
+          try { employeeEmail = decrypt(employeeEmail) } catch (e) { /* ignore */ }
+        }
+        if (employee.firstName?.includes(':')) {
+          try { employeeName = `${decrypt(employee.firstName)} ${decrypt(employee.lastName || '')}`.trim() } catch (e) { /* ignore */ }
+        }
+        
+        // Send appropriate notification based on status
+        if (status === 'Delivered') {
+          sendOrderDeliveredNotification(
+            employeeEmail,
+            employeeName,
+            orderId,
+            { companyName: (orderRaw as any).companyName, vendorName: (orderRaw as any).vendorName }
+          ).catch(err => console.warn(`[updateOrderStatus] ⚠️ Notification failed (non-fatal): ${err.message}`))
+        } else {
+          sendOrderStatusNotification(
+            employeeEmail,
+            employeeName,
+            orderId,
+            status,
+            previousStatus,
+            { companyName: (orderRaw as any).companyName, vendorName: (orderRaw as any).vendorName }
+          ).catch(err => console.warn(`[updateOrderStatus] ⚠️ Notification failed (non-fatal): ${err.message}`))
+        }
+        
+        console.log(`[updateOrderStatus] 📧 Notification queued for ${employeeEmail}`)
+      } else {
+        console.log(`[updateOrderStatus] ⚠️ No employee email found, skipping notification`)
+      }
+    } catch (notifyError: any) {
+      // Non-fatal: Don't fail order update if notification fails
+      console.warn(`[updateOrderStatus] ⚠️ Notification error (non-fatal): ${notifyError.message}`)
+    }
+  }
   
   // If this is a replacement order being shipped or delivered, handle return request and inventory updates
   // Business Rules:

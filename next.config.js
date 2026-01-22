@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Set Turbopack root to this project directory to avoid lockfile detection issues
+  turbopack: {
+    root: __dirname,
+  },
   // Disable Turbopack for production builds to avoid PostCSS/Tailwind resolution issues
   experimental: {
     serverActions: {
@@ -9,10 +13,6 @@ const nextConfig = {
   // Disable TypeScript errors during build (we handle these separately)
   typescript: {
     ignoreBuildErrors: true,
-  },
-  // Disable ESLint errors during build
-  eslint: {
-    ignoreDuringBuilds: true,
   },
   images: {
     remotePatterns: [

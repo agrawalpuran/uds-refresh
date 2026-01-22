@@ -1,8 +1,0 @@
-{
-  "version": 2,
-  "buildCommand": "NEXT_USE_TURBOPACK=0 npm run build",
-  "installCommand": "npm install",
-  "github": {
-    "silent": true
-  }
-}
