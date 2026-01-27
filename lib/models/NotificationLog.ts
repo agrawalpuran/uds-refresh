@@ -128,7 +128,7 @@ const NotificationLogSchema = new Schema<INotificationLog>(
 NotificationLogSchema.index({ eventId: 1, status: 1 }) // For event-based reporting
 NotificationLogSchema.index({ recipientEmail: 1, status: 1 }) // For recipient-based queries
 NotificationLogSchema.index({ status: 1, sentAt: 1 }) // For delivery reports
-NotificationLogSchema.index({ queueId: 1 }) // For linking back to queue
+// Note: queueId already has index: true in field definition, so no separate index needed
 NotificationLogSchema.index({ createdAt: 1 }) // For time-based queries and archiving
 
 // Delete existing model if it exists to force recompilation with new schema

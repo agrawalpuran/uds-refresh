@@ -82,9 +82,9 @@ export default function ConsumerProfilePage() {
             } else if (currentEmployee.address && typeof currentEmployee.address === 'string') {
               // Legacy address string - try to parse it
               try {
-                const addressService = await import('@/lib/utils/address-service')
-                const parsed = addressService.parseLegacyAddress ? 
-                  addressService.parseLegacyAddress(currentEmployee.address) : 
+                const addressUtils = await import('@/lib/utils/address-utils')
+                const parsed = addressUtils.parseLegacyAddress ? 
+                  addressUtils.parseLegacyAddress(currentEmployee.address) : 
                   null
                 if (parsed) {
                   addressData = {

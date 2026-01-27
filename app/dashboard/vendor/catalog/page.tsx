@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
-import { Search, Filter, X, Eye, Edit2, Save, Loader2, Ruler } from 'lucide-react'
-import { getProductsByVendor, getVendorById, getProductById, updateProduct, getVendorInventory } from '@/lib/data-mongodb'
+import { Search, Filter, X, Eye, Edit2, Save, Loader2, Ruler, Building2 } from 'lucide-react'
+import { getProductsByVendor, getVendorById, getProductById, updateProduct, getVendorInventory, getCompaniesByVendor } from '@/lib/data-mongodb'
 import Image from 'next/image'
 import { getUniformImage } from '@/lib/utils/image-mapping'
 import SizeChartModal from '@/components/SizeChartModal'
@@ -12,7 +12,11 @@ export default function VendorCatalogPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterGender, setFilterGender] = useState<'all' | 'male' | 'female' | 'unisex'>('all')
   const [filterCategory, setFilterCategory] = useState<string>('all')
+  const [filterCompany, setFilterCompany] = useState<string>('all') // 'all' shows all products
   const [uniforms, setUniforms] = useState<any[]>([])
+  const [allUniforms, setAllUniforms] = useState<any[]>([]) // Store all products before company filtering
+  const [companies, setCompanies] = useState<any[]>([])
+  const [companiesLoading, setCompaniesLoading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [vendorPrimaryColor, setVendorPrimaryColor] = useState<string>('#2563eb')
   const [vendorSecondaryColor, setVendorSecondaryColor] = useState<string>('#2563eb')
@@ -56,11 +60,7 @@ export default function VendorCatalogPage() {
             console.log(`[VendorCatalogPage] vendorId from getAuthData:`, vendorId)
           }
           
-          // Last resort: check localStorage (for backward compatibility during migration)
-          if (!vendorId) {
-            vendorId = localStorage.getItem('vendorId')
-            console.log(`[VendorCatalogPage] vendorId from localStorage (fallback):`, vendorId)
-          }
+          // SECURITY FIX: No localStorage fallback - localStorage is shared across tabs
           
           // Final fallback: try to get vendor by email if we have userEmail but no vendorId
           if (!vendorId) {
@@ -93,6 +93,19 @@ export default function VendorCatalogPage() {
         if (vendorId) {
           console.log(`[VendorCatalogPage] ✅ Fetching products for vendorId: ${vendorId}`)
           
+          // Fetch companies for this vendor first
+          try {
+            setCompaniesLoading(true)
+            const vendorCompanies = await getCompaniesByVendor(vendorId)
+            console.log(`[VendorCatalogPage] ✅ Loaded ${vendorCompanies.length} companies for vendor ${vendorId}`)
+            setCompanies(vendorCompanies)
+            // Default filter is 'all' - shows products for all companies
+          } catch (error) {
+            console.error('[VendorCatalogPage] Error loading companies:', error)
+          } finally {
+            setCompaniesLoading(false)
+          }
+          
           // Fetch products for this vendor
           const products = await getProductsByVendor(vendorId)
           console.log(`[VendorCatalogPage] ✅ Loaded ${products.length} products for vendor ${vendorId}`)
@@ -105,6 +118,7 @@ export default function VendorCatalogPage() {
             console.warn(`[VendorCatalogPage]   3. Products exist but are not being returned`)
           }
           
+          setAllUniforms(products) // Store all products
           setUniforms(products)
           
           // Fetch inventory for all products
@@ -164,6 +178,60 @@ export default function VendorCatalogPage() {
     loadData()
   }, [])
 
+  // Effect to filter products when company filter changes
+  useEffect(() => {
+    const filterByCompany = async () => {
+      // Get vendorId for the API call
+      let vendorId: string | null = null
+      if (typeof window !== 'undefined') {
+        const { getAuthData, getVendorId } = await import('@/lib/utils/auth-storage')
+        // SECURITY FIX: No localStorage fallback
+        vendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
+      }
+
+      if (!vendorId) {
+        setUniforms([])
+        return
+      }
+
+      try {
+        setLoading(true)
+        
+        if (filterCompany === 'all') {
+          // Fetch all products for the vendor (across all companies)
+          const allProducts = await getProductsByVendor(vendorId)
+          console.log(`[VendorCatalogPage] Loaded ${allProducts.length} products for all companies`)
+          setUniforms(allProducts)
+        } else {
+          // Fetch products filtered by specific company
+          const { getProductsByVendorAndCompany } = await import('@/lib/data-mongodb')
+          const filteredProducts = await getProductsByVendorAndCompany(vendorId, filterCompany)
+          console.log(`[VendorCatalogPage] Loaded ${filteredProducts.length} products for company ${filterCompany}`)
+          setUniforms(filteredProducts)
+        }
+        
+        // Also fetch inventory for these products
+        const inventory = await getVendorInventory(vendorId)
+        const inventoryMap: Record<string, any> = {}
+        inventory.forEach((inv: any) => {
+          if (inv.productId) {
+            inventoryMap[inv.productId] = inv
+          }
+        })
+        setInventoryData(inventoryMap)
+      } catch (error) {
+        console.error('Error filtering products by company:', error)
+        setUniforms([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (companies.length > 0) {
+      filterByCompany()
+    }
+  }, [filterCompany, companies])
+
   const filteredUniforms = uniforms.filter(uniform => {
     const matchesSearch = uniform.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          uniform.sku.toLowerCase().includes(searchTerm.toLowerCase())
@@ -211,7 +279,8 @@ export default function VendorCatalogPage() {
         const { getVendorId, getAuthData, getUserEmail } = await import('@/lib/utils/auth-storage')
         const { getVendorByEmail } = await import('@/lib/data-mongodb')
         
-        vendorId = getVendorId() || getAuthData('vendor')?.vendorId || localStorage.getItem('vendorId')
+        // SECURITY FIX: No localStorage fallback
+        vendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
         
         // Fallback: try to get vendor by email
         if (!vendorId) {
@@ -335,7 +404,8 @@ export default function VendorCatalogPage() {
         const { getVendorId, getAuthData, getUserEmail } = await import('@/lib/utils/auth-storage')
         const { getVendorByEmail } = await import('@/lib/data-mongodb')
         
-        vendorId = getVendorId() || getAuthData('vendor')?.vendorId || localStorage.getItem('vendorId')
+        // SECURITY FIX: No localStorage fallback
+        vendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
         
         // Fallback: try to get vendor by email
         if (!vendorId) {
@@ -415,7 +485,44 @@ export default function VendorCatalogPage() {
 
         {/* Filters */}
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4 sm:mb-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Company Filter - Required */}
+            <div className="relative">
+              <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <select
+                value={filterCompany}
+                onChange={(e) => setFilterCompany(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 outline-none appearance-none bg-white"
+                style={{ 
+                  '--tw-ring-color': vendorPrimaryColor || '#2563eb',
+                  '--tw-border-color': vendorPrimaryColor || '#2563eb'
+                } as React.CSSProperties & { '--tw-ring-color'?: string; '--tw-border-color'?: string }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = vendorPrimaryColor || '#2563eb'
+                  e.target.style.boxShadow = `0 0 0 2px ${vendorPrimaryColor || '#2563eb'}40`
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = '#d1d5db'
+                  e.target.style.boxShadow = 'none'
+                }}
+                disabled={companiesLoading}
+              >
+                {companiesLoading ? (
+                  <option value="all">Loading companies...</option>
+                ) : companies.length === 0 ? (
+                  <option value="all">No companies mapped</option>
+                ) : (
+                  <>
+                    <option value="all">All Companies</option>
+                    {companies.map((company) => (
+                      <option key={company.id} value={company.id}>
+                        {company.name}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
               <input
@@ -497,7 +604,7 @@ export default function VendorCatalogPage() {
             <p className="text-gray-600 mb-4">
               {searchTerm || filterGender !== 'all' || filterCategory !== 'all'
                 ? 'Try adjusting your filters'
-                : 'No products are currently linked to your vendor. Contact your company admin to link products.'}
+                : 'No products are currently linked to your vendor for this company. Contact the company admin to link products.'}
             </p>
           </div>
         ) : (

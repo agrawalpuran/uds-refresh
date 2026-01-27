@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import DashboardLayout from '@/components/DashboardLayout'
-import { CheckCircle, XCircle, Clock, Package, User, Calendar, ShoppingBag, MapPin, X, FileText } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, Package, User, Calendar, ShoppingBag, MapPin, X, FileText, AlertTriangle } from 'lucide-react'
 import { 
   getPendingApprovalsForSiteAdmin,
   getApprovedPRsForSiteAdmin,
@@ -12,6 +12,7 @@ import {
   bulkApproveOrders,
   getLocationByAdminEmail
 } from '@/lib/data-mongodb'
+import { RejectionModal } from '@/components/workflow'
 
 type TabType = 'pending' | 'approved' | 'all-prs'
 
@@ -36,6 +37,11 @@ export default function SiteAdminApprovalsPage() {
   const [activeTab, setActiveTab] = useState<TabType>('pending')
   const [fromDate, setFromDate] = useState<string>('')
   const [toDate, setToDate] = useState<string>('')
+  // Rejection state
+  const [showRejectModal, setShowRejectModal] = useState(false)
+  const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null)
+  const [rejectingOrderDisplayId, setRejectingOrderDisplayId] = useState<string>('')
+  const [rejecting, setRejecting] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -307,6 +313,76 @@ export default function SiteAdminApprovalsPage() {
     existing[field] = value
     newMap.set(orderId, existing)
     setBulkPRData(newMap)
+  }
+
+  // Handle opening the reject modal
+  const handleReject = (orderId: string, displayId: string) => {
+    setRejectingOrderId(orderId)
+    setRejectingOrderDisplayId(displayId)
+    setShowRejectModal(true)
+  }
+
+  // Handle confirm rejection
+  const handleConfirmReject = async (reasonCode: string, remarks?: string) => {
+    if (!rejectingOrderId) return
+
+    try {
+      setRejecting(true)
+      
+      const { getUserEmail } = await import('@/lib/utils/auth-storage')
+      const userEmail = getUserEmail('consumer')
+      if (!userEmail) {
+        alert('Error: User email not found')
+        return
+      }
+
+      // Get company ID from location (companyId may be string or object with id)
+      // SECURITY FIX: No localStorage fallback
+      const { getCompanyId: getCompanyIdAuth } = await import('@/lib/utils/auth-storage')
+      const locationCompanyId = typeof location?.companyId === 'object' 
+        ? location?.companyId?.id 
+        : location?.companyId
+      const companyIdValue = locationCompanyId || getCompanyIdAuth() || ''
+
+      // Call the workflow reject API with auth headers
+      const response = await fetch('/api/workflow/reject', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-company-id': companyIdValue,
+          'x-user-id': userEmail,
+          'x-user-role': 'LOCATION_ADMIN',
+          'x-user-name': userEmail,
+        },
+        body: JSON.stringify({
+          entityType: 'ORDER',
+          entityId: rejectingOrderId,
+          reasonCode,
+          remarks,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to reject order')
+      }
+
+      alert(`Order rejected successfully!`)
+      
+      // Close modal and reload data
+      setShowRejectModal(false)
+      setRejectingOrderId(null)
+      setRejectingOrderDisplayId('')
+      
+      await reloadData()
+      setSelectedOrders(new Set())
+    } catch (error: any) {
+      console.error('Error rejecting order:', error)
+      alert(`Error rejecting order: ${error.message || 'Unknown error'}`)
+    } finally {
+      setRejecting(false)
+    }
   }
 
   if (loading) {
@@ -646,13 +722,20 @@ export default function SiteAdminApprovalsPage() {
                   </div>
 
                   {activeTab === 'pending' && (
-                    <div className="ml-4">
+                    <div className="ml-4 flex flex-col space-y-2">
                       <button
                         onClick={() => handleApprove(order.id)}
                         className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors flex items-center space-x-2"
                       >
                         <CheckCircle className="h-5 w-5" />
                         <span>Approve PR</span>
+                      </button>
+                      <button
+                        onClick={() => handleReject(order.id, order.pr_number || order.id)}
+                        className="bg-red-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center space-x-2"
+                      >
+                        <XCircle className="h-5 w-5" />
+                        <span>Reject PR</span>
                       </button>
                     </div>
                   )}
@@ -860,6 +943,31 @@ export default function SiteAdminApprovalsPage() {
           </div>
         </div>
       )}
+
+      {/* Rejection Modal */}
+      <RejectionModal
+        isOpen={showRejectModal}
+        onClose={() => {
+          setShowRejectModal(false)
+          setRejectingOrderId(null)
+          setRejectingOrderDisplayId('')
+        }}
+        onConfirm={handleConfirmReject}
+        entityDisplayId={rejectingOrderDisplayId}
+        entityType="Order"
+        isLoading={rejecting}
+        allowedReasonCodes={[
+          { code: 'ELIGIBILITY_EXHAUSTED', label: 'Eligibility Exhausted' },
+          { code: 'EMPLOYEE_NOT_ELIGIBLE', label: 'Employee Not Eligible' },
+          { code: 'INVALID_QUANTITY', label: 'Invalid Quantity' },
+          { code: 'BUDGET_EXCEEDED', label: 'Budget Exceeded' },
+          { code: 'POLICY_VIOLATION', label: 'Policy Violation' },
+          { code: 'DUPLICATE_ORDER', label: 'Duplicate Order' },
+          { code: 'INCORRECT_ITEMS', label: 'Incorrect Items Selected' },
+          { code: 'OTHER', label: 'Other' },
+        ]}
+        isReasonMandatory={true}
+      />
     </DashboardLayout>
   )
 }

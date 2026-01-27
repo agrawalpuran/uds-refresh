@@ -28,11 +28,21 @@ export default function CompanyDashboard() {
   const [accessDenied, setAccessDenied] = useState(false)
   const router = useRouter()
 
-  // Helper function to remove "ICICI Bank - " prefix from branch names
+  // Helper function to get branch/location name from employee's locationId
+  // Since Employee has locationId (not branchId), we use the populated locationId.name
   const getBranchName = (employee: any): string => {
-    const branchName = employee.branchName || (employee.branchId && typeof employee.branchId === 'object' && employee.branchId.name) || 'N/A'
-    if (branchName === 'N/A') return 'N/A'
-    return branchName.replace(/^ICICI Bank\s*-\s*/i, '')
+    // Check for populated locationId first (preferred - from API population)
+    if (employee.locationId && typeof employee.locationId === 'object' && employee.locationId.name) {
+      const name = employee.locationId.name
+      // Remove company name prefix if present (e.g., "ICICI Bank - Mumbai" -> "Mumbai")
+      return name.replace(/^ICICI Bank\s*-\s*/i, '').replace(new RegExp(`^${companyName}\\s*-\\s*`, 'i'), '')
+    }
+    // Fallback: check for branchName or branchId (legacy support)
+    const branchName = employee.branchName || (employee.branchId && typeof employee.branchId === 'object' && employee.branchId.name)
+    if (branchName) {
+      return branchName.replace(/^ICICI Bank\s*-\s*/i, '').replace(new RegExp(`^${companyName}\\s*-\\s*`, 'i'), '')
+    }
+    return 'N/A'
   }
   
   // Verify admin access and get company ID

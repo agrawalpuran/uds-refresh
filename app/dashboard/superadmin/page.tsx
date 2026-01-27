@@ -678,7 +678,13 @@ export default function SuperAdminPage() {
                                   </p>
                                   <p className="text-sm text-gray-600 mb-2">Price: ₹{product.price}</p>
                                   <p className="text-sm text-gray-600 mb-2">
-                                    Companies: {product.companyIds.length}
+                                    Companies: {(() => {
+                                      const linkedCompanyIds = productCompanies.filter(pc => pc.productId === product.id).map(pc => pc.companyId)
+                                      const linkedCompanyNames = linkedCompanyIds.map(cId => companies.find(c => c.id === cId)?.name).filter(Boolean)
+                                      return linkedCompanyNames.length > 0 
+                                        ? `${linkedCompanyNames.length} (${linkedCompanyNames.join(', ')})`
+                                        : '0'
+                                    })()}
                                   </p>
                                   <div className="flex space-x-2 mt-4">
                                     <button
@@ -807,7 +813,13 @@ export default function SuperAdminPage() {
                                 </p>
                                 <p className="text-sm text-gray-600 mb-2">Price: ₹{product.price}</p>
                                 <p className="text-sm text-gray-600 mb-2">
-                                  Companies: {product.companyIds.length}
+                                  Companies: {(() => {
+                                    const linkedCompanyIds = productCompanies.filter(pc => pc.productId === product.id).map(pc => pc.companyId)
+                                    const linkedCompanyNames = linkedCompanyIds.map(cId => companies.find(c => c.id === cId)?.name).filter(Boolean)
+                                    return linkedCompanyNames.length > 0 
+                                      ? `${linkedCompanyNames.length} (${linkedCompanyNames.join(', ')})`
+                                      : '0'
+                                  })()}
                                 </p>
                                 <div className="flex space-x-2 mt-4">
                                   <button
@@ -2858,9 +2870,24 @@ export default function SuperAdminPage() {
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                     size={8}
                   >
-                    {products.map(p => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
+                    {products.map(p => {
+                      const linkedCompanyIds = productCompanies.filter(pc => pc.productId === p.id).map(pc => pc.companyId)
+                      const linkedCompanyNames = linkedCompanyIds.map(cId => companies.find(c => c.id === cId)?.name).filter(Boolean)
+                      const isLinkedToAnyCompany = linkedCompanyNames.length > 0
+                      const tooltip = isLinkedToAnyCompany 
+                        ? `Linked to: ${linkedCompanyNames.join(', ')}` 
+                        : 'Not linked to any company'
+                      return (
+                        <option 
+                          key={p.id} 
+                          value={p.id}
+                          style={isLinkedToAnyCompany ? { color: '#16a34a' } : {}}
+                          title={tooltip}
+                        >
+                          {p.name}{p.sku ? ` (${p.sku})` : ''}
+                        </option>
+                      )
+                    })}
                   </select>
                   <p className="text-xs text-gray-500 mt-1">Hold Ctrl/Cmd to select multiple</p>
                 </div>
@@ -3007,7 +3034,7 @@ export default function SuperAdminPage() {
                           disabled={isLinkedToOtherVendor}
                           style={isLinkedToOtherVendor ? { color: '#999', fontStyle: 'italic' } : {}}
                         >
-                          {p.name}{isLinkedToOtherVendor ? ' (already linked to another vendor)' : ''}
+                          {p.name}{p.sku ? ` (${p.sku})` : ''}{isLinkedToOtherVendor ? ' - already linked to another vendor' : ''}
                         </option>
                       )
                     })}

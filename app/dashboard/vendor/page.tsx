@@ -20,20 +20,16 @@ export default function VendorDashboard() {
     const loadData = async () => {
       try {
         setLoading(true)
-        // CRITICAL FIX: Prioritize sessionStorage (from current login) over localStorage (may be stale)
+        // SECURITY FIX: Use ONLY tab-specific auth storage - NO localStorage fallback
+        // localStorage is shared across tabs and causes session cross-contamination
         const { getVendorId, getAuthData } = typeof window !== 'undefined' 
           ? await import('@/lib/utils/auth-storage') 
           : { getVendorId: () => null, getAuthData: () => null }
         
-        // Try sessionStorage first (from current login) - MOST RELIABLE
-        let storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
+        // Use ONLY sessionStorage (tab-specific) - no localStorage fallback
+        const storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
         
-        // Fallback to localStorage (may be stale)
-        if (!storedVendorId) {
-          storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-        }
-        
-        console.log('[VendorDashboard] VendorId resolved:', storedVendorId)
+        console.log('[VendorDashboard] VendorId from sessionStorage:', storedVendorId)
         
         if (storedVendorId) {
           setVendorId(storedVendorId)

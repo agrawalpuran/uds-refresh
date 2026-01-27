@@ -1,31 +1,41 @@
-import mongoose, { Schema, Document } from 'mongoose'
-
 /**
  * NotificationQueue Model
  * 
- * Queued messages for async processing (future use).
- * Stores pending email notifications that need to be sent.
- * 
- * This model is designed for future implementation of async email processing.
- * No business logic is implemented yet - only the data structure.
+ * Stores notifications that are queued for later delivery.
+ * Used when:
+ * - Company is in quiet hours
+ * - Rate limiting is needed
+ * - Retry after temporary failures
  */
+
+import mongoose, { Schema, Document } from 'mongoose'
+
 export interface INotificationQueue extends Document {
-  queueId: string // Numeric ID (6-12 digits, e.g., "900001")
-  eventId: string // Foreign key → NotificationEvent.eventId
-  entityType: 'PR' | 'PO' | 'SHIPMENT' | 'ORDER' | 'EMPLOYEE' | 'VENDOR' | 'OTHER' // Type of entity that triggered the event
-  entityId: string // ID of the entity (e.g., PR number, PO number, Order ID)
-  recipientEmail: string // Email address of the recipient
-  recipientType: 'EMPLOYEE' | 'VENDOR' | 'LOCATION_ADMIN' | 'COMPANY_ADMIN' | 'CUSTOM' // Type of recipient
-  templateId: string // Foreign key → NotificationTemplate.templateId
-  senderId: string // Foreign key → NotificationSenderProfile.senderId
-  payloadData: any // JSON snapshot of values merged with template (for audit/debugging)
-  status: 'PENDING' | 'PROCESSING' | 'SENT' | 'FAILED' | 'RETRY' | 'CANCELLED' // Queue status
-  retryCount: number // Number of retry attempts
-  lastAttemptAt?: Date // Timestamp of last processing attempt
-  errorMessage?: string // Error message if status is FAILED
-  scheduledAt?: Date // Scheduled send time (for future delayed notifications)
-  createdAt?: Date
-  updatedAt?: Date
+  queueId: string                    // Unique queue entry ID
+  companyId: string                  // Company this notification belongs to
+  eventCode: string                  // Notification event code
+  recipientEmail: string             // Target recipient email
+  recipientType: 'EMPLOYEE' | 'VENDOR' | 'COMPANY_ADMIN' | 'LOCATION_ADMIN' | 'SYSTEM'
+  subject: string                    // Email subject (already rendered)
+  body: string                       // Email body (already rendered)
+  context: Record<string, any>       // Original context for logging/debugging
+  
+  // Queue management
+  status: 'PENDING' | 'PROCESSING' | 'SENT' | 'FAILED' | 'CANCELLED'
+  reason: string                     // Why it was queued (e.g., "quiet_hours", "rate_limit")
+  scheduledFor: Date                 // When to attempt delivery
+  
+  // Retry tracking
+  attempts: number                   // Number of delivery attempts
+  maxAttempts: number               // Maximum attempts before marking as failed
+  lastAttemptAt?: Date              // When last attempt was made
+  lastError?: string                // Error from last attempt
+  
+  // Metadata
+  correlationId: string             // For tracing
+  createdAt: Date
+  updatedAt: Date
+  processedAt?: Date                // When it was successfully processed
 }
 
 const NotificationQueueSchema = new Schema<INotificationQueue>(
@@ -35,97 +45,74 @@ const NotificationQueueSchema = new Schema<INotificationQueue>(
       required: true,
       unique: true,
       index: true,
-      validate: {
-        validator: function(v: string) {
-          // Must be 6-12 digits
-          return /^\d{6,12}$/.test(v)
-        },
-        message: 'Queue ID must be a 6-12 digit numeric string (e.g., "900001")'
-      }
     },
-    eventId: {
+    companyId: {
       type: String,
       required: true,
       index: true,
-      ref: 'NotificationEvent',
     },
-    entityType: {
-      type: String,
-      enum: ['PR', 'PO', 'SHIPMENT', 'ORDER', 'EMPLOYEE', 'VENDOR', 'OTHER'],
-      required: true,
-      index: true,
-    },
-    entityId: {
+    eventCode: {
       type: String,
       required: true,
       index: true,
-      maxlength: 100,
     },
     recipientEmail: {
       type: String,
       required: true,
-      trim: true,
-      lowercase: true,
-      maxlength: 255,
-      index: true,
-      validate: {
-        validator: function(v: string) {
-          // Basic email validation
-          return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)
-        },
-        message: 'Recipient email must be a valid email address'
-      }
     },
     recipientType: {
       type: String,
-      enum: ['EMPLOYEE', 'VENDOR', 'LOCATION_ADMIN', 'COMPANY_ADMIN', 'CUSTOM'],
+      enum: ['EMPLOYEE', 'VENDOR', 'COMPANY_ADMIN', 'LOCATION_ADMIN', 'SYSTEM'],
       required: true,
-      index: true,
     },
-    templateId: {
+    subject: {
       type: String,
       required: true,
-      index: true,
-      ref: 'NotificationTemplate',
     },
-    senderId: {
+    body: {
       type: String,
       required: true,
-      index: true,
-      ref: 'NotificationSenderProfile',
     },
-    payloadData: {
+    context: {
       type: Schema.Types.Mixed,
-      required: true,
-      // JSON snapshot of template variables and merged content
+      default: {},
     },
     status: {
       type: String,
-      enum: ['PENDING', 'PROCESSING', 'SENT', 'FAILED', 'RETRY', 'CANCELLED'],
-      required: true,
+      enum: ['PENDING', 'PROCESSING', 'SENT', 'FAILED', 'CANCELLED'],
       default: 'PENDING',
       index: true,
     },
-    retryCount: {
+    reason: {
+      type: String,
+      required: true,
+    },
+    scheduledFor: {
+      type: Date,
+      required: true,
+      index: true,
+    },
+    attempts: {
       type: Number,
       default: 0,
-      required: true,
-      min: 0,
+    },
+    maxAttempts: {
+      type: Number,
+      default: 3,
     },
     lastAttemptAt: {
       type: Date,
-      required: false,
-      index: true,
     },
-    errorMessage: {
+    lastError: {
       type: String,
-      required: false,
-      maxlength: 1000,
     },
-    scheduledAt: {
-      type: Date,
-      required: false,
+    correlationId: {
+      type: String,
+      required: true,
       index: true,
+    },
+    processedAt: {
+      type: Date,
     },
   },
   {
@@ -133,19 +120,13 @@ const NotificationQueueSchema = new Schema<INotificationQueue>(
   }
 )
 
-// Compound indexes
-NotificationQueueSchema.index({ status: 1, scheduledAt: 1 }) // For querying pending items
-NotificationQueueSchema.index({ status: 1, retryCount: 1 }) // For retry logic
-NotificationQueueSchema.index({ eventId: 1, entityType: 1, entityId: 1 }) // For deduplication
-NotificationQueueSchema.index({ recipientEmail: 1, status: 1 }) // For recipient-based queries
-NotificationQueueSchema.index({ createdAt: 1 }) // For cleanup of old records
+// Compound index for efficient queue processing
+NotificationQueueSchema.index({ status: 1, scheduledFor: 1 })
+NotificationQueueSchema.index({ companyId: 1, status: 1 })
 
-// Delete existing model if it exists to force recompilation with new schema
-if (mongoose.models.NotificationQueue) {
-  delete mongoose.models.NotificationQueue
-}
-
-const NotificationQueue = mongoose.model<INotificationQueue>('NotificationQueue', NotificationQueueSchema)
+// Avoid OverwriteModelError in development with hot reloading
+const NotificationQueue = mongoose.models.NotificationQueue || 
+  mongoose.model<INotificationQueue>('NotificationQueue', NotificationQueueSchema)
 
 export default NotificationQueue
 

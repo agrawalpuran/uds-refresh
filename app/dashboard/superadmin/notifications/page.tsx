@@ -1,28 +1,35 @@
 'use client'
 
 /**
- * Notifications Admin Page
+ * Notifications Admin Page - Enhanced
  * 
- * Provides admin UI for managing notification templates and viewing logs.
- * Tab-based layout with Templates and Logs tabs.
- * 
- * FUTURE EXTENSION POINTS:
- * - Add "Routing Rules" tab for per-company notification routing
- * - Add "Channels" tab for SMS/WhatsApp/Push configuration
- * - Add "Settings" tab for global notification settings
+ * Full management of notification events, templates, and logs.
+ * - Events Tab: Create, edit, enable/disable notification triggers
+ * - Templates Tab: Create, edit, preview email templates
+ * - Logs Tab: View notification history with filtering
  */
 
 import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import { 
-  Mail, FileText, History, Search, Filter, 
-  Edit, Save, X, Check, AlertTriangle, Eye,
-  ChevronLeft, ChevronRight, RefreshCw
+  Mail, FileText, History, Search, Filter, Plus,
+  Edit, Save, X, Check, AlertTriangle, Eye, Trash2,
+  ChevronLeft, ChevronRight, RefreshCw, Zap, Settings
 } from 'lucide-react'
 
 // =============================================================================
 // TYPES
 // =============================================================================
+
+interface NotificationEvent {
+  eventId: string
+  eventCode: string
+  eventDescription: string
+  defaultRecipientType: 'EMPLOYEE' | 'VENDOR' | 'COMPANY_ADMIN' | 'SUPER_ADMIN'
+  isActive: boolean
+  createdAt: string
+  updatedAt: string
+}
 
 interface NotificationTemplate {
   templateId: string
@@ -66,22 +73,45 @@ interface Pagination {
   hasPrev: boolean
 }
 
+// Available placeholders for templates
+const AVAILABLE_PLACEHOLDERS = [
+  { key: 'employeeName', description: 'Employee full name' },
+  { key: 'employeeEmail', description: 'Employee email address' },
+  { key: 'orderId', description: 'Order ID' },
+  { key: 'orderStatus', description: 'Current order status' },
+  { key: 'previousStatus', description: 'Previous order status' },
+  { key: 'prNumber', description: 'PR number' },
+  { key: 'poNumber', description: 'PO number' },
+  { key: 'vendorName', description: 'Vendor name' },
+  { key: 'companyName', description: 'Company name' },
+  { key: 'awbNumber', description: 'AWB/tracking number' },
+  { key: 'shipmentDate', description: 'Shipment date' },
+  { key: 'deliveryDate', description: 'Delivery date' },
+]
+
 // =============================================================================
 // MAIN COMPONENT
 // =============================================================================
 
 export default function NotificationsAdminPage() {
   // Tab state
-  const [activeTab, setActiveTab] = useState<'templates' | 'logs'>('templates')
+  const [activeTab, setActiveTab] = useState<'events' | 'templates' | 'logs'>('events')
+
+  // Events state
+  const [events, setEvents] = useState<NotificationEvent[]>([])
+  const [eventsLoading, setEventsLoading] = useState(true)
+  const [showEventModal, setShowEventModal] = useState(false)
+  const [editingEvent, setEditingEvent] = useState<Partial<NotificationEvent> | null>(null)
+  const [eventSaving, setEventSaving] = useState(false)
+  const [eventError, setEventError] = useState<string | null>(null)
 
   // Templates state
   const [templates, setTemplates] = useState<NotificationTemplate[]>([])
   const [templatesLoading, setTemplatesLoading] = useState(true)
-  const [selectedTemplate, setSelectedTemplate] = useState<NotificationTemplate | null>(null)
-  const [editingTemplate, setEditingTemplate] = useState<NotificationTemplate | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [saveSuccess, setSaveSuccess] = useState(false)
+  const [showTemplateModal, setShowTemplateModal] = useState(false)
+  const [editingTemplate, setEditingTemplate] = useState<Partial<NotificationTemplate> | null>(null)
+  const [templateSaving, setTemplateSaving] = useState(false)
+  const [templateError, setTemplateError] = useState<string | null>(null)
 
   // Logs state
   const [logs, setLogs] = useState<NotificationLog[]>([])
@@ -100,6 +130,7 @@ export default function NotificationsAdminPage() {
 
   // Preview state
   const [showPreview, setShowPreview] = useState(false)
+  const [previewTemplate, setPreviewTemplate] = useState<NotificationTemplate | null>(null)
   const [previewContext] = useState({
     employeeName: 'John Doe',
     employeeEmail: 'john.doe@example.com',
@@ -112,21 +143,38 @@ export default function NotificationsAdminPage() {
     companyName: 'Example Corporation',
   })
 
+  // Success message state
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
+
   // =============================================================================
   // DATA FETCHING
   // =============================================================================
 
-  // Load templates on mount
   useEffect(() => {
+    loadEvents()
     loadTemplates()
   }, [])
 
-  // Load logs when switching to logs tab or filters change
   useEffect(() => {
     if (activeTab === 'logs') {
       loadLogs()
     }
   }, [activeTab, logsPagination.page, logsFilters])
+
+  async function loadEvents() {
+    setEventsLoading(true)
+    try {
+      const res = await fetch('/api/admin/notifications/events')
+      const data = await res.json()
+      if (data.success) {
+        setEvents(data.events)
+      }
+    } catch (error) {
+      console.error('Error loading events:', error)
+    } finally {
+      setEventsLoading(false)
+    }
+  }
 
   async function loadTemplates() {
     setTemplatesLoading(true)
@@ -135,8 +183,6 @@ export default function NotificationsAdminPage() {
       const data = await res.json()
       if (data.success) {
         setTemplates(data.templates)
-      } else {
-        console.error('Failed to load templates:', data.error)
       }
     } catch (error) {
       console.error('Error loading templates:', error)
@@ -165,8 +211,6 @@ export default function NotificationsAdminPage() {
       if (data.success) {
         setLogs(data.logs)
         setLogsPagination(data.pagination)
-      } else {
-        console.error('Failed to load logs:', data.error)
       }
     } catch (error) {
       console.error('Error loading logs:', error)
@@ -176,35 +220,205 @@ export default function NotificationsAdminPage() {
   }
 
   // =============================================================================
+  // EVENT ACTIONS
+  // =============================================================================
+
+  function openEventModal(event?: NotificationEvent) {
+    if (event) {
+      setEditingEvent({ ...event })
+    } else {
+      setEditingEvent({
+        eventCode: '',
+        eventDescription: '',
+        defaultRecipientType: 'EMPLOYEE',
+        isActive: true,
+      })
+    }
+    setEventError(null)
+    setShowEventModal(true)
+  }
+
+  async function handleSaveEvent() {
+    if (!editingEvent) return
+    
+    if (!editingEvent.eventCode?.trim()) {
+      setEventError('Event code is required')
+      return
+    }
+    if (!editingEvent.eventDescription?.trim()) {
+      setEventError('Event description is required')
+      return
+    }
+
+    setEventSaving(true)
+    setEventError(null)
+
+    try {
+      const isNew = !editingEvent.eventId
+      const url = isNew 
+        ? '/api/admin/notifications/events'
+        : `/api/admin/notifications/events/${editingEvent.eventId}`
+      
+      const res = await fetch(url, {
+        method: isNew ? 'POST' : 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventCode: editingEvent.eventCode?.toUpperCase().replace(/\s+/g, '_'),
+          eventDescription: editingEvent.eventDescription,
+          defaultRecipientType: editingEvent.defaultRecipientType,
+          isActive: editingEvent.isActive,
+        }),
+      })
+
+      const data = await res.json()
+
+      if (data.success) {
+        await loadEvents()
+        setShowEventModal(false)
+        setEditingEvent(null)
+        showSuccess(isNew ? 'Event created successfully' : 'Event updated successfully')
+      } else {
+        setEventError(data.error || 'Failed to save event')
+      }
+    } catch (error: any) {
+      setEventError(error.message || 'Error saving event')
+    } finally {
+      setEventSaving(false)
+    }
+  }
+
+  async function handleToggleEventActive(event: NotificationEvent) {
+    try {
+      const res = await fetch(`/api/admin/notifications/events/${event.eventId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: !event.isActive }),
+      })
+
+      const data = await res.json()
+      if (data.success) {
+        await loadEvents()
+        await loadTemplates() // Refresh templates too as they show event status
+      } else {
+        alert(`Failed: ${data.error}`)
+      }
+    } catch (error: any) {
+      alert(`Error: ${error.message}`)
+    }
+  }
+
+  async function handleDeleteEvent(event: NotificationEvent) {
+    if (!confirm(`Are you sure you want to delete event "${event.eventCode}"?\n\nThis will also delete all associated templates.`)) {
+      return
+    }
+
+    try {
+      const res = await fetch(`/api/admin/notifications/events/${event.eventId}`, {
+        method: 'DELETE',
+      })
+
+      const data = await res.json()
+      if (data.success) {
+        await loadEvents()
+        await loadTemplates()
+        showSuccess('Event deleted successfully')
+      } else {
+        alert(`Failed: ${data.error}`)
+      }
+    } catch (error: any) {
+      alert(`Error: ${error.message}`)
+    }
+  }
+
+  // =============================================================================
   // TEMPLATE ACTIONS
   // =============================================================================
 
-  function handleEditTemplate(template: NotificationTemplate) {
-    setEditingTemplate({ ...template })
-    setSaveError(null)
-    setSaveSuccess(false)
+  function openTemplateModal(template?: NotificationTemplate) {
+    if (template) {
+      setEditingTemplate({ ...template })
+    } else {
+      setEditingTemplate({
+        templateName: '',
+        eventId: events[0]?.eventId || '',
+        subjectTemplate: '',
+        bodyTemplate: getDefaultTemplateBody(),
+        language: 'en',
+        isActive: true,
+      })
+    }
+    setTemplateError(null)
+    setShowTemplateModal(true)
   }
 
-  function handleCancelEdit() {
-    setEditingTemplate(null)
-    setSaveError(null)
+  function getDefaultTemplateBody(): string {
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background-color: #4A90A4; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { padding: 20px; background-color: #f9f9f9; border-radius: 0 0 8px 8px; }
+    .footer { padding: 10px; text-align: center; font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Notification Title</h1>
+    </div>
+    <div class="content">
+      <p>Hello {{employeeName}},</p>
+      <p>Your notification message goes here.</p>
+      <p>Thank you for using UDS!</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated notification from UDS (Uniform Distribution System).</p>
+    </div>
+  </div>
+</body>
+</html>`
   }
 
   async function handleSaveTemplate() {
     if (!editingTemplate) return
+    
+    if (!editingTemplate.templateName?.trim()) {
+      setTemplateError('Template name is required')
+      return
+    }
+    if (!editingTemplate.eventId) {
+      setTemplateError('Please select an event')
+      return
+    }
+    if (!editingTemplate.subjectTemplate?.trim()) {
+      setTemplateError('Subject template is required')
+      return
+    }
+    if (!editingTemplate.bodyTemplate?.trim()) {
+      setTemplateError('Body template is required')
+      return
+    }
 
-    setSaving(true)
-    setSaveError(null)
-    setSaveSuccess(false)
+    setTemplateSaving(true)
+    setTemplateError(null)
 
     try {
-      const res = await fetch(`/api/admin/notifications/templates/${editingTemplate.templateId}`, {
-        method: 'PUT',
+      const isNew = !editingTemplate.templateId
+      const url = isNew 
+        ? '/api/admin/notifications/templates'
+        : `/api/admin/notifications/templates/${editingTemplate.templateId}`
+      
+      const res = await fetch(url, {
+        method: isNew ? 'POST' : 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           templateName: editingTemplate.templateName,
+          eventId: editingTemplate.eventId,
           subjectTemplate: editingTemplate.subjectTemplate,
           bodyTemplate: editingTemplate.bodyTemplate,
+          language: editingTemplate.language || 'en',
           isActive: editingTemplate.isActive,
         }),
       })
@@ -212,29 +426,21 @@ export default function NotificationsAdminPage() {
       const data = await res.json()
 
       if (data.success) {
-        // Update template in list
-        setTemplates(prev => prev.map(t => 
-          t.templateId === editingTemplate.templateId ? data.template : t
-        ))
+        await loadTemplates()
+        setShowTemplateModal(false)
         setEditingTemplate(null)
-        setSaveSuccess(true)
-        setTimeout(() => setSaveSuccess(false), 3000)
-        
-        // Show warnings if any
-        if (data.warnings && data.warnings.length > 0) {
-          console.warn('Template saved with warnings:', data.warnings)
-        }
+        showSuccess(isNew ? 'Template created successfully' : 'Template updated successfully')
       } else {
-        setSaveError(data.error || 'Failed to save template')
+        setTemplateError(data.error || 'Failed to save template')
       }
     } catch (error: any) {
-      setSaveError(error.message || 'Error saving template')
+      setTemplateError(error.message || 'Error saving template')
     } finally {
-      setSaving(false)
+      setTemplateSaving(false)
     }
   }
 
-  async function handleToggleActive(template: NotificationTemplate) {
+  async function handleToggleTemplateActive(template: NotificationTemplate) {
     try {
       const res = await fetch(`/api/admin/notifications/templates/${template.templateId}`, {
         method: 'PUT',
@@ -243,27 +449,60 @@ export default function NotificationsAdminPage() {
       })
 
       const data = await res.json()
-
       if (data.success) {
-        setTemplates(prev => prev.map(t => 
-          t.templateId === template.templateId ? data.template : t
-        ))
+        await loadTemplates()
       } else {
-        alert(`Failed to toggle template: ${data.error}`)
+        alert(`Failed: ${data.error}`)
       }
     } catch (error: any) {
-      alert(`Error toggling template: ${error.message}`)
+      alert(`Error: ${error.message}`)
+    }
+  }
+
+  async function handleDeleteTemplate(template: NotificationTemplate) {
+    if (!confirm(`Are you sure you want to delete template "${template.templateName}"?`)) {
+      return
+    }
+
+    try {
+      const res = await fetch(`/api/admin/notifications/templates/${template.templateId}`, {
+        method: 'DELETE',
+      })
+
+      const data = await res.json()
+      if (data.success) {
+        await loadTemplates()
+        showSuccess('Template deleted successfully')
+      } else {
+        alert(`Failed: ${data.error}`)
+      }
+    } catch (error: any) {
+      alert(`Error: ${error.message}`)
     }
   }
 
   // =============================================================================
-  // PREVIEW RENDERING
+  // HELPERS
   // =============================================================================
+
+  function showSuccess(message: string) {
+    setSuccessMessage(message)
+    setTimeout(() => setSuccessMessage(null), 3000)
+  }
 
   function renderPreview(template: string): string {
     return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
       const value = (previewContext as any)[key]
-      return value !== undefined ? value : match
+      return value !== undefined ? `<span style="background:#fef3c7;padding:0 4px;border-radius:2px;">${value}</span>` : match
+    })
+  }
+
+  function insertPlaceholder(placeholder: string) {
+    if (!editingTemplate) return
+    const text = `{{${placeholder}}}`
+    setEditingTemplate({
+      ...editingTemplate,
+      bodyTemplate: (editingTemplate.bodyTemplate || '') + text
     })
   }
 
@@ -281,21 +520,32 @@ export default function NotificationsAdminPage() {
             Notification Management
           </h1>
           <p className="text-gray-600 mt-1">
-            Manage email notification templates and view notification logs
+            Define notification triggers, create email templates, and view logs
           </p>
         </div>
 
         {/* Success message */}
-        {saveSuccess && (
+        {successMessage && (
           <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-green-800">
             <Check className="h-5 w-5" />
-            Template saved successfully
+            {successMessage}
           </div>
         )}
 
         {/* Tabs */}
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-6">
           <div className="flex border-b border-gray-200">
+            <button
+              onClick={() => setActiveTab('events')}
+              className={`flex items-center gap-2 px-6 py-4 font-medium transition-colors ${
+                activeTab === 'events'
+                  ? 'border-b-2 border-blue-600 text-blue-600'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              <Zap className="h-5 w-5" />
+              Events ({events.length})
+            </button>
             <button
               onClick={() => setActiveTab('templates')}
               className={`flex items-center gap-2 px-6 py-4 font-medium transition-colors ${
@@ -305,7 +555,7 @@ export default function NotificationsAdminPage() {
               }`}
             >
               <FileText className="h-5 w-5" />
-              Templates
+              Templates ({templates.length})
             </button>
             <button
               onClick={() => setActiveTab('logs')}
@@ -318,53 +568,169 @@ export default function NotificationsAdminPage() {
               <History className="h-5 w-5" />
               Logs
             </button>
-            {/* FUTURE: Add more tabs here
-            <button className="...">Routing Rules</button>
-            <button className="...">Channels</button>
-            */}
           </div>
         </div>
 
-        {/* Templates Tab */}
+        {/* ================================================================= */}
+        {/* EVENTS TAB */}
+        {/* ================================================================= */}
+        {activeTab === 'events' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h2 className="font-medium text-gray-900">Notification Events (Triggers)</h2>
+                <p className="text-sm text-gray-500">Define when notifications should be triggered</p>
+              </div>
+              <button
+                onClick={() => openEventModal()}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                <Plus className="h-4 w-4" />
+                New Event
+              </button>
+            </div>
+            
+            {eventsLoading ? (
+              <div className="p-8 text-center text-gray-500">Loading events...</div>
+            ) : events.length === 0 ? (
+              <div className="p-8 text-center text-gray-500">
+                <Zap className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                <p className="mb-4">No events defined yet</p>
+                <button
+                  onClick={() => openEventModal()}
+                  className="text-blue-600 hover:text-blue-800"
+                >
+                  Create your first event
+                </button>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-200">
+                {events.map((event) => (
+                  <div key={event.eventId} className="p-4 hover:bg-gray-50">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3">
+                          <code className="px-2 py-1 bg-gray-100 text-gray-800 rounded font-mono text-sm">
+                            {event.eventCode}
+                          </code>
+                          <span className={`px-2 py-0.5 text-xs rounded-full ${
+                            event.isActive 
+                              ? 'bg-green-100 text-green-800' 
+                              : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {event.isActive ? 'Active' : 'Disabled'}
+                          </span>
+                          <span className="px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-800">
+                            {event.defaultRecipientType}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600 mt-2">{event.eventDescription}</p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          ID: {event.eventId} • Updated: {new Date(event.updatedAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 ml-4">
+                        <button
+                          onClick={() => openEventModal(event)}
+                          className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded"
+                          title="Edit"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </button>
+                        <button
+                          onClick={() => handleToggleEventActive(event)}
+                          className={`px-3 py-1 text-sm rounded ${
+                            event.isActive
+                              ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                              : 'bg-green-100 text-green-700 hover:bg-green-200'
+                          }`}
+                        >
+                          {event.isActive ? 'Disable' : 'Enable'}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteEvent(event)}
+                          className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* TEMPLATES TAB */}
+        {/* ================================================================= */}
         {activeTab === 'templates' && (
           <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+            <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+              <div>
+                <h2 className="font-medium text-gray-900">Email Templates</h2>
+                <p className="text-sm text-gray-500">Customize notification messages for each event</p>
+              </div>
+              <button
+                onClick={() => openTemplateModal()}
+                disabled={events.length === 0}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+              >
+                <Plus className="h-4 w-4" />
+                New Template
+              </button>
+            </div>
+            
             {templatesLoading ? (
               <div className="p-8 text-center text-gray-500">Loading templates...</div>
             ) : templates.length === 0 ? (
               <div className="p-8 text-center text-gray-500">
-                No templates found. Run the seeding script to create initial templates.
+                <FileText className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                <p className="mb-4">No templates defined yet</p>
+                {events.length === 0 ? (
+                  <p className="text-sm">Create an event first, then add templates</p>
+                ) : (
+                  <button
+                    onClick={() => openTemplateModal()}
+                    className="text-blue-600 hover:text-blue-800"
+                  >
+                    Create your first template
+                  </button>
+                )}
               </div>
             ) : (
               <div className="divide-y divide-gray-200">
                 {templates.map((template) => (
-                  <div key={template.templateId} className="p-4">
-                    {/* Template Header */}
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-gray-900">
-                            {template.templateName}
-                          </span>
+                  <div key={template.templateId} className="p-4 hover:bg-gray-50">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3">
+                          <span className="font-medium text-gray-900">{template.templateName}</span>
                           <span className={`px-2 py-0.5 text-xs rounded-full ${
-                            template.isActive 
+                            template.isActive && template.eventIsActive
                               ? 'bg-green-100 text-green-800' 
                               : 'bg-gray-100 text-gray-600'
                           }`}>
-                            {template.isActive ? 'Active' : 'Disabled'}
+                            {template.isActive && template.eventIsActive ? 'Active' : 
+                             !template.eventIsActive ? 'Event Disabled' : 'Disabled'}
                           </span>
                         </div>
                         <div className="text-sm text-gray-500 mt-1">
-                          <span className="font-mono bg-gray-100 px-1 rounded">
-                            {template.eventCode}
-                          </span>
+                          <code className="px-1 bg-gray-100 rounded text-xs">{template.eventCode}</code>
                           <span className="mx-2">•</span>
                           {template.eventDescription}
                         </div>
+                        <div className="text-sm text-gray-600 mt-2">
+                          <span className="font-medium">Subject:</span>{' '}
+                          <span className="font-mono text-xs">{template.subjectTemplate}</span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 ml-4">
                         <button
                           onClick={() => {
-                            setSelectedTemplate(template)
+                            setPreviewTemplate(template)
                             setShowPreview(true)
                           }}
                           className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded"
@@ -373,14 +739,14 @@ export default function NotificationsAdminPage() {
                           <Eye className="h-4 w-4" />
                         </button>
                         <button
-                          onClick={() => handleEditTemplate(template)}
+                          onClick={() => openTemplateModal(template)}
                           className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded"
                           title="Edit"
                         >
                           <Edit className="h-4 w-4" />
                         </button>
                         <button
-                          onClick={() => handleToggleActive(template)}
+                          onClick={() => handleToggleTemplateActive(template)}
                           className={`px-3 py-1 text-sm rounded ${
                             template.isActive
                               ? 'bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -389,124 +755,15 @@ export default function NotificationsAdminPage() {
                         >
                           {template.isActive ? 'Disable' : 'Enable'}
                         </button>
+                        <button
+                          onClick={() => handleDeleteTemplate(template)}
+                          className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     </div>
-
-                    {/* Editing Mode */}
-                    {editingTemplate?.templateId === template.templateId && (
-                      <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                        {saveError && (
-                          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded flex items-center gap-2 text-red-800">
-                            <AlertTriangle className="h-5 w-5" />
-                            {saveError}
-                          </div>
-                        )}
-
-                        {/* Template Name */}
-                        <div className="mb-4">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Template Name
-                          </label>
-                          <input
-                            type="text"
-                            value={editingTemplate.templateName}
-                            onChange={(e) => setEditingTemplate({
-                              ...editingTemplate,
-                              templateName: e.target.value
-                            })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                          />
-                        </div>
-
-                        {/* Subject */}
-                        <div className="mb-4">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Subject Template
-                          </label>
-                          <input
-                            type="text"
-                            value={editingTemplate.subjectTemplate}
-                            onChange={(e) => setEditingTemplate({
-                              ...editingTemplate,
-                              subjectTemplate: e.target.value
-                            })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                          />
-                        </div>
-
-                        {/* Body */}
-                        <div className="mb-4">
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Body Template (HTML)
-                          </label>
-                          <textarea
-                            value={editingTemplate.bodyTemplate}
-                            onChange={(e) => setEditingTemplate({
-                              ...editingTemplate,
-                              bodyTemplate: e.target.value
-                            })}
-                            rows={12}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
-                          />
-                        </div>
-
-                        {/* Placeholders Info */}
-                        <div className="mb-4 p-3 bg-blue-50 rounded-lg">
-                          <div className="text-sm font-medium text-blue-800 mb-1">
-                            Supported Placeholders:
-                          </div>
-                          <div className="flex flex-wrap gap-1">
-                            {template.supportedPlaceholders.map((p) => (
-                              <code key={p} className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">
-                                {`{{${p}}}`}
-                              </code>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={handleCancelEdit}
-                            className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
-                            disabled={saving}
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={handleSaveTemplate}
-                            disabled={saving}
-                            className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
-                          >
-                            {saving ? (
-                              <>
-                                <RefreshCw className="h-4 w-4 animate-spin" />
-                                Saving...
-                              </>
-                            ) : (
-                              <>
-                                <Save className="h-4 w-4" />
-                                Save Changes
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Template Info (collapsed) */}
-                    {editingTemplate?.templateId !== template.templateId && (
-                      <div className="mt-2 text-sm text-gray-600">
-                        <span className="font-medium">Subject: </span>
-                        <span className="font-mono text-xs bg-gray-100 px-1 rounded">
-                          {template.subjectTemplate}
-                        </span>
-                        <span className="mx-2 text-gray-400">•</span>
-                        <span className="text-gray-500">
-                          Last updated: {new Date(template.updatedAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>
@@ -514,7 +771,9 @@ export default function NotificationsAdminPage() {
           </div>
         )}
 
-        {/* Logs Tab */}
+        {/* ================================================================= */}
+        {/* LOGS TAB */}
+        {/* ================================================================= */}
         {activeTab === 'logs' && (
           <div className="space-y-4">
             {/* Filters */}
@@ -538,7 +797,6 @@ export default function NotificationsAdminPage() {
                     <option value="SENT">Sent</option>
                     <option value="FAILED">Failed</option>
                     <option value="REJECTED">Rejected/Skipped</option>
-                    <option value="BOUNCED">Bounced</option>
                   </select>
                 </div>
                 <div>
@@ -552,8 +810,8 @@ export default function NotificationsAdminPage() {
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   >
                     <option value="">All Events</option>
-                    {[...new Set(templates.map(t => t.eventCode))].map(code => (
-                      <option key={code} value={code}>{code}</option>
+                    {events.map(e => (
+                      <option key={e.eventCode} value={e.eventCode}>{e.eventCode}</option>
                     ))}
                   </select>
                 </div>
@@ -634,7 +892,6 @@ export default function NotificationsAdminPage() {
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Recipient</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                           <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
-                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Correlation ID</th>
                           <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Actions</th>
                         </tr>
                       </thead>
@@ -656,21 +913,13 @@ export default function NotificationsAdminPage() {
                               <span className={`px-2 py-0.5 text-xs rounded-full ${
                                 log.status === 'SENT' ? 'bg-green-100 text-green-800' :
                                 log.status === 'FAILED' ? 'bg-red-100 text-red-800' :
-                                log.status === 'REJECTED' ? 'bg-yellow-100 text-yellow-800' :
-                                'bg-gray-100 text-gray-800'
+                                'bg-yellow-100 text-yellow-800'
                               }`}>
                                 {log.wasSkipped ? 'SKIPPED' : log.status}
                               </span>
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">
                               {log.subject}
-                            </td>
-                            <td className="px-4 py-3">
-                              {log.correlationId && (
-                                <span className="font-mono text-xs text-gray-500">
-                                  {log.correlationId}
-                                </span>
-                              )}
                             </td>
                             <td className="px-4 py-3 text-right">
                               <button
@@ -697,7 +946,7 @@ export default function NotificationsAdminPage() {
                       <button
                         onClick={() => setLogsPagination(p => ({ ...p, page: p.page - 1 }))}
                         disabled={!logsPagination.hasPrev}
-                        className="p-2 border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="p-2 border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50"
                       >
                         <ChevronLeft className="h-4 w-4" />
                       </button>
@@ -707,7 +956,7 @@ export default function NotificationsAdminPage() {
                       <button
                         onClick={() => setLogsPagination(p => ({ ...p, page: p.page + 1 }))}
                         disabled={!logsPagination.hasNext}
-                        className="p-2 border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="p-2 border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50"
                       >
                         <ChevronRight className="h-4 w-4" />
                       </button>
@@ -719,60 +968,310 @@ export default function NotificationsAdminPage() {
           </div>
         )}
 
-        {/* Preview Modal */}
-        {showPreview && selectedTemplate && (
+        {/* ================================================================= */}
+        {/* EVENT MODAL */}
+        {/* ================================================================= */}
+        {showEventModal && editingEvent && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col">
+              <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="font-medium text-gray-900">
+                  {editingEvent.eventId ? 'Edit Event' : 'Create New Event'}
+                </h3>
+                <button onClick={() => setShowEventModal(false)} className="p-1 text-gray-500 hover:text-gray-700">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="p-4 overflow-y-auto flex-1 space-y-4">
+                {eventError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded flex items-center gap-2 text-red-800">
+                    <AlertTriangle className="h-5 w-5" />
+                    {eventError}
+                  </div>
+                )}
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Event Code <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editingEvent.eventCode || ''}
+                    onChange={(e) => setEditingEvent({
+                      ...editingEvent,
+                      eventCode: e.target.value.toUpperCase().replace(/\s+/g, '_')
+                    })}
+                    placeholder="e.g., ORDER_SHIPPED"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Unique identifier for this trigger (uppercase, underscores)</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Description <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    value={editingEvent.eventDescription || ''}
+                    onChange={(e) => setEditingEvent({
+                      ...editingEvent,
+                      eventDescription: e.target.value
+                    })}
+                    rows={2}
+                    placeholder="When is this notification triggered?"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Default Recipient Type
+                  </label>
+                  <select
+                    value={editingEvent.defaultRecipientType || 'EMPLOYEE'}
+                    onChange={(e) => setEditingEvent({
+                      ...editingEvent,
+                      defaultRecipientType: e.target.value as any
+                    })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="EMPLOYEE">Employee</option>
+                    <option value="VENDOR">Vendor</option>
+                    <option value="COMPANY_ADMIN">Company Admin</option>
+                    <option value="SUPER_ADMIN">Super Admin</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="eventActive"
+                    checked={editingEvent.isActive !== false}
+                    onChange={(e) => setEditingEvent({
+                      ...editingEvent,
+                      isActive: e.target.checked
+                    })}
+                    className="h-4 w-4 text-blue-600 rounded"
+                  />
+                  <label htmlFor="eventActive" className="text-sm text-gray-700">
+                    Event is active (triggers will fire)
+                  </label>
+                </div>
+              </div>
+              <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
+                <button
+                  onClick={() => setShowEventModal(false)}
+                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveEvent}
+                  disabled={eventSaving}
+                  className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {eventSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {eventSaving ? 'Saving...' : 'Save Event'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* TEMPLATE MODAL */}
+        {/* ================================================================= */}
+        {showTemplateModal && editingTemplate && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg max-w-4xl w-full max-h-[95vh] overflow-hidden flex flex-col">
+              <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="font-medium text-gray-900">
+                  {editingTemplate.templateId ? 'Edit Template' : 'Create New Template'}
+                </h3>
+                <button onClick={() => setShowTemplateModal(false)} className="p-1 text-gray-500 hover:text-gray-700">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="p-4 overflow-y-auto flex-1 space-y-4">
+                {templateError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded flex items-center gap-2 text-red-800">
+                    <AlertTriangle className="h-5 w-5" />
+                    {templateError}
+                  </div>
+                )}
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Template Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={editingTemplate.templateName || ''}
+                      onChange={(e) => setEditingTemplate({
+                        ...editingTemplate,
+                        templateName: e.target.value
+                      })}
+                      placeholder="e.g., Order Shipped - Employee Notification"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Event <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={editingTemplate.eventId || ''}
+                      onChange={(e) => setEditingTemplate({
+                        ...editingTemplate,
+                        eventId: e.target.value
+                      })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Select an event...</option>
+                      {events.map(e => (
+                        <option key={e.eventId} value={e.eventId}>
+                          {e.eventCode} - {e.eventDescription.substring(0, 50)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Subject Template <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editingTemplate.subjectTemplate || ''}
+                    onChange={(e) => setEditingTemplate({
+                      ...editingTemplate,
+                      subjectTemplate: e.target.value
+                    })}
+                    placeholder="Your Order {{orderId}} Status: {{orderStatus}}"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                  />
+                </div>
+
+                {/* Placeholders */}
+                <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                  <div className="text-sm font-medium text-blue-800 mb-2">Available Placeholders (click to insert):</div>
+                  <div className="flex flex-wrap gap-1">
+                    {AVAILABLE_PLACEHOLDERS.map((p) => (
+                      <button
+                        key={p.key}
+                        type="button"
+                        onClick={() => insertPlaceholder(p.key)}
+                        className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs hover:bg-blue-200 font-mono"
+                        title={p.description}
+                      >
+                        {`{{${p.key}}}`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Body Template (HTML) <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    value={editingTemplate.bodyTemplate || ''}
+                    onChange={(e) => setEditingTemplate({
+                      ...editingTemplate,
+                      bodyTemplate: e.target.value
+                    })}
+                    rows={15}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="templateActive"
+                    checked={editingTemplate.isActive !== false}
+                    onChange={(e) => setEditingTemplate({
+                      ...editingTemplate,
+                      isActive: e.target.checked
+                    })}
+                    className="h-4 w-4 text-blue-600 rounded"
+                  />
+                  <label htmlFor="templateActive" className="text-sm text-gray-700">
+                    Template is active
+                  </label>
+                </div>
+              </div>
+              <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex justify-end gap-2">
+                <button
+                  onClick={() => setShowTemplateModal(false)}
+                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveTemplate}
+                  disabled={templateSaving}
+                  className="px-4 py-2 text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {templateSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  {templateSaving ? 'Saving...' : 'Save Template'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================= */}
+        {/* PREVIEW MODAL */}
+        {/* ================================================================= */}
+        {showPreview && previewTemplate && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
               <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
                 <h3 className="font-medium text-gray-900">
-                  Preview: {selectedTemplate.templateName}
+                  Preview: {previewTemplate.templateName}
                 </h3>
-                <button
-                  onClick={() => setShowPreview(false)}
-                  className="p-1 text-gray-500 hover:text-gray-700"
-                >
+                <button onClick={() => setShowPreview(false)} className="p-1 text-gray-500 hover:text-gray-700">
                   <X className="h-5 w-5" />
                 </button>
               </div>
               <div className="p-4 overflow-y-auto flex-1">
                 <div className="mb-4">
                   <div className="text-sm font-medium text-gray-500 mb-1">Subject:</div>
-                  <div className="p-2 bg-gray-50 rounded border border-gray-200">
-                    {renderPreview(selectedTemplate.subjectTemplate)}
-                  </div>
+                  <div 
+                    className="p-2 bg-gray-50 rounded border border-gray-200"
+                    dangerouslySetInnerHTML={{ __html: renderPreview(previewTemplate.subjectTemplate) }}
+                  />
                 </div>
                 <div>
                   <div className="text-sm font-medium text-gray-500 mb-1">Body:</div>
                   <div 
                     className="p-4 bg-gray-50 rounded border border-gray-200"
-                    dangerouslySetInnerHTML={{ 
-                      __html: renderPreview(selectedTemplate.bodyTemplate) 
-                    }}
+                    dangerouslySetInnerHTML={{ __html: renderPreview(previewTemplate.bodyTemplate) }}
                   />
                 </div>
               </div>
               <div className="px-4 py-3 border-t border-gray-200 bg-gray-50">
                 <div className="text-xs text-gray-500">
-                  <span className="font-medium">Sample context used:</span>{' '}
-                  {Object.entries(previewContext).map(([k, v]) => `${k}="${v}"`).join(', ')}
+                  <span className="font-medium">Sample values shown with </span>
+                  <span className="bg-yellow-100 px-1 rounded">yellow highlight</span>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Log Detail Modal */}
+        {/* ================================================================= */}
+        {/* LOG DETAIL MODAL */}
+        {/* ================================================================= */}
         {selectedLog && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
               <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-                <h3 className="font-medium text-gray-900">
-                  Log Details: {selectedLog.logId}
-                </h3>
-                <button
-                  onClick={() => setSelectedLog(null)}
-                  className="p-1 text-gray-500 hover:text-gray-700"
-                >
+                <h3 className="font-medium text-gray-900">Log Details</h3>
+                <button onClick={() => setSelectedLog(null)} className="p-1 text-gray-500 hover:text-gray-700">
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -806,23 +1305,17 @@ export default function NotificationsAdminPage() {
                   </div>
                   <div>
                     <div className="text-sm font-medium text-gray-500">Sent At</div>
-                    <div className="text-sm">
-                      {selectedLog.sentAt ? new Date(selectedLog.sentAt).toLocaleString() : 'N/A'}
-                    </div>
+                    <div className="text-sm">{selectedLog.sentAt ? new Date(selectedLog.sentAt).toLocaleString() : 'N/A'}</div>
                   </div>
                 </div>
                 <div>
                   <div className="text-sm font-medium text-gray-500 mb-1">Subject</div>
-                  <div className="p-2 bg-gray-50 rounded border border-gray-200 text-sm">
-                    {selectedLog.subject}
-                  </div>
+                  <div className="p-2 bg-gray-50 rounded border border-gray-200 text-sm">{selectedLog.subject}</div>
                 </div>
                 {selectedLog.errorMessage && (
                   <div>
                     <div className="text-sm font-medium text-red-600 mb-1">Error Message</div>
-                    <div className="p-2 bg-red-50 rounded border border-red-200 text-sm text-red-800">
-                      {selectedLog.errorMessage}
-                    </div>
+                    <div className="p-2 bg-red-50 rounded border border-red-200 text-sm text-red-800">{selectedLog.errorMessage}</div>
                   </div>
                 )}
                 {selectedLog.context && (
@@ -835,10 +1328,7 @@ export default function NotificationsAdminPage() {
                 )}
               </div>
               <div className="px-4 py-3 border-t border-gray-200 bg-gray-50 flex justify-end">
-                <button
-                  onClick={() => setSelectedLog(null)}
-                  className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
-                >
+                <button onClick={() => setSelectedLog(null)} className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50">
                   Close
                 </button>
               </div>

@@ -1,10 +1,10 @@
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
-import { Search, CheckCircle, XCircle, Package, Truck, Warehouse, MapPin } from 'lucide-react'
+import { Search, CheckCircle, XCircle, Package, Truck, Warehouse, MapPin, Building2 } from 'lucide-react'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { getAllOrders, getOrdersByVendor, updateOrderStatus } from '@/lib/data-mongodb'
+import { getAllOrders, getOrdersByVendor, updateOrderStatus, getCompaniesByVendor } from '@/lib/data-mongodb'
 // Employee names are now pre-masked by the backend
 
 interface Warehouse {
@@ -22,12 +22,17 @@ interface Warehouse {
 export default function VendorOrdersPage() {
   const router = useRouter()
   const [orders, setOrders] = useState<any[]>([])
+  const [allOrders, setAllOrders] = useState<any[]>([]) // Store all orders before company filtering
   const [searchTerm, setSearchTerm] = useState('')
   const [fromDate, setFromDate] = useState<string>('')
   const [toDate, setToDate] = useState<string>('')
   const [appliedFromDate, setAppliedFromDate] = useState<string>('')
   const [appliedToDate, setAppliedToDate] = useState<string>('')
   const [loading, setLoading] = useState(true)
+  // Company filter states
+  const [companies, setCompanies] = useState<any[]>([])
+  const [filterCompany, setFilterCompany] = useState<string>('all')
+  const [companiesLoading, setCompaniesLoading] = useState(true)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [loadingWarehouses, setLoadingWarehouses] = useState(false)
   const [manualCouriers, setManualCouriers] = useState<Array<{ courierCode: string, courierName: string }>>([])
@@ -157,32 +162,42 @@ export default function VendorOrdersPage() {
   const loadOrders = async () => {
     try {
       setLoading(true)
-      // CRITICAL FIX: Prioritize sessionStorage (from current login) over localStorage (may be stale)
+      // SECURITY FIX: Use ONLY tab-specific auth storage - NO localStorage fallback
       const { getVendorId, getAuthData } = typeof window !== 'undefined' 
         ? await import('@/lib/utils/auth-storage') 
         : { getVendorId: () => null, getAuthData: () => null }
       
-      // Try sessionStorage first (from current login) - MOST RELIABLE
-      let storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
+      // Use ONLY sessionStorage (tab-specific) - no localStorage fallback
+      const storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
       
-      // Fallback to localStorage (may be stale)
-      if (!storedVendorId) {
-        storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-      }
-      
-      console.log('[Orders] VendorId resolved:', storedVendorId, 'from:', storedVendorId ? (getVendorId() ? 'sessionStorage' : 'localStorage') : 'none')
+      console.log('[Orders] VendorId from sessionStorage:', storedVendorId)
       
       if (storedVendorId) {
         // Load only orders for this vendor
         const vendorOrders = await getOrdersByVendor(storedVendorId)
         console.log('Loaded vendor orders:', vendorOrders.length)
         console.log('Order statuses:', vendorOrders.map((o: any) => ({ id: o.id, status: o.status, vendorName: o.vendorName })))
+        setAllOrders(vendorOrders) // Store all orders
         setOrders(vendorOrders)
+        
+        // Load companies for filter
+        try {
+          setCompaniesLoading(true)
+          const vendorCompanies = await getCompaniesByVendor(storedVendorId)
+          console.log('[Orders] Loaded companies for vendor:', vendorCompanies.length)
+          setCompanies(vendorCompanies)
+        } catch (companyError) {
+          console.error('[Orders] Error loading companies:', companyError)
+        } finally {
+          setCompaniesLoading(false)
+        }
       } else {
         // Fallback: get all orders if no vendor ID (shouldn't happen in production)
         console.warn('No vendor ID found, loading all orders')
-        const allOrders = await getAllOrders()
-        setOrders(allOrders)
+        const fetchedOrders = await getAllOrders()
+        setAllOrders(fetchedOrders)
+        setOrders(fetchedOrders)
+        setCompaniesLoading(false)
       }
     } catch (error) {
       console.error('Error loading orders:', error)
@@ -197,6 +212,22 @@ export default function VendorOrdersPage() {
     loadManualCouriers()
     loadPackages()
   }, [])
+
+  // Effect to filter orders when company filter changes
+  useEffect(() => {
+    if (allOrders.length === 0) return
+    
+    if (filterCompany === 'all') {
+      setOrders(allOrders)
+    } else {
+      const filtered = allOrders.filter((order: any) => {
+        const orderCompanyId = order.companyId?.id || order.companyId || order.companyIdNum?.toString()
+        return orderCompanyId === filterCompany
+      })
+      console.log(`[Orders] Filtered to ${filtered.length} orders for company ${filterCompany}`)
+      setOrders(filtered)
+    }
+  }, [filterCompany, allOrders])
 
   const loadPackages = async () => {
     try {
@@ -430,10 +461,8 @@ export default function VendorOrdersPage() {
         ? await import('@/lib/utils/auth-storage')
         : { getVendorId: () => null, getAuthData: () => null }
 
-      let storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
-      if (!storedVendorId) {
-        storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-      }
+      // SECURITY FIX: No localStorage fallback
+      const storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
 
       if (storedVendorId) {
         const response = await fetch(`/api/vendor/warehouses?vendorId=${storedVendorId}`)
@@ -466,14 +495,17 @@ export default function VendorOrdersPage() {
   }
 
   // Group orders by PO number for PO-centric display
+  // Returns a unified list sorted by date (newest first), mixing PO groups and individual orders
   const groupOrdersByPO = (ordersList: any[]) => {
     const poGroups = new Map<string, {
+      type: 'po'
       poNumber: string
       poDate: Date | null
+      latestOrderDate: Date | null // Track latest order date for sorting
       prs: any[] // Orders (PRs) under this PO
     }>()
     
-    // Also track orders without PO (fallback)
+    // Also track orders without PO (for companies without PR-PO workflow)
     const ordersWithoutPO: any[] = []
     
     ordersList.forEach((order) => {
@@ -484,22 +516,58 @@ export default function VendorOrdersPage() {
         
         if (!poGroups.has(primaryPONumber)) {
           poGroups.set(primaryPONumber, {
+            type: 'po',
             poNumber: primaryPONumber,
             poDate: poDetail?.poDate ? new Date(poDetail.poDate) : null,
+            latestOrderDate: order.orderDate ? new Date(order.orderDate) : null,
             prs: []
           })
         }
         
-        poGroups.get(primaryPONumber)!.prs.push(order)
+        // Update latestOrderDate if this order is newer
+        const group = poGroups.get(primaryPONumber)!
+        const orderDate = order.orderDate ? new Date(order.orderDate) : null
+        if (orderDate && (!group.latestOrderDate || orderDate > group.latestOrderDate)) {
+          group.latestOrderDate = orderDate
+        }
+        
+        group.prs.push(order)
       } else {
-        // Orders without PO - show as individual cards (fallback)
+        // Orders without PO - show as individual cards (for companies without PR-PO workflow)
         ordersWithoutPO.push(order)
       }
     })
     
+    // Convert orders without PO to a unified format for sorting
+    const ordersWithoutPOFormatted = ordersWithoutPO.map(order => ({
+      type: 'order' as const,
+      order,
+      latestOrderDate: order.orderDate ? new Date(order.orderDate) : null
+    }))
+    
+    // Merge PO groups and individual orders into a single list
+    const allItems: Array<
+      | { type: 'po'; poNumber: string; poDate: Date | null; latestOrderDate: Date | null; prs: any[] }
+      | { type: 'order'; order: any; latestOrderDate: Date | null }
+    > = [
+      ...Array.from(poGroups.values()),
+      ...ordersWithoutPOFormatted
+    ]
+    
+    // Sort all items by latest order date (newest first)
+    allItems.sort((a, b) => {
+      const dateA = a.latestOrderDate?.getTime() || 0
+      const dateB = b.latestOrderDate?.getTime() || 0
+      return dateB - dateA // Descending (newest first)
+    })
+    
     return {
-      poGroups: Array.from(poGroups.values()),
-      ordersWithoutPO
+      // Keep separate arrays for backward compatibility, but now they're both empty
+      // The unified list is what we'll use for rendering
+      poGroups: [] as any[],
+      ordersWithoutPO: [] as any[],
+      // New unified list sorted by date
+      unifiedItems: allItems
     }
   }
 
@@ -533,8 +601,8 @@ export default function VendorOrdersPage() {
     return matchesSearch
   })
 
-  // Group filtered orders by PO
-  const { poGroups, ordersWithoutPO } = groupOrdersByPO(filteredOrders)
+  // Group filtered orders by PO and merge into unified sorted list
+  const { unifiedItems } = groupOrdersByPO(filteredOrders)
 
   // Check serviceability for AUTOMATIC mode
   const checkServiceability = async (sourcePincode: string, destinationPincode: string, courierCode: string, providerCode?: string) => {
@@ -653,10 +721,8 @@ export default function VendorOrdersPage() {
       ? await import('@/lib/utils/auth-storage')
       : { getVendorId: () => null, getAuthData: () => null }
 
-    let storedVendorId = getVendorId?.() || null
-    if (!storedVendorId) {
-      storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-    }
+    // SECURITY FIX: No localStorage fallback
+    const storedVendorId = getVendorId?.() || null
 
     if (!storedVendorId) {
       alert('Vendor ID not found. Please log in again.')
@@ -953,10 +1019,8 @@ export default function VendorOrdersPage() {
         ? await import('@/lib/utils/auth-storage')
         : { getVendorId: () => null, getAuthData: () => null }
 
-      let storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
-      if (!storedVendorId) {
-        storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-      }
+      // SECURITY FIX: No localStorage fallback
+      const storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
 
       if (!storedVendorId) {
         throw new Error('Vendor ID not found. Please log in again.')
@@ -1072,8 +1136,9 @@ export default function VendorOrdersPage() {
     if (!confirmDialog.orderId || !confirmDialog.action) return
 
     try {
-      // CRITICAL SECURITY: Get vendorId from localStorage for authorization
-      const storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
+      // SECURITY FIX: Get vendorId from sessionStorage ONLY (tab-specific)
+      const { getVendorId: getVendorIdAuth } = await import('@/lib/utils/auth-storage')
+      const storedVendorId = getVendorIdAuth()
       if (!storedVendorId) {
         throw new Error('Vendor ID not found. Please log in again.')
       }
@@ -1123,7 +1188,7 @@ export default function VendorOrdersPage() {
         <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
           <div className="flex flex-col md:flex-row gap-4 items-center">
             {/* Search Input */}
-            <div className="relative flex-1 md:w-2/5 w-full">
+            <div className="relative flex-1 md:w-1/4 w-full">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
               <input
                 type="text"
@@ -1132,6 +1197,30 @@ export default function VendorOrdersPage() {
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
+            </div>
+            
+            {/* Company Filter */}
+            <div className="relative md:w-1/5 w-full">
+              <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <select
+                value={filterCompany}
+                onChange={(e) => setFilterCompany(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+                disabled={companiesLoading}
+              >
+                {companiesLoading ? (
+                  <option value="all">Loading...</option>
+                ) : (
+                  <>
+                    <option value="all">All Companies</option>
+                    {companies.map((company) => (
+                      <option key={company.id} value={company.id}>
+                        {company.name}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
             </div>
             
             {/* From Date */}
@@ -1169,15 +1258,18 @@ export default function VendorOrdersPage() {
           </div>
         </div>
 
-        {/* Orders - PO-Centric View */}
+        {/* Orders - PO-Centric View - Unified sorted by date */}
         {loading ? (
           <p className="text-gray-600 text-center py-8">Loading orders...</p>
-        ) : poGroups.length === 0 && ordersWithoutPO.length === 0 ? (
+        ) : unifiedItems.length === 0 ? (
           <p className="text-gray-600 text-center py-8">No orders found</p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {/* PO Groups - One card per PO */}
-            {poGroups.map((poGroup) => {
+            {/* Unified list - PO groups and individual orders sorted by date */}
+            {unifiedItems.map((item, itemIndex) => {
+              // Render PO group
+              if (item.type === 'po') {
+                const poGroup = item
               // Calculate aggregate status for the PO (use most restrictive status)
               const statuses = poGroup.prs.map((pr: any) => pr.status)
               const aggregateStatus = statuses.includes('Delivered') ? 'Delivered' :
@@ -1191,178 +1283,181 @@ export default function VendorOrdersPage() {
               // Get all unique order IDs for this PO (for action buttons)
               const orderIds = poGroup.prs.map((pr: any) => pr.id)
               
-              return (
-                <div key={poGroup.poNumber} className="bg-white rounded-xl shadow-lg p-4 border border-gray-200 hover:shadow-xl transition-shadow flex flex-col">
-                  {/* PO Header */}
-                  <div className="flex items-start justify-between mb-3 gap-2">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="text-sm font-bold text-gray-900 truncate mb-1">PO Number: {poGroup.poNumber}</h3>
-                      {poGroup.poDate && (
-                        <p className="text-xs text-gray-600 truncate">PO Date: {new Date(poGroup.poDate).toLocaleDateString()}</p>
+                return (
+                  <div key={poGroup.poNumber} className="bg-white rounded-xl shadow-lg p-4 border border-gray-200 hover:shadow-xl transition-shadow flex flex-col">
+                    {/* PO Header */}
+                    <div className="flex items-start justify-between mb-3 gap-2">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-bold text-gray-900 truncate mb-1">PO Number: {poGroup.poNumber}</h3>
+                        {poGroup.poDate && (
+                          <p className="text-xs text-gray-600 truncate">PO Date: {new Date(poGroup.poDate).toLocaleDateString()}</p>
+                        )}
+                      </div>
+                      <span className={`px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 ${
+                        aggregateStatus === 'Delivered' ? 'bg-green-100 text-green-700' :
+                        aggregateStatus === 'Dispatched' ? 'bg-blue-100 text-blue-700' :
+                        aggregateStatus === 'Awaiting fulfilment' ? 'bg-purple-100 text-purple-700' :
+                        aggregateStatus === 'Awaiting approval' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {aggregateStatus}
+                      </span>
+                    </div>
+
+                    {/* PRs under this PO */}
+                    <div className="border-t pt-3 mb-3 space-y-3">
+                      {poGroup.prs.map((pr: any, prIdx: number) => (
+                        <div key={pr.id} className={`${prIdx > 0 ? 'border-t pt-3' : ''}`}>
+                          {/* PR Header */}
+                          <div className="mb-2">
+                            <h4 className="text-xs font-semibold text-blue-600 mb-1">
+                              {pr.prNumber ? `PR: ${pr.prNumber}` : 'PR: N/A'}
+                            </h4>
+                            {pr.prDate && (
+                              <p className="text-xs text-gray-500">PR Date: {new Date(pr.prDate).toLocaleDateString()}</p>
+                            )}
+                            <p className="text-xs text-gray-600 truncate">Employee: {pr.employeeName || 'N/A'}</p>
+                          </div>
+
+                          {/* Products under this PR */}
+                          <div className="ml-2 space-y-1.5">
+                            {pr.items.map((prItem: any, prItemIdx: number) => (
+                              <div key={prItemIdx} className="flex justify-between items-center text-xs">
+                                <span className="text-gray-600 flex-1 min-w-0 truncate pr-2">
+                                  {prItem.uniformName} {prItem.size ? `(Size: ${prItem.size})` : ''} x {prItem.quantity}
+                                </span>
+                                <span className="text-gray-900 font-medium whitespace-nowrap shrink-0">₹{(prItem.price * prItem.quantity).toFixed(2)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      
+                      {/* PO Total */}
+                      <div className="mt-3 pt-3 border-t flex justify-between items-center gap-2">
+                        <span className="text-xs text-gray-600 truncate">Total PRs: {poGroup.prs.length}</span>
+                        <span className="text-sm font-bold text-gray-900 whitespace-nowrap shrink-0">PO Total: ₹{poTotal.toFixed(2)}</span>
+                      </div>
+                    </div>
+
+                    {/* Action Buttons - Use first order ID for actions (or aggregate if needed) */}
+                    <div className="flex items-center gap-1.5 mt-auto pt-3">
+                      {/* Show "Mark as Shipped" if any PR is awaiting */}
+                      {(aggregateStatus === 'Awaiting approval' || aggregateStatus === 'Awaiting fulfilment') && (
+                        <button 
+                          onClick={() => handleMarkAsShipped(orderIds[0])}
+                          className="flex-1 bg-green-600 text-white px-2 py-1.5 rounded text-xs font-medium hover:bg-green-700 transition-colors flex items-center justify-center gap-1"
+                          title={`Mark all PRs in PO ${poGroup.poNumber} as shipped`}
+                        >
+                          <Truck className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">Mark as Shipped</span>
+                        </button>
                       )}
-                    </div>
-                    <span className={`px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 ${
-                      aggregateStatus === 'Delivered' ? 'bg-green-100 text-green-700' :
-                      aggregateStatus === 'Dispatched' ? 'bg-blue-100 text-blue-700' :
-                      aggregateStatus === 'Awaiting fulfilment' ? 'bg-purple-100 text-purple-700' :
-                      aggregateStatus === 'Awaiting approval' ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-gray-100 text-gray-700'
-                    }`}>
-                      {aggregateStatus}
-                    </span>
-                  </div>
-
-                  {/* PRs under this PO */}
-                  <div className="border-t pt-3 mb-3 space-y-3">
-                    {poGroup.prs.map((pr: any, prIdx: number) => (
-                      <div key={pr.id} className={`${prIdx > 0 ? 'border-t pt-3' : ''}`}>
-                        {/* PR Header */}
-                        <div className="mb-2">
-                          <h4 className="text-xs font-semibold text-blue-600 mb-1">
-                            {pr.prNumber ? `PR: ${pr.prNumber}` : 'PR: N/A'}
-                          </h4>
-                          {pr.prDate && (
-                            <p className="text-xs text-gray-500">PR Date: {new Date(pr.prDate).toLocaleDateString()}</p>
-                          )}
-                          <p className="text-xs text-gray-600 truncate">Employee: {pr.employeeName || 'N/A'}</p>
+                      {/* Show "Mark as Delivered" if any PR is dispatched */}
+                      {aggregateStatus === 'Dispatched' && (
+                        <button 
+                          onClick={() => handleMarkAsDelivered(orderIds[0])}
+                          className="flex-1 bg-blue-600 text-white px-2 py-1.5 rounded text-xs font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-1"
+                          title={`Mark all PRs in PO ${poGroup.poNumber} as delivered`}
+                        >
+                          <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">Mark as Delivered</span>
+                        </button>
+                      )}
+                      {/* Show "Delivered" badge for completed PO */}
+                      {aggregateStatus === 'Delivered' && (
+                        <div className="flex-1 bg-gray-100 text-gray-600 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1">
+                          <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">Delivered</span>
                         </div>
-
-                        {/* Products under this PR */}
-                        <div className="ml-2 space-y-1.5">
-                          {pr.items.map((item: any, itemIdx: number) => (
-                            <div key={itemIdx} className="flex justify-between items-center text-xs">
-                              <span className="text-gray-600 flex-1 min-w-0 truncate pr-2">
-                                {item.uniformName} {item.size ? `(Size: ${item.size})` : ''} x {item.quantity}
-                              </span>
-                              <span className="text-gray-900 font-medium whitespace-nowrap shrink-0">₹{(item.price * item.quantity).toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                    
-                    {/* PO Total */}
-                    <div className="mt-3 pt-3 border-t flex justify-between items-center gap-2">
-                      <span className="text-xs text-gray-600 truncate">Total PRs: {poGroup.prs.length}</span>
-                      <span className="text-sm font-bold text-gray-900 whitespace-nowrap shrink-0">PO Total: ₹{poTotal.toFixed(2)}</span>
+                      )}
+                      <button 
+                        onClick={() => router.push(`/dashboard/vendor/orders/${orderIds[0]}`)}
+                        className="flex-1 bg-gray-200 text-gray-700 px-2 py-1.5 rounded text-xs font-medium hover:bg-gray-300 transition-colors truncate"
+                        title={`View details for PO ${poGroup.poNumber}`}
+                      >
+                        View Details
+                      </button>
                     </div>
                   </div>
-
-                  {/* Action Buttons - Use first order ID for actions (or aggregate if needed) */}
-                  <div className="flex items-center gap-1.5 mt-auto pt-3">
-                    {/* Show "Mark as Shipped" if any PR is awaiting */}
-                    {(aggregateStatus === 'Awaiting approval' || aggregateStatus === 'Awaiting fulfilment') && (
-                      <button 
-                        onClick={() => handleMarkAsShipped(orderIds[0])}
-                        className="flex-1 bg-green-600 text-white px-2 py-1.5 rounded text-xs font-medium hover:bg-green-700 transition-colors flex items-center justify-center gap-1"
-                        title={`Mark all PRs in PO ${poGroup.poNumber} as shipped`}
-                      >
-                        <Truck className="h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">Mark as Shipped</span>
-                      </button>
-                    )}
-                    {/* Show "Mark as Delivered" if any PR is dispatched */}
-                    {aggregateStatus === 'Dispatched' && (
-                      <button 
-                        onClick={() => handleMarkAsDelivered(orderIds[0])}
-                        className="flex-1 bg-blue-600 text-white px-2 py-1.5 rounded text-xs font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-1"
-                        title={`Mark all PRs in PO ${poGroup.poNumber} as delivered`}
-                      >
-                        <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">Mark as Delivered</span>
-                      </button>
-                    )}
-                    {/* Show "Delivered" badge for completed PO */}
-                    {aggregateStatus === 'Delivered' && (
-                      <div className="flex-1 bg-gray-100 text-gray-600 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1">
-                        <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-                        <span className="truncate">Delivered</span>
+                )
+              } else {
+                // Render individual order (without PO)
+                const order = item.order
+                return (
+                  <div key={order.id} className="bg-white rounded-xl shadow-lg p-4 border border-gray-200 hover:shadow-xl transition-shadow flex flex-col">
+                    <div className="flex items-start justify-between mb-3 gap-2">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-bold text-gray-900 truncate mb-1">
+                          {order.prNumber ? `PR: ${order.prNumber}` : `Order: ${order.id}`}
+                        </h3>
+                        <p className="text-xs text-gray-600 truncate">Employee: {order.employeeName || 'N/A'}</p>
+                        <p className="text-xs text-gray-600 truncate">Date: {new Date(order.orderDate).toLocaleDateString()}</p>
                       </div>
-                    )}
-                    <button 
-                      onClick={() => router.push(`/dashboard/vendor/orders/${orderIds[0]}`)}
-                      className="flex-1 bg-gray-200 text-gray-700 px-2 py-1.5 rounded text-xs font-medium hover:bg-gray-300 transition-colors truncate"
-                      title={`View details for PO ${poGroup.poNumber}`}
-                    >
-                      View Details
-                    </button>
+                      <span className={`px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 ${order.status === 'Delivered' ? 'bg-green-100 text-green-700' :
+                        order.status === 'Dispatched' ? 'bg-blue-100 text-blue-700' :
+                        order.status === 'Awaiting fulfilment' ? 'bg-purple-100 text-purple-700' :
+                        order.status === 'Awaiting approval' ? 'bg-yellow-100 text-yellow-700' :
+                        'bg-gray-100 text-gray-700'
+                      }`}>
+                        {order.status}
+                      </span>
+                    </div>
+
+                    <div className="border-t pt-3 mb-3">
+                      <h4 className="text-xs font-semibold text-gray-900 mb-1.5">Items:</h4>
+                      <div className="space-y-1.5">
+                        {order.items.map((orderItem: any, idx: number) => (
+                          <div key={idx} className="flex justify-between items-center text-xs">
+                            <span className="text-gray-600 flex-1 min-w-0 truncate pr-2">
+                              {orderItem.uniformName} (Size: {orderItem.size}) x {orderItem.quantity}
+                            </span>
+                            <span className="text-gray-900 font-medium whitespace-nowrap shrink-0">₹{(orderItem.price * orderItem.quantity).toFixed(2)}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-2 pt-2 border-t flex justify-between items-center gap-2">
+                        <span className="text-xs text-gray-600 truncate">Dispatch: {order.dispatchLocation}</span>
+                        <span className="text-sm font-bold text-gray-900 whitespace-nowrap shrink-0">Total: ₹{order.total.toFixed(2)}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 mt-auto pt-3">
+                      {(order.status === 'Awaiting approval' || order.status === 'Awaiting fulfilment') && (
+                        <button 
+                          onClick={() => handleMarkAsShipped(order.id)}
+                          className="flex-1 bg-green-600 text-white px-2 py-1.5 rounded text-xs font-medium hover:bg-green-700 transition-colors flex items-center justify-center gap-1"
+                        >
+                          <Truck className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">Mark as Shipped</span>
+                        </button>
+                      )}
+                      {order.status === 'Dispatched' && (
+                        <button 
+                          onClick={() => handleMarkAsDelivered(order.id)}
+                          className="flex-1 bg-blue-600 text-white px-2 py-1.5 rounded text-xs font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-1"
+                        >
+                          <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">Mark as Delivered</span>
+                        </button>
+                      )}
+                      {order.status === 'Delivered' && (
+                        <div className="flex-1 bg-gray-100 text-gray-600 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1">
+                          <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">Delivered</span>
+                        </div>
+                      )}
+                      <button 
+                        onClick={() => router.push(`/dashboard/vendor/orders/${order.id}`)}
+                        className="flex-1 bg-gray-200 text-gray-700 px-2 py-1.5 rounded text-xs font-medium hover:bg-gray-300 transition-colors truncate"
+                      >
+                        View Details
+                      </button>
+                    </div>
                   </div>
-                </div>
-              )
+                )
+              }
             })}
-
-            {/* Fallback: Orders without PO (shouldn't happen after Company Admin approval, but handle gracefully) */}
-            {ordersWithoutPO.map((order) => (
-              <div key={order.id} className="bg-white rounded-xl shadow-lg p-4 border border-gray-200 hover:shadow-xl transition-shadow flex flex-col">
-                <div className="flex items-start justify-between mb-3 gap-2">
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-bold text-gray-900 truncate mb-1">PR: {order.prNumber || 'N/A'}</h3>
-                    <p className="text-xs text-gray-600 truncate">Employee: {order.employeeName || 'N/A'}</p>
-                    <p className="text-xs text-gray-600 truncate">Date: {new Date(order.orderDate).toLocaleDateString()}</p>
-                    <p className="text-xs text-yellow-600 truncate font-medium">⚠️ No PO assigned</p>
-                  </div>
-                  <span className={`px-2 py-1 rounded-full text-[10px] font-semibold whitespace-nowrap shrink-0 ${order.status === 'Delivered' ? 'bg-green-100 text-green-700' :
-                    order.status === 'Dispatched' ? 'bg-blue-100 text-blue-700' :
-                    order.status === 'Awaiting fulfilment' ? 'bg-purple-100 text-purple-700' :
-                    order.status === 'Awaiting approval' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-gray-100 text-gray-700'
-                  }`}>
-                    {order.status}
-                  </span>
-                </div>
-
-                <div className="border-t pt-3 mb-3">
-                  <h4 className="text-xs font-semibold text-gray-900 mb-1.5">Items:</h4>
-                  <div className="space-y-1.5">
-                    {order.items.map((item: any, idx: number) => (
-                      <div key={idx} className="flex justify-between items-center text-xs">
-                        <span className="text-gray-600 flex-1 min-w-0 truncate pr-2">
-                          {item.uniformName} (Size: {item.size}) x {item.quantity}
-                        </span>
-                        <span className="text-gray-900 font-medium whitespace-nowrap shrink-0">₹{(item.price * item.quantity).toFixed(2)}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-2 pt-2 border-t flex justify-between items-center gap-2">
-                    <span className="text-xs text-gray-600 truncate">Dispatch: {order.dispatchLocation}</span>
-                    <span className="text-sm font-bold text-gray-900 whitespace-nowrap shrink-0">Total: ₹{order.total.toFixed(2)}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-1.5 mt-auto pt-3">
-                  {(order.status === 'Awaiting approval' || order.status === 'Awaiting fulfilment') && (
-                    <button 
-                      onClick={() => handleMarkAsShipped(order.id)}
-                      className="flex-1 bg-green-600 text-white px-2 py-1.5 rounded text-xs font-medium hover:bg-green-700 transition-colors flex items-center justify-center gap-1"
-                    >
-                      <Truck className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">Mark as Shipped</span>
-                    </button>
-                  )}
-                  {order.status === 'Dispatched' && (
-                    <button 
-                      onClick={() => handleMarkAsDelivered(order.id)}
-                      className="flex-1 bg-blue-600 text-white px-2 py-1.5 rounded text-xs font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-1"
-                    >
-                      <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">Mark as Delivered</span>
-                    </button>
-                  )}
-                  {order.status === 'Delivered' && (
-                    <div className="flex-1 bg-gray-100 text-gray-600 px-2 py-1.5 rounded text-xs font-medium flex items-center justify-center gap-1">
-                      <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">Delivered</span>
-                    </div>
-                  )}
-                  <button 
-                    onClick={() => router.push(`/dashboard/vendor/orders/${order.id}`)}
-                    className="flex-1 bg-gray-200 text-gray-700 px-2 py-1.5 rounded text-xs font-medium hover:bg-gray-300 transition-colors truncate"
-                  >
-                    View Details
-                  </button>
-                </div>
-              </div>
-            ))}
           </div>
         )}
 
@@ -1699,9 +1794,9 @@ export default function VendorOrdersPage() {
                             },
                             companyId: shippingContext?.company?.id || selectedOrder?.companyId || '',
                             vendorId: (() => {
+                              // SECURITY FIX: Use ONLY sessionStorage (tab-specific)
                               const vendorIdFromSession = typeof window !== 'undefined' ? sessionStorage.getItem('vendorId') : null
-                              const vendorIdFromLocal = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-                              return vendorIdFromSession || vendorIdFromLocal || ''
+                              return vendorIdFromSession || ''
                             })(),
                           }
 
@@ -2338,10 +2433,8 @@ export default function VendorOrdersPage() {
                         ? await import('@/lib/utils/auth-storage')
                         : { getVendorId: () => null }
 
-                      let storedVendorId = getVendorId?.() || null
-                      if (!storedVendorId) {
-                        storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-                      }
+                      // SECURITY FIX: No localStorage fallback
+                      const storedVendorId = getVendorId?.() || null
 
                       if (!storedVendorId) {
                         throw new Error('Vendor ID not found. Please log in again.')

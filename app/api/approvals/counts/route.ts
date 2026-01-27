@@ -9,7 +9,9 @@ import {
   getNewInvoiceCount,
   getNewGRNCount,
   getApprovedGRNCount,
-  getApprovedInvoiceCount
+  getApprovedInvoiceCount,
+  getPendingGRNCountForCompany,
+  getPendingInvoiceCountForCompany
 } from '@/lib/db/data-access'
 
 
@@ -33,20 +35,26 @@ export async function GET(request: Request) {
       newGRNCount?: number
       approvedGRNCount?: number
       approvedInvoiceCount?: number
+      pendingGRNApprovals?: number  // GRNs awaiting company admin approval
+      pendingInvoiceApprovals?: number  // Invoices awaiting company admin approval
     } = {}
 
     if (role === 'company' && companyId) {
-      // Company Admin: Get order approvals, return requests, new feedback, and new invoices
-      const [orderCount, returnCount, feedbackCount, invoiceCount] = await Promise.all([
+      // Company Admin: Get order approvals, return requests, feedback, GRN approvals, and invoice approvals
+      const [orderCount, returnCount, feedbackCount, grnApprovalCount, invoiceApprovalCount] = await Promise.all([
         getPendingApprovalCount(companyId),
         getPendingReturnRequestCount(companyId),
         getNewFeedbackCount(companyId),
-        getNewInvoiceCount(companyId)
+        getPendingGRNCountForCompany(companyId),
+        getPendingInvoiceCountForCompany(companyId)
       ])
       counts.pendingOrderApprovals = orderCount
       counts.pendingReturnRequests = returnCount
       counts.newFeedbackCount = feedbackCount
-      counts.newInvoiceCount = invoiceCount
+      counts.pendingGRNApprovals = grnApprovalCount
+      counts.pendingInvoiceApprovals = invoiceApprovalCount
+      // Keep newInvoiceCount for backward compatibility (same as pendingInvoiceApprovals)
+      counts.newInvoiceCount = invoiceApprovalCount
     } else if (role === 'location' && locationId) {
       // Location Admin: Get order approvals for their location
       const orderCount = await getPendingApprovalCountByLocation(locationId)

@@ -55,7 +55,7 @@ const CategorySchema = new Schema<ICategory>(
 )
 
 // Indexes for efficient queries
-CategorySchema.index({ status: 1 })
+// Note: status already has index: true in field definition, so no separate index needed
 CategorySchema.index({ isSystemCategory: 1, status: 1 })
 
 // Ensure name is unique (case-insensitive) - application-level validation

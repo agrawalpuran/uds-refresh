@@ -18,9 +18,9 @@ export default function EmployeeUploadPage() {
     if (typeof window !== 'undefined') {
       const loadUserInfo = async () => {
         const { getUserEmail, getCompanyId } = await import('@/lib/utils/auth-storage')
-        // CRITICAL SECURITY FIX: Use only tab-specific auth storage
+        // SECURITY FIX: Use ONLY sessionStorage (tab-specific) - no localStorage
         const userEmail = getUserEmail('company')
-        const storedCompanyId = getCompanyId() || localStorage.getItem('companyId')
+        const storedCompanyId = getCompanyId()
         
         if (userEmail) {
           const normalizedEmail = userEmail.trim().toLowerCase()

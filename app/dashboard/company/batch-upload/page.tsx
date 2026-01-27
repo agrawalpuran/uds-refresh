@@ -19,9 +19,9 @@ export default function BatchUploadPage() {
       const loadUserInfo = async () => {
         // Use auth-storage utility to get email for company actor type
         const { getUserEmail, getCompanyId } = await import('@/lib/utils/auth-storage')
-        // CRITICAL SECURITY FIX: Use only tab-specific auth storage
+        // SECURITY FIX: Use ONLY sessionStorage (tab-specific) - no localStorage
         const userEmail = getUserEmail('company')
-        const storedCompanyId = getCompanyId() || localStorage.getItem('companyId')
+        const storedCompanyId = getCompanyId()
         
         if (userEmail) {
           // Normalize email (trim and lowercase)
@@ -111,7 +111,8 @@ export default function BatchUploadPage() {
       console.log('[handleOrderUpload] normalizedEmail:', normalizedEmail)
 
       // Determine company ID
-      const targetCompanyId = companyId || getCompanyId() || localStorage.getItem('companyId')
+      // SECURITY FIX: No localStorage fallback
+      const targetCompanyId = companyId || getCompanyId()
       console.log('[handleOrderUpload] targetCompanyId:', targetCompanyId)
       
       if (!targetCompanyId) {
@@ -186,7 +187,8 @@ Jane,Smith,Product Manager,Female,San Francisco Office,jane.smith@company.com,+1
       const normalizedEmail = userEmail.trim().toLowerCase()
       console.log('[downloadOrderTemplate] normalizedEmail:', normalizedEmail)
 
-      const targetCompanyId = companyId || getCompanyId() || localStorage.getItem('companyId')
+      // SECURITY FIX: No localStorage fallback
+      const targetCompanyId = companyId || getCompanyId()
       console.log('[downloadOrderTemplate] targetCompanyId:', targetCompanyId)
       
       if (!targetCompanyId) {

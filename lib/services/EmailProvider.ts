@@ -11,6 +11,10 @@
  *   SMTP_PASS=your-app-password (16-character app password from Google)
  *   SMTP_FROM_NAME=UDS Notifications
  *   SMTP_FROM_EMAIL=your-email@gmail.com
+ * 
+ * Test Mode (redirect all emails to single address):
+ *   NOTIFICATION_TEST_MODE=true
+ *   NOTIFICATION_TEST_EMAIL=your-test-email@gmail.com
  */
 
 import nodemailer, { Transporter } from 'nodemailer'
@@ -270,6 +274,43 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailResult> {
     }
   }
 
+  // ==========================================================================
+  // TEST MODE: Redirect all emails to a single test address
+  // ==========================================================================
+  const isTestMode = process.env.NOTIFICATION_TEST_MODE === 'true'
+  const testEmail = process.env.NOTIFICATION_TEST_EMAIL
+  
+  let actualRecipient = to
+  let actualSubject = subject
+  let actualBody = body
+  
+  if (isTestMode && testEmail) {
+    // Override recipient with test email
+    actualRecipient = testEmail
+    
+    // Prefix subject with [TEST] and original recipient
+    actualSubject = `[TEST → ${to}] ${subject}`
+    
+    // Add test mode banner to email body
+    const testBanner = `
+      <div style="background-color: #fff3cd; border: 2px solid #ffc107; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
+        <strong style="color: #856404;">⚠️ TEST MODE</strong>
+        <p style="color: #856404; margin: 5px 0 0 0;">
+          This email was originally intended for: <strong>${to}</strong>
+        </p>
+      </div>
+    `
+    
+    // Insert banner at the start of body (after <body> tag if present, otherwise at start)
+    if (actualBody.toLowerCase().includes('<body')) {
+      actualBody = actualBody.replace(/(<body[^>]*>)/i, `$1${testBanner}`)
+    } else {
+      actualBody = testBanner + actualBody
+    }
+    
+    console.log(`[EmailProvider] 🧪 TEST MODE: Redirecting email from ${to} → ${testEmail}`)
+  }
+
   try {
     const transport = getTransporter()
 
@@ -279,25 +320,29 @@ export async function sendEmail(payload: EmailPayload): Promise<EmailResult> {
     const from = `${fromName || defaultFromName} <${fromEmail || defaultFromEmail}>`
 
     console.log(`[EmailProvider] 📤 Sending email...`, {
-      to,
-      subject: subject.substring(0, 50) + (subject.length > 50 ? '...' : ''),
+      to: actualRecipient,
+      originalRecipient: isTestMode ? to : undefined,
+      subject: actualSubject.substring(0, 50) + (actualSubject.length > 50 ? '...' : ''),
       from: defaultFromName,
+      testMode: isTestMode,
     })
 
     // Send email
     const info = await transport.sendMail({
       from,
-      to,
-      subject,
-      html: body,
-      text: stripHtml(body),
+      to: actualRecipient,
+      subject: actualSubject,
+      html: actualBody,
+      text: stripHtml(actualBody),
     })
 
     const duration = Date.now() - startTime
 
     console.log(`[EmailProvider] ✅ Email sent successfully`, {
       messageId: info.messageId,
-      to,
+      to: actualRecipient,
+      originalRecipient: isTestMode ? to : undefined,
+      testMode: isTestMode,
       duration: `${duration}ms`,
       accepted: info.accepted,
       rejected: info.rejected,

@@ -41,9 +41,9 @@ export default function LocationsPage() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const loadData = async () => {
-        const storedCompanyId = localStorage.getItem('companyId')
-        // CRITICAL SECURITY FIX: Use only tab-specific auth storage
-        const { getUserEmail } = await import('@/lib/utils/auth-storage')
+        // SECURITY FIX: Use ONLY sessionStorage (tab-specific)
+        const { getUserEmail, getCompanyId } = await import('@/lib/utils/auth-storage')
+        const storedCompanyId = getCompanyId()
         const storedEmail = getUserEmail('company') || ''
         
         if (storedCompanyId) {
@@ -111,9 +111,9 @@ export default function LocationsPage() {
     
     if (!currentCompanyId || !currentAdminEmail) {
       if (typeof window !== 'undefined') {
-        currentCompanyId = localStorage.getItem('companyId') || ''
-        // CRITICAL SECURITY FIX: Use only tab-specific auth storage
-        const { getUserEmail } = await import('@/lib/utils/auth-storage')
+        // SECURITY FIX: Use ONLY sessionStorage
+        const { getUserEmail, getCompanyId: getCompanyIdAuth } = await import('@/lib/utils/auth-storage')
+        currentCompanyId = getCompanyIdAuth() || ''
         const retrievedEmail = getUserEmail('company') || ''
         // Normalize email: trim and lowercase
         currentAdminEmail = retrievedEmail.trim().toLowerCase()
@@ -232,9 +232,9 @@ export default function LocationsPage() {
     
     if (!currentCompanyId || !currentAdminEmail) {
       if (typeof window !== 'undefined') {
-        currentCompanyId = localStorage.getItem('companyId') || ''
-        // CRITICAL SECURITY FIX: Use only tab-specific auth storage
-        const { getUserEmail } = await import('@/lib/utils/auth-storage')
+        // SECURITY FIX: Use ONLY sessionStorage
+        const { getUserEmail, getCompanyId: getCompanyIdAuth } = await import('@/lib/utils/auth-storage')
+        currentCompanyId = getCompanyIdAuth() || ''
         currentAdminEmail = getUserEmail('company') || ''
       }
     }
@@ -259,9 +259,9 @@ export default function LocationsPage() {
     
     if (!currentCompanyId || !currentAdminEmail) {
       if (typeof window !== 'undefined') {
-        currentCompanyId = localStorage.getItem('companyId') || ''
-        // CRITICAL SECURITY FIX: Use only tab-specific auth storage
-        const { getUserEmail } = await import('@/lib/utils/auth-storage')
+        // SECURITY FIX: Use ONLY sessionStorage
+        const { getUserEmail, getCompanyId: getCompanyIdAuth } = await import('@/lib/utils/auth-storage')
+        currentCompanyId = getCompanyIdAuth() || ''
         currentAdminEmail = getUserEmail('company') || ''
       }
     }
@@ -316,9 +316,9 @@ export default function LocationsPage() {
     
     if (!currentCompanyId || !currentAdminEmail) {
       if (typeof window !== 'undefined') {
-        currentCompanyId = localStorage.getItem('companyId') || ''
-        // CRITICAL SECURITY FIX: Use only tab-specific auth storage
-        const { getUserEmail } = await import('@/lib/utils/auth-storage')
+        // SECURITY FIX: Use ONLY sessionStorage
+        const { getUserEmail, getCompanyId: getCompanyIdAuth } = await import('@/lib/utils/auth-storage')
+        currentCompanyId = getCompanyIdAuth() || ''
         currentAdminEmail = getUserEmail('company') || ''
       }
     }
@@ -357,10 +357,9 @@ export default function LocationsPage() {
     
     if (!currentCompanyId || !currentAdminEmail) {
       if (typeof window !== 'undefined') {
-        currentCompanyId = localStorage.getItem('companyId') || ''
-        // Check multiple possible keys for email (userEmail, email, adminEmail)
-        // CRITICAL SECURITY FIX: Use only tab-specific auth storage
-        const { getUserEmail } = await import('@/lib/utils/auth-storage')
+        // SECURITY FIX: Use ONLY sessionStorage
+        const { getUserEmail, getCompanyId: getCompanyIdAuth } = await import('@/lib/utils/auth-storage')
+        currentCompanyId = getCompanyIdAuth() || ''
         currentAdminEmail = getUserEmail('company') || ''
       }
     }

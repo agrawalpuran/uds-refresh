@@ -1,17 +1,11 @@
 /**
  * Admin Notifications Templates - Single Template API
  * 
- * GET  /api/admin/notifications/templates/:templateId - Get single template
- * PUT  /api/admin/notifications/templates/:templateId - Update template
+ * GET    /api/admin/notifications/templates/:templateId - Get single template
+ * PUT    /api/admin/notifications/templates/:templateId - Update template
+ * DELETE /api/admin/notifications/templates/:templateId - Delete template
  * 
  * Admin-only API for managing individual notification templates.
- * Supports updating subject, body, and active status.
- * Does NOT support deletion - use isActive toggle instead.
- * 
- * FUTURE EXTENSION POINTS:
- * - Add companyId for per-company template overrides
- * - Add channel field when multi-channel support is added
- * - Add version history tracking
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -22,6 +16,10 @@ import NotificationEvent from '@/lib/models/NotificationEvent'
 // Force dynamic rendering
 export const dynamic = 'force-dynamic'
 
+interface RouteParams {
+  params: Promise<{ templateId: string }>
+}
+
 /**
  * GET /api/admin/notifications/templates/:templateId
  * 
@@ -29,12 +27,12 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { templateId: string } }
+  { params }: RouteParams
 ) {
   try {
     await connectDB()
 
-    const { templateId } = params
+    const { templateId } = await params
 
     if (!templateId) {
       return NextResponse.json(
@@ -76,7 +74,7 @@ export async function GET(
     })
 
   } catch (error: any) {
-    console.error(`[API] GET /api/admin/notifications/templates/${params.templateId} error:`, error)
+    console.error(`[API] GET /api/admin/notifications/templates error:`, error)
     return NextResponse.json(
       { success: false, error: error.message || 'Failed to fetch template' },
       { status: 500 }
@@ -88,31 +86,15 @@ export async function GET(
  * PUT /api/admin/notifications/templates/:templateId
  * 
  * Updates a notification template.
- * 
- * Allowed fields:
- * - subjectTemplate: Email subject with {{placeholders}}
- * - bodyTemplate: Email body (HTML) with {{placeholders}}
- * - isActive: Enable/disable the template
- * - templateName: Human-readable name
- * 
- * NOT allowed (protected fields):
- * - templateId: Immutable
- * - eventId: Cannot change event association
- * - language: Cannot change language (create new template instead)
- * 
- * Validation:
- * - Subject template must be 1-500 characters
- * - Body template must not be empty
- * - Warns if placeholders are used that don't match event's expected data
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { templateId: string } }
+  { params }: RouteParams
 ) {
   try {
     await connectDB()
 
-    const { templateId } = params
+    const { templateId } = await params
 
     if (!templateId) {
       return NextResponse.json(
@@ -277,9 +259,59 @@ export async function PUT(
     })
 
   } catch (error: any) {
-    console.error(`[API] PUT /api/admin/notifications/templates/${params.templateId} error:`, error)
+    console.error(`[API] PUT /api/admin/notifications/templates error:`, error)
     return NextResponse.json(
       { success: false, error: error.message || 'Failed to update template' },
+      { status: 500 }
+    )
+  }
+}
+
+/**
+ * DELETE /api/admin/notifications/templates/:templateId
+ * 
+ * Deletes a notification template.
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: RouteParams
+) {
+  try {
+    await connectDB()
+
+    const { templateId } = await params
+
+    if (!templateId) {
+      return NextResponse.json(
+        { success: false, error: 'Template ID is required' },
+        { status: 400 }
+      )
+    }
+
+    // Fetch template to verify it exists
+    const template = await NotificationTemplate.findOne({ templateId })
+
+    if (!template) {
+      return NextResponse.json(
+        { success: false, error: `Template not found: ${templateId}` },
+        { status: 404 }
+      )
+    }
+
+    // Delete the template
+    await NotificationTemplate.deleteOne({ templateId })
+
+    console.log(`[API] DELETE /api/admin/notifications/templates/${templateId} - Deleted successfully`)
+
+    return NextResponse.json({
+      success: true,
+      message: `Template "${template.templateName}" deleted successfully`
+    })
+
+  } catch (error: any) {
+    console.error(`[API] DELETE /api/admin/notifications/templates error:`, error)
+    return NextResponse.json(
+      { success: false, error: error.message || 'Failed to delete template' },
       { status: 500 }
     )
   }

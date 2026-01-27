@@ -22,8 +22,10 @@ export default function CatalogPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [filterGender, setFilterGender] = useState<'all' | 'male' | 'female' | 'unisex'>('all')
   const [filterCategory, setFilterCategory] = useState<string>('all')
+  const [filterVendor, setFilterVendor] = useState<string>('all')
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('')
   const [uniforms, setUniforms] = useState<any[]>([])
+  const [companyVendors, setCompanyVendors] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [companyPrimaryColor, setCompanyPrimaryColor] = useState<string>('#f76b1c')
   const [companySecondaryColor, setCompanySecondaryColor] = useState<string>('#f76b1c')
@@ -56,9 +58,11 @@ export default function CatalogPage() {
     const loadData = async () => {
       try {
         setLoading(true)
-        let targetCompanyId = typeof window !== 'undefined' ? localStorage.getItem('companyId') : null
+        // SECURITY FIX: Use sessionStorage only
+        const { getCompanyId } = await import('@/lib/utils/auth-storage')
+        let targetCompanyId = getCompanyId()
         
-        // If companyId not in localStorage, try to get it from admin email
+        // If companyId not in sessionStorage, try to get it from admin email
         if (!targetCompanyId && typeof window !== 'undefined') {
           const { getUserEmail } = await import('@/lib/utils/auth-storage')
           // CRITICAL SECURITY FIX: Use only tab-specific auth storage
@@ -106,6 +110,17 @@ export default function CatalogPage() {
           if (companyDetails) {
             setCompanyPrimaryColor(companyDetails.primaryColor || '#f76b1c')
             setCompanySecondaryColor(companyDetails.secondaryColor || companyDetails.primaryColor || '#f76b1c')
+          }
+          
+          // Fetch vendors mapped to this company
+          try {
+            const vendorResponse = await fetch(`/api/companies/${targetCompanyId}/vendors`)
+            if (vendorResponse.ok) {
+              const vendorData = await vendorResponse.json()
+              setCompanyVendors(vendorData.map((v: any) => ({ id: v.id, name: v.name })))
+            }
+          } catch (vendorError) {
+            console.error('Error fetching company vendors:', vendorError)
           }
         } else {
           // Default to first company for demo (fallback)
@@ -161,7 +176,10 @@ export default function CatalogPage() {
                          uniform.sku.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesGender = filterGender === 'all' || uniform.gender === filterGender
     const matchesCategory = filterCategory === 'all' || uniform.category === filterCategory
-    return matchesSearch && matchesGender && matchesCategory
+    const matchesVendor = filterVendor === 'all' || 
+      (uniform.vendors && Array.isArray(uniform.vendors) && 
+       uniform.vendors.some((v: any) => v.id === filterVendor || v.name === filterVendor))
+    return matchesSearch && matchesGender && matchesCategory && matchesVendor
   })
 
   // View modal handlers
@@ -236,7 +254,9 @@ export default function CatalogPage() {
     try {
       setEditModal(prev => ({ ...prev, saving: true }))
       
-      const companyId = selectedCompanyId || (typeof window !== 'undefined' ? localStorage.getItem('companyId') : null)
+      // SECURITY FIX: Use sessionStorage only
+      const { getCompanyId: getCompanyIdAuth } = await import('@/lib/utils/auth-storage')
+      const companyId = selectedCompanyId || getCompanyIdAuth()
       if (!companyId) {
         alert('Company ID not found')
         setEditModal(prev => ({ ...prev, saving: false }))
@@ -360,7 +380,7 @@ export default function CatalogPage() {
 
         {/* Filters */}
         <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 mb-4 sm:mb-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
               <input
@@ -428,6 +448,28 @@ export default function CatalogPage() {
               <option value="shoe">Shoes</option>
               <option value="jacket">Jackets</option>
             </select>
+            <select
+              value={filterVendor}
+              onChange={(e) => setFilterVendor(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 outline-none"
+              style={{ 
+                '--tw-ring-color': companyPrimaryColor || '#f76b1c',
+                '--tw-border-color': companyPrimaryColor || '#f76b1c'
+              } as React.CSSProperties & { '--tw-ring-color'?: string; '--tw-border-color'?: string }}
+              onFocus={(e) => {
+                e.target.style.borderColor = companyPrimaryColor || '#f76b1c'
+                e.target.style.boxShadow = `0 0 0 2px ${companyPrimaryColor || '#f76b1c'}40`
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = '#d1d5db'
+                e.target.style.boxShadow = 'none'
+              }}
+            >
+              <option value="all">All Vendors</option>
+              {companyVendors.map((vendor) => (
+                <option key={vendor.id} value={vendor.id}>{vendor.name}</option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -440,11 +482,11 @@ export default function CatalogPage() {
           <div className="text-center py-12 bg-white rounded-xl shadow-lg">
             <p className="text-xl font-semibold text-gray-900 mb-2">No products found</p>
             <p className="text-gray-600 mb-4">
-              {searchTerm || filterGender !== 'all' || filterCategory !== 'all'
+              {searchTerm || filterGender !== 'all' || filterCategory !== 'all' || filterVendor !== 'all'
                 ? 'Try adjusting your filters'
                 : 'No products are currently linked to this company. Products need to be linked via ProductCompany relationships.'}
             </p>
-            {!searchTerm && filterGender === 'all' && filterCategory === 'all' && (
+            {!searchTerm && filterGender === 'all' && filterCategory === 'all' && filterVendor === 'all' && (
               <div className="text-sm text-gray-500 mt-4">
                 <p>To add products to this catalog:</p>
                 <p>1. Ensure products exist in the database</p>

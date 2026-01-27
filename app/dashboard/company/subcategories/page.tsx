@@ -39,7 +39,9 @@ export default function CompanySubcategoriesPage() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const loadData = async () => {
-        const storedCompanyId = localStorage.getItem('companyId')
+        // SECURITY FIX: Use sessionStorage only
+        const { getCompanyId } = await import('@/lib/utils/auth-storage')
+        const storedCompanyId = getCompanyId()
         if (storedCompanyId) {
           setCompanyId(storedCompanyId)
           await Promise.all([

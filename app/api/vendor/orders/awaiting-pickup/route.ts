@@ -6,6 +6,7 @@ import Order from '@/lib/models/Order'
 import VendorWarehouse from '@/lib/models/VendorWarehouse'
 import Employee from '@/lib/models/Employee'
 import Company from '@/lib/models/Company'
+import { decrypt } from '@/lib/utils/encryption'
 
 /**
  * GET /api/vendor/orders/awaiting-pickup
@@ -143,8 +144,8 @@ export async function GET(request: Request) {
         order: order ? {
           id: order.id,
           pr_number: order.pr_number,
-          employeeName: order.employeeName,
-          companyName: order.companyName,
+          employeeName: order.employeeName ? decrypt(order.employeeName) : '',
+          companyName: order.companyName ? decrypt(order.companyName) : '',
           status: order.status,
           dispatchStatus: order.dispatchStatus,
           dispatchedDate: order.dispatchedDate,

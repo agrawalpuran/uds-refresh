@@ -16,8 +16,13 @@ export interface IGRN extends Document {
   grnNumber: string // Company-specific reference number (non-unique)
   companyId: string // Numeric company ID (not ObjectId)
   vendorId: string // 6-digit numeric vendor ID
-  poNumber: string // PO number this GRN is for
+  poNumber?: string // PO number this GRN is for (required for PR_PO orders, optional for MANUAL)
   prNumbers: string[] // Array of PR numbers (derived from PO)
+  // ============================================================================
+  // MANUAL ORDER SUPPORT (Post-Delivery Workflow Extension)
+  // ============================================================================
+  orderId?: string // Direct order reference (for MANUAL orders without PO)
+  sourceType?: 'PR_PO' | 'MANUAL' // GRN source type: PR_PO (from PO) or MANUAL (direct from order)
   items: IGRNItem[] // GRN items (snapshot from PRs at creation)
   /** @deprecated Use unified_grn_status instead. Cleanup Phase: 5, Flag: FEATURE_FLAG_REMOVE_OLD_FIELDS */
   status: 'CREATED' | 'ACKNOWLEDGED' | 'INVOICED' | 'RECEIVED' | 'CLOSED' // GRN status (extended)
@@ -136,15 +141,37 @@ const GRNSchema = new Schema<IGRN>(
     },
     poNumber: {
       type: String,
-      required: true,
+      required: false, // Made optional to support MANUAL orders (without PO)
       trim: true,
       maxlength: 50,
       // Index defined below via schema.index()
+      // NOTE: For PR_PO orders, this is required (validated in business logic)
+      // For MANUAL orders, this can be null/undefined
     },
     prNumbers: {
       type: [String],
       required: true,
       default: [],
+    },
+    // ============================================================================
+    // MANUAL ORDER SUPPORT (Post-Delivery Workflow Extension)
+    // ============================================================================
+    orderId: {
+      type: String,
+      required: false, // For MANUAL orders, this references the Order.id directly
+      index: true,
+      validate: {
+        validator: function(v: string) {
+          return !v || /^[A-Za-z0-9_-]{1,50}$/.test(v)
+        },
+        message: 'Order ID must be alphanumeric (1-50 characters)'
+      }
+    },
+    sourceType: {
+      type: String,
+      enum: ['PR_PO', 'MANUAL'],
+      default: 'PR_PO', // Default to PR_PO for backward compatibility
+      index: true,
     },
     items: {
       type: [GRNItemSchema],
@@ -235,10 +262,13 @@ const GRNSchema = new Schema<IGRN>(
 GRNSchema.index({ companyId: 1, grnNumber: 1 }) // Non-unique index for querying GRN numbers by company
 GRNSchema.index({ companyId: 1, status: 1 }) // Compound index for GRN status queries by company
 GRNSchema.index({ vendorId: 1, status: 1 }) // Compound index for GRN status queries by vendor
-GRNSchema.index({ poNumber: 1 }, { unique: true }) // UNIQUE: Exactly one GRN per PO
+GRNSchema.index({ poNumber: 1 }, { unique: true, sparse: true }) // UNIQUE: Exactly one GRN per PO (sparse: only for docs with poNumber)
 GRNSchema.index({ createdAt: -1 }) // Index for date-based queries
 GRNSchema.index({ vendorId: 1, grnRaisedByVendor: 1 }) // Index for vendor-raised GRNs
 GRNSchema.index({ status: 1, grnRaisedByVendor: 1 }) // Index for acknowledgment queries
+// Post-Delivery Workflow Extension indexes
+GRNSchema.index({ orderId: 1 }, { unique: true, sparse: true }) // UNIQUE: Exactly one GRN per manual order (sparse: only for docs with orderId)
+GRNSchema.index({ sourceType: 1, vendorId: 1 }) // Index for querying GRNs by source type
 
 // Pre-save hook to set grnId = id (alias for consistency)
 GRNSchema.pre('save', function(next) {

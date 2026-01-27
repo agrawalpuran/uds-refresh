@@ -2,12 +2,12 @@
 
 import { ReactNode, useState, useEffect, useLayoutEffect } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { 
   LayoutDashboard, Package, Users, FileText, BarChart3, 
-  Settings, LogOut, MapPin, ShoppingCart, Upload, Shield, Warehouse, MessageSquare, Menu, X, RefreshCw, Layers, Tag, Link2, ChevronDown, ChevronRight, Truck, Plus, Mail
+  Settings, LogOut, MapPin, ShoppingCart, Upload, Shield, Warehouse, MessageSquare, Menu, X, RefreshCw, Layers, Tag, Link2, ChevronDown, ChevronRight, Truck, Plus, Building2
 } from 'lucide-react'
-import { mockEmployees, mockCompanies, getVendorById, getCompanyById, getEmployeeByEmail } from '@/lib/data'
+import { getVendorById, getCompanyById, getEmployeeByEmail } from '@/lib/data'
 import { getCompanyById as getCompanyByIdAPI, getBranchByAdminEmail, getCompanyByAdminEmail, getLocationByAdminEmail, getEmployeeByEmail as getEmployeeByEmailAPI, getVendorById as getVendorByIdAPI } from '@/lib/data-mongodb'
 import Image from 'next/image'
 
@@ -18,6 +18,7 @@ interface DashboardLayoutProps {
 
 export default function DashboardLayout({ children, actorType }: DashboardLayoutProps) {
   const pathname = usePathname()
+  const router = useRouter()
   const [currentCompany, setCurrentCompany] = useState<any>(null)
   const [currentVendor, setCurrentVendor] = useState<any>(null)
   const [currentEmployee, setCurrentEmployee] = useState<any>(null)
@@ -36,6 +37,8 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
     newGRNCount?: number
     approvedGRNCount?: number
     approvedInvoiceCount?: number
+    pendingGRNApprovals?: number  // Company Admin: GRNs awaiting approval
+    pendingInvoiceApprovals?: number  // Company Admin: Invoices awaiting approval
   }>({})
   const [currentLocation, setCurrentLocation] = useState<any>(null)
   const [visitedMenuItems, setVisitedMenuItems] = useState<Set<string>>(new Set())
@@ -133,40 +136,30 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
                   })
               }
             } else {
-              // Fallback to mock data
-              const mockEmployee = getEmployeeByEmail(userEmail) || mockEmployees[0] || null
-              setCurrentEmployee(mockEmployee)
-              if (mockEmployee?.companyId) {
-                const company = getCompanyById(mockEmployee.companyId)
-                setCurrentCompany(company || null)
-              }
+              // Employee not found in database - show empty state
+              console.warn('[DashboardLayout] Consumer: Employee not found in database for email:', userEmail)
+              setCurrentEmployee(null)
+              setCurrentCompany(null)
               setCanLocationAdminViewFeedback(false)
             }
           })
-          .catch(() => {
-            // Fallback to mock data on error
-            const mockEmployee = getEmployeeByEmail(userEmail) || mockEmployees[0] || null
-            setCurrentEmployee(mockEmployee)
-            if (mockEmployee?.companyId) {
-              const company = getCompanyById(mockEmployee.companyId)
-              setCurrentCompany(company || null)
-            }
+          .catch((error) => {
+            // Error fetching employee - show empty state (don't use mock data)
+            console.error('[DashboardLayout] Consumer: Error fetching employee data:', error)
+            setCurrentEmployee(null)
+            setCurrentCompany(null)
             setCanLocationAdminViewFeedback(false)
           })
         } else {
-          // No email, use mock data
-          const mockEmployee = mockEmployees[0] || null
-          setCurrentEmployee(mockEmployee)
-          if (mockEmployee?.companyId) {
-            const company = getCompanyById(mockEmployee.companyId)
-            setCurrentCompany(company || null)
-          }
-          setCanLocationAdminViewFeedback(false)
+          // SECURITY FIX: No valid session - redirect to login instead of showing mock data
+          console.warn('[DashboardLayout] Consumer: No valid session found, redirecting to login')
+          router.push('/login/consumer')
+          return
         }
       } else if (actorType === 'company') {
-        // Get company from tab-specific storage
-        const companyId = getCompanyId() || (typeof window !== 'undefined' ? localStorage.getItem('companyId') : null)
-        // CRITICAL SECURITY FIX: Use only tab-specific auth storage (no localStorage fallback)
+        // SECURITY FIX: Use ONLY tab-specific storage - NO localStorage fallback
+        // localStorage is shared across tabs and causes session cross-contamination
+        const companyId = getCompanyId()
         const userEmail = getUserEmail('company')
         
         // Check if user is Branch Admin, Location Admin, or Company Admin
@@ -191,37 +184,40 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
                   if (companyData) {
                     setCurrentCompany(companyData)
                   } else {
-                    // Fallback to mock data
-                    const mockCompany = getCompanyById(targetCompanyId)
-                    setCurrentCompany(mockCompany || mockCompanies[0] || null)
+                    // Company not found - show empty state (don't use mock data)
+                    console.warn('[DashboardLayout] Company: Company not found in database for ID:', targetCompanyId)
+                    setCurrentCompany(null)
                   }
                 })
-                .catch(() => {
-                  // Fallback to mock data on error
-                  const mockCompany = getCompanyById(targetCompanyId)
-                  setCurrentCompany(mockCompany || mockCompanies[0] || null)
+                .catch((error) => {
+                  // Error fetching company - show empty state
+                  console.error('[DashboardLayout] Company: Error fetching company data:', error)
+                  setCurrentCompany(null)
                 })
             } else {
-              setCurrentCompany(mockCompanies[0] || null)
+              // No company ID found - show empty state
+              console.warn('[DashboardLayout] Company: No company ID found')
+              setCurrentCompany(null)
             }
-          }).catch(() => {
+          }).catch((error) => {
             // On error, fall back to companyId-based lookup
+            console.error('[DashboardLayout] Company: Error checking admin status:', error)
             if (companyId) {
               getCompanyByIdAPI(companyId)
                 .then(company => {
                   if (company) {
                     setCurrentCompany(company)
                   } else {
-                    const mockCompany = getCompanyById(companyId)
-                    setCurrentCompany(mockCompany || mockCompanies[0] || null)
+                    console.warn('[DashboardLayout] Company: Company not found for companyId:', companyId)
+                    setCurrentCompany(null)
                   }
                 })
-                .catch(() => {
-                  const mockCompany = getCompanyById(companyId)
-                  setCurrentCompany(mockCompany || mockCompanies[0] || null)
+                .catch((err) => {
+                  console.error('[DashboardLayout] Company: Error fetching company by ID:', err)
+                  setCurrentCompany(null)
                 })
             } else {
-              setCurrentCompany(mockCompanies[0] || null)
+              setCurrentCompany(null)
             }
           })
         } else if (companyId) {
@@ -231,22 +227,26 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
               if (company) {
                 setCurrentCompany(company)
               } else {
-                // Fallback to mock data
-                const mockCompany = getCompanyById(companyId)
-                setCurrentCompany(mockCompany || mockCompanies[0] || null)
+                // Company not found - show empty state
+                console.warn('[DashboardLayout] Company: Company not found for companyId:', companyId)
+                setCurrentCompany(null)
               }
             })
-            .catch(() => {
-              // Fallback to mock data on error
-              const mockCompany = getCompanyById(companyId)
-              setCurrentCompany(mockCompany || mockCompanies[0] || null)
+            .catch((error) => {
+              // Error fetching company - show empty state
+              console.error('[DashboardLayout] Company: Error fetching company:', error)
+              setCurrentCompany(null)
             })
         } else {
-          setCurrentCompany(mockCompanies[0] || null)
+          // SECURITY FIX: No valid session - redirect to login instead of showing mock data
+          console.warn('[DashboardLayout] Company: No valid session found, redirecting to login')
+          router.push('/login/company')
+          return
         }
       } else if (actorType === 'vendor') {
-        // Get vendor from tab-specific storage
-        const vendorId = getVendorId() || (typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null)
+        // SECURITY FIX: Use ONLY tab-specific storage - NO localStorage fallback
+        // localStorage is shared across tabs and causes session cross-contamination
+        const vendorId = getVendorId()
         if (vendorId) {
           // Try to fetch vendor from API first
           getVendorByIdAPI(vendorId)
@@ -259,32 +259,22 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
                 setCurrentVendor(mockVendor || null)
               }
             })
-            .catch(() => {
-              // Fallback to mock data on error
-              const mockVendor = getVendorById(vendorId)
-              setCurrentVendor(mockVendor || null)
+            .catch((error) => {
+              // Error fetching vendor - show empty state
+              console.error('[DashboardLayout] Vendor: Error fetching vendor data:', error)
+              setCurrentVendor(null)
             })
         } else {
-          // Fallback: try default vendor ID
-          getVendorByIdAPI('VEND-001')
-            .then(vendor => {
-              if (vendor) {
-                setCurrentVendor(vendor)
-              } else {
-                const mockVendor = getVendorById('VEND-001')
-                setCurrentVendor(mockVendor || null)
-              }
-            })
-            .catch(() => {
-              const mockVendor = getVendorById('VEND-001')
-              setCurrentVendor(mockVendor || null)
-            })
+          // SECURITY FIX: No valid session - redirect to login instead of using default vendor
+          console.warn('[DashboardLayout] Vendor: No valid session found, redirecting to login')
+          router.push('/login/vendor')
+          return
         }
       }
     }
     
     loadAuthData()
-  }, [actorType])
+  }, [actorType, router])
 
   // Fetch approval counts when company/vendor/location is loaded
   useEffect(() => {
@@ -399,10 +389,12 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
     { name: 'Reports', href: '/dashboard/vendor/reports', icon: BarChart3 },
   ]
 
-  // Combined vendor menu: base items + categories
+  // Combined vendor menu: Dashboard, Catalog, Order Management, then rest
   const vendorMenu: (MenuItem | MenuCategory)[] = [
-    ...baseVendorMenuItems,
-    ...vendorMenuCategories,
+    baseVendorMenuItems[0], // Dashboard
+    baseVendorMenuItems[1], // Catalog
+    ...vendorMenuCategories, // Order Management
+    ...baseVendorMenuItems.slice(2), // Inventory, Warehouses, Reports
   ]
 
   // Base company menu items (available to all company users) - flat items
@@ -424,13 +416,13 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
       name: 'Orders',
       icon: ShoppingCart,
       items: [
-        { name: 'Bulk Order Upload', href: '/dashboard/company/batch-upload', icon: Upload },
         { name: 'Order History', href: '/dashboard/company/orders', icon: ShoppingCart },
         { name: 'Return Requests', href: '/dashboard/company/returns', icon: RefreshCw },
         { name: 'Approvals', href: '/dashboard/company/approvals', icon: FileText },
         { name: 'GRN', href: '/dashboard/company/grns', icon: FileText },
         { name: 'Invoices', href: '/dashboard/company/invoices', icon: FileText },
         { name: 'Feedback', href: '/dashboard/company/feedback', icon: MessageSquare },
+        { name: 'Bulk Order Upload', href: '/dashboard/company/batch-upload', icon: Upload },
       ]
     },
     {
@@ -613,7 +605,7 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
     { name: 'Workflow Configuration', href: '/dashboard/superadmin/workflow-config', icon: Settings },
     { name: 'Categories', href: '/dashboard/superadmin/categories', icon: Tag },
     { name: 'Logistics & Shipping', href: '/dashboard/superadmin/logistics', icon: Truck },
-    { name: 'Notifications', href: '/dashboard/superadmin/notifications', icon: Mail },
+    { name: 'Company Notifications', href: '/dashboard/superadmin/company-notifications', icon: Building2 },
     // Only show "Create Test Order" menu item if feature is enabled
     ...(testOrdersEnabled ? [{ name: 'Create Test Order', href: '/dashboard/superadmin/create-test-order', icon: Plus }] : []),
   ]
@@ -862,8 +854,12 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
                   categoryBadgeCount += approvalCounts.newFeedbackCount || 0
                 } else if (subItem.name === 'Approvals' || subItem.href === '/dashboard/company/approvals') {
                   categoryBadgeCount += approvalCounts.pendingOrderApprovals || 0
-                } else if (subItem.name === 'Invoices' || subItem.href === '/dashboard/company/invoices') {
-                  categoryBadgeCount += approvalCounts.newInvoiceCount || 0
+                } else if ((subItem.name === 'Invoices' || subItem.href === '/dashboard/company/invoices') && actorType === 'company') {
+                  // Company Admin: Invoices awaiting approval
+                  categoryBadgeCount += approvalCounts.pendingInvoiceApprovals || approvalCounts.newInvoiceCount || 0
+                } else if ((subItem.name === 'GRN' || subItem.href === '/dashboard/company/grns') && actorType === 'company') {
+                  // Company Admin: GRNs awaiting approval
+                  categoryBadgeCount += approvalCounts.pendingGRNApprovals || 0
                 } else if (subItem.name === 'Orders' && actorType === 'vendor' && subItem.href === '/dashboard/vendor/orders') {
                   categoryBadgeCount += approvalCounts.pendingOrders || 0
                 } else if (subItem.name === 'Replacement Orders' && actorType === 'vendor' && subItem.href === '/dashboard/vendor/replacement-orders') {
@@ -878,7 +874,7 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
                 <div key={category.name} className="mb-1">
                   <button
                     onClick={(e) => toggleCategory(category.name, e)}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-md transition-all duration-200 ${
+                    className={`w-full flex items-center space-x-3 px-3 py-2.5 rounded-md transition-all duration-200 ${
                       hasActiveItem
                         ? 'bg-neutral-100 text-neutral-900 font-medium'
                         : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
@@ -888,25 +884,21 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
                       color: primaryColor,
                     } : {}}
                   >
-                    <div className="flex items-center space-x-3">
-                      <CategoryIcon 
-                        className="h-5 w-5 flex-shrink-0" 
-                        style={hasActiveItem ? { color: primaryColor } : {}}
-                      />
-                      <span className="text-sm font-medium">{category.name}</span>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      {categoryBadgeCount > 0 && (
-                        <span className="bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 px-2 flex items-center justify-center">
-                          {categoryBadgeCount > 99 ? '99+' : categoryBadgeCount}
-                        </span>
-                      )}
-                      {isExpanded ? (
-                        <ChevronDown className="h-4 w-4 flex-shrink-0" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4 flex-shrink-0" />
-                      )}
-                    </div>
+                    <CategoryIcon 
+                      className="h-5 w-5 flex-shrink-0" 
+                      style={hasActiveItem ? { color: primaryColor } : {}}
+                    />
+                    <span className="text-sm font-medium text-left flex-1">{category.name}</span>
+                    {categoryBadgeCount > 0 && (
+                      <span className="bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 px-2 flex items-center justify-center">
+                        {categoryBadgeCount > 99 ? '99+' : categoryBadgeCount}
+                      </span>
+                    )}
+                    {isExpanded ? (
+                      <ChevronDown className="h-4 w-4 flex-shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 flex-shrink-0" />
+                    )}
                   </button>
                   {isExpanded && (
                     <div className="ml-4 mt-1 space-y-1">
@@ -922,8 +914,12 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
                           badgeCount = approvalCounts.newFeedbackCount || 0
                         } else if (subItem.name === 'Approvals' || subItem.href === '/dashboard/company/approvals') {
                           badgeCount = approvalCounts.pendingOrderApprovals || 0
-                        } else if (subItem.name === 'Invoices' || subItem.href === '/dashboard/company/invoices') {
-                          badgeCount = approvalCounts.newInvoiceCount || 0
+                        } else if ((subItem.name === 'Invoices' || subItem.href === '/dashboard/company/invoices') && actorType === 'company') {
+                          // Company Admin: Invoices awaiting approval
+                          badgeCount = approvalCounts.pendingInvoiceApprovals || approvalCounts.newInvoiceCount || 0
+                        } else if ((subItem.name === 'GRN' || subItem.href === '/dashboard/company/grns') && actorType === 'company') {
+                          // Company Admin: GRNs awaiting approval
+                          badgeCount = approvalCounts.pendingGRNApprovals || 0
                         } else if (subItem.name === 'Orders' && actorType === 'vendor' && subItem.href === '/dashboard/vendor/orders') {
                           badgeCount = approvalCounts.pendingOrders || 0
                         } else if (subItem.name === 'Replacement Orders' && actorType === 'vendor' && subItem.href === '/dashboard/vendor/replacement-orders') {
@@ -1032,10 +1028,19 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
                     badgeCount = approvalCounts.pendingReturnRequests || 0
                   } else if (menuItem.name === 'Feedback' || menuItem.href === '/dashboard/company/feedback') {
                     badgeCount = approvalCounts.newFeedbackCount || 0
+                  } else if (menuItem.name === 'Invoices' && actorType === 'company' && menuItem.href === '/dashboard/company/invoices') {
+                    // Company Admin: Invoices awaiting approval
+                    badgeCount = approvalCounts.pendingInvoiceApprovals || approvalCounts.newInvoiceCount || 0
+                  } else if (menuItem.name === 'GRN' && actorType === 'company' && menuItem.href === '/dashboard/company/grns') {
+                    // Company Admin: GRNs awaiting approval
+                    badgeCount = approvalCounts.pendingGRNApprovals || 0
                   } else if (menuItem.name === 'Orders' && actorType === 'vendor' && menuItem.href === '/dashboard/vendor/orders') {
                     badgeCount = approvalCounts.pendingOrders || 0
                   } else if (menuItem.name === 'Replacement Orders' && actorType === 'vendor' && menuItem.href === '/dashboard/vendor/replacement-orders') {
                     badgeCount = approvalCounts.pendingReplacementOrders || 0
+                  } else if ((menuItem.name === 'GRN & Invoice' || menuItem.name === 'GRN') && actorType === 'vendor' && menuItem.href === '/dashboard/vendor/grns') {
+                    // Vendor: Approved GRNs ready to invoice OR new GRN count
+                    badgeCount = (approvalCounts.approvedGRNCount || 0) + (approvalCounts.approvedInvoiceCount || 0)
                   } else if (menuItem.name === 'Orders' && actorType === 'company' && menuItem.href === '/dashboard/company/orders' && isLocationAdmin) {
                     badgeCount = approvalCounts.pendingOrderApprovals || 0
                   }

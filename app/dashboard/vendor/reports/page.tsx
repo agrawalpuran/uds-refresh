@@ -25,7 +25,9 @@ export default function VendorReportsPage() {
     const loadData = async () => {
       try {
         setLoading(true)
-        const storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
+        // SECURITY FIX: Use sessionStorage only
+        const { getVendorId } = await import('@/lib/utils/auth-storage')
+        const storedVendorId = getVendorId()
         if (!storedVendorId) {
           console.error('Vendor ID not found')
           setLoading(false)

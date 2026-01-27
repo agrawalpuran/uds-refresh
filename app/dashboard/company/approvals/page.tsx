@@ -18,6 +18,7 @@ import {
   getPOCreatedOrdersForCompanyAdmin,
   getRejectedOrdersForCompanyAdmin
 } from '@/lib/data-mongodb'
+import { RejectionModal } from '@/components/workflow'
 // Data masking removed for Company Admin - they should see all employee information unmasked
 
 type TabType = 'pending' | 'approved' | 'poCreated' | 'rejected'
@@ -43,6 +44,11 @@ export default function CompanyApprovalsPage() {
   const [creatingPO, setCreatingPO] = useState(false)
   const [currentUserId, setCurrentUserId] = useState<string>('')
   const [activeTab, setActiveTab] = useState<TabType>('pending')
+  // Rejection state
+  const [showRejectModal, setShowRejectModal] = useState(false)
+  const [rejectingOrderId, setRejectingOrderId] = useState<string | null>(null)
+  const [rejectingOrderDisplayId, setRejectingOrderDisplayId] = useState<string>('')
+  const [rejecting, setRejecting] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -62,10 +68,10 @@ export default function CompanyApprovalsPage() {
             return
           }
 
-          // First, try to get companyId from localStorage (set during login)
-          let targetCompanyId = getCompanyId() || localStorage.getItem('companyId')
+          // SECURITY FIX: Use ONLY sessionStorage (tab-specific) - no localStorage
+          let targetCompanyId = getCompanyId()
           
-          // If companyId not in localStorage, try to get it from admin email
+          // If companyId not in sessionStorage, try to get it from admin email
           let company = null
           if (!targetCompanyId) {
             try {
@@ -401,6 +407,65 @@ export default function CompanyApprovalsPage() {
     }
   }
 
+  // Handle opening the reject modal
+  const handleReject = (orderId: string, displayId: string) => {
+    setRejectingOrderId(orderId)
+    setRejectingOrderDisplayId(displayId)
+    setShowRejectModal(true)
+  }
+
+  // Handle confirm rejection
+  const handleConfirmReject = async (reasonCode: string, remarks?: string) => {
+    if (!rejectingOrderId) return
+
+    try {
+      setRejecting(true)
+
+      // Get user email for identification
+      const { getUserEmail } = await import('@/lib/utils/auth-storage')
+      const userEmail = getUserEmail('company') || ''
+
+      // Call the workflow reject API with auth headers
+      const response = await fetch('/api/workflow/reject', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-company-id': companyId,
+          'x-user-id': userEmail,
+          'x-user-role': 'COMPANY_ADMIN',
+          'x-user-name': userEmail,
+        },
+        body: JSON.stringify({
+          entityType: 'ORDER',
+          entityId: rejectingOrderId,
+          reasonCode,
+          remarks,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to reject order')
+      }
+
+      alert(`Order rejected successfully!`)
+
+      // Close modal and reload data
+      setShowRejectModal(false)
+      setRejectingOrderId(null)
+      setRejectingOrderDisplayId('')
+
+      await reloadData()
+      setSelectedOrders(new Set())
+    } catch (error: any) {
+      console.error('Error rejecting order:', error)
+      alert(`Error rejecting order: ${error.message || 'Unknown error'}`)
+    } finally {
+      setRejecting(false)
+    }
+  }
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'Awaiting approval':
@@ -452,7 +517,7 @@ export default function CompanyApprovalsPage() {
         <div className="mb-6">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900 mb-2">PR Approvals</h1>
+              <h1 className="text-2xl font-bold text-gray-900 mb-2">{enablePRPOWorkflow ? 'PR Approvals' : 'Order Approvals'}</h1>
               <p className="text-gray-600">
                 {activeTab === 'pending' && `${pendingOrders.length} order${pendingOrders.length !== 1 ? 's' : ''} awaiting approval`}
                 {activeTab === 'approved' && `${approvedOrders.length} approved order${approvedOrders.length !== 1 ? 's' : ''}`}
@@ -732,7 +797,7 @@ export default function CompanyApprovalsPage() {
                                   </div>
                                 </div>
                                 {canApprove && (
-                                  <>
+                                  <div className="flex flex-col space-y-2 ml-3">
                                     {enablePRPOWorkflow ? (
                                       <button
                                         onClick={() => {
@@ -741,7 +806,7 @@ export default function CompanyApprovalsPage() {
                                           setPoDate(new Date().toISOString().split('T')[0])
                                           setShowPOModal(true)
                                         }}
-                                        className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center space-x-2 ml-3"
+                                        className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center space-x-2"
                                       >
                                         <FileText className="h-5 w-5" />
                                         <span>Create PO</span>
@@ -749,13 +814,20 @@ export default function CompanyApprovalsPage() {
                                     ) : (
                                       <button
                                         onClick={() => handleApprove(order.id)}
-                                        className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors flex items-center space-x-2 ml-3"
+                                        className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors flex items-center space-x-2"
                                       >
                                         <CheckCircle className="h-5 w-5" />
                                         <span>Approve</span>
                                       </button>
                                     )}
-                                  </>
+                                    <button
+                                      onClick={() => handleReject(order.id, order.pr_number || order.id)}
+                                      className="bg-red-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center space-x-2"
+                                    >
+                                      <XCircle className="h-5 w-5" />
+                                      <span>Reject</span>
+                                    </button>
+                                  </div>
                                 )}
                               </div>
 
@@ -840,7 +912,7 @@ export default function CompanyApprovalsPage() {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-2">
                             <FileText className="h-5 w-5 text-yellow-600" />
-                            <h2 className="text-lg font-bold text-yellow-900">Unassigned PR</h2>
+                            <h2 className="text-lg font-bold text-yellow-900">{enablePRPOWorkflow ? 'Unassigned PR' : 'Pending Orders'}</h2>
                             <span className="text-sm text-yellow-700">
                               ({ordersWithoutPR.length} order{ordersWithoutPR.length !== 1 ? 's' : ''})
                             </span>
@@ -933,7 +1005,7 @@ export default function CompanyApprovalsPage() {
                                 </div>
                               </div>
                               {canApprove && (
-                                <>
+                                <div className="flex flex-col space-y-2 ml-3">
                                   {enablePRPOWorkflow ? (
                                     <button
                                       onClick={() => {
@@ -942,7 +1014,7 @@ export default function CompanyApprovalsPage() {
                                         setPoDate(new Date().toISOString().split('T')[0])
                                         setShowPOModal(true)
                                       }}
-                                      className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center space-x-2 ml-3"
+                                      className="bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700 transition-colors flex items-center space-x-2"
                                     >
                                       <FileText className="h-5 w-5" />
                                       <span>Create PO</span>
@@ -950,13 +1022,20 @@ export default function CompanyApprovalsPage() {
                                   ) : (
                                     <button
                                       onClick={() => handleApprove(order.id)}
-                                      className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors flex items-center space-x-2 ml-3"
+                                      className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors flex items-center space-x-2"
                                     >
                                       <CheckCircle className="h-5 w-5" />
                                       <span>Approve</span>
                                     </button>
                                   )}
-                                </>
+                                  <button
+                                    onClick={() => handleReject(order.id, order.pr_number || order.id)}
+                                    className="bg-red-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-700 transition-colors flex items-center space-x-2"
+                                  >
+                                    <XCircle className="h-5 w-5" />
+                                    <span>Reject</span>
+                                  </button>
+                                </div>
                               )}
                             </div>
 
@@ -1276,6 +1355,31 @@ export default function CompanyApprovalsPage() {
           </div>
         </div>
       )}
+
+      {/* Rejection Modal */}
+      <RejectionModal
+        isOpen={showRejectModal}
+        onClose={() => {
+          setShowRejectModal(false)
+          setRejectingOrderId(null)
+          setRejectingOrderDisplayId('')
+        }}
+        onConfirm={handleConfirmReject}
+        entityDisplayId={rejectingOrderDisplayId}
+        entityType="Order"
+        isLoading={rejecting}
+        allowedReasonCodes={[
+          { code: 'ELIGIBILITY_EXHAUSTED', label: 'Eligibility Exhausted' },
+          { code: 'EMPLOYEE_NOT_ELIGIBLE', label: 'Employee Not Eligible' },
+          { code: 'INVALID_QUANTITY', label: 'Invalid Quantity' },
+          { code: 'BUDGET_EXCEEDED', label: 'Budget Exceeded' },
+          { code: 'POLICY_VIOLATION', label: 'Policy Violation' },
+          { code: 'DUPLICATE_ORDER', label: 'Duplicate Order' },
+          { code: 'INCORRECT_ITEMS', label: 'Incorrect Items Selected' },
+          { code: 'OTHER', label: 'Other' },
+        ]}
+        isReasonMandatory={true}
+      />
     </DashboardLayout>
   )
 }

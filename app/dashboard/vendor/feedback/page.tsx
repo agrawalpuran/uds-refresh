@@ -2,33 +2,55 @@
 
 import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
-import { Star, MessageSquare, Search, Filter } from 'lucide-react'
-import { getProductFeedback, getVendorById } from '@/lib/data-mongodb'
+import { Star, MessageSquare, Search, Filter, Building2 } from 'lucide-react'
+import { getProductFeedback, getVendorById, getCompaniesByVendor } from '@/lib/data-mongodb'
 import { maskEmployeeName } from '@/lib/utils/data-masking'
 
 export default function VendorFeedbackPage() {
   const [feedback, setFeedback] = useState<any[]>([])
+  const [allFeedback, setAllFeedback] = useState<any[]>([]) // Store all feedback before company filtering
   const [loading, setLoading] = useState(true)
   const [vendorPrimaryColor, setVendorPrimaryColor] = useState<string>('#2563eb')
   const [searchTerm, setSearchTerm] = useState('')
   const [filterRating, setFilterRating] = useState<string>('all')
+  // Company filter states
+  const [companies, setCompanies] = useState<any[]>([])
+  const [filterCompany, setFilterCompany] = useState<string>('all')
+  const [companiesLoading, setCompaniesLoading] = useState(true)
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const loadData = async () => {
         try {
           setLoading(true)
-          const vendorId = localStorage.getItem('vendorId')
+          // SECURITY FIX: Use sessionStorage only
+          const { getVendorId } = await import('@/lib/utils/auth-storage')
+          const vendorId = getVendorId()
           if (vendorId) {
             const vendor = await getVendorById(vendorId)
             if (vendor) {
               setVendorPrimaryColor(vendor.primaryColor || '#2563eb')
             }
+            
+            // Load companies for filter
+            try {
+              setCompaniesLoading(true)
+              const vendorCompanies = await getCompaniesByVendor(vendorId)
+              console.log('[Feedback] Loaded companies for vendor:', vendorCompanies.length)
+              setCompanies(vendorCompanies)
+            } catch (companyError) {
+              console.error('[Feedback] Error loading companies:', companyError)
+            } finally {
+              setCompaniesLoading(false)
+            }
+          } else {
+            setCompaniesLoading(false)
           }
 
           // Load feedback (vendor can see feedback for their products)
           // Backend automatically filters by vendorId based on logged-in vendor
           const feedbackData = await getProductFeedback()
+          setAllFeedback(feedbackData) // Store all feedback
           setFeedback(feedbackData)
         } catch (error: any) {
           console.error('Error loading feedback:', error)
@@ -40,6 +62,22 @@ export default function VendorFeedbackPage() {
       loadData()
     }
   }, [])
+
+  // Effect to filter feedback when company filter changes
+  useEffect(() => {
+    if (allFeedback.length === 0) return
+    
+    if (filterCompany === 'all') {
+      setFeedback(allFeedback)
+    } else {
+      const filtered = allFeedback.filter((fb: any) => {
+        const fbCompanyId = fb.companyId?.id || fb.companyId
+        return fbCompanyId === filterCompany
+      })
+      console.log(`[Feedback] Filtered to ${filtered.length} feedback items for company ${filterCompany}`)
+      setFeedback(filtered)
+    }
+  }, [filterCompany, allFeedback])
 
   const filteredFeedback = feedback.filter((fb) => {
     const matchesSearch = 
@@ -75,7 +113,7 @@ export default function VendorFeedbackPage() {
 
         {/* Filters */}
         <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-          <div className="grid md:grid-cols-2 gap-4">
+          <div className="grid md:grid-cols-3 gap-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
               <input
@@ -91,11 +129,37 @@ export default function VendorFeedbackPage() {
               />
             </div>
             <div className="relative">
+              <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <select
+                value={filterCompany}
+                onChange={(e) => setFilterCompany(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 outline-none appearance-none bg-white"
+                style={{ 
+                  '--tw-ring-color': vendorPrimaryColor || '#2563eb',
+                  '--tw-border-color': vendorPrimaryColor || '#2563eb'
+                } as React.CSSProperties & { '--tw-ring-color'?: string; '--tw-border-color'?: string }}
+                disabled={companiesLoading}
+              >
+                {companiesLoading ? (
+                  <option value="all">Loading...</option>
+                ) : (
+                  <>
+                    <option value="all">All Companies</option>
+                    {companies.map((company) => (
+                      <option key={company.id} value={company.id}>
+                        {company.name}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </div>
+            <div className="relative">
               <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
               <select
                 value={filterRating}
                 onChange={(e) => setFilterRating(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 outline-none"
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 outline-none appearance-none bg-white"
                 style={{ 
                   '--tw-ring-color': vendorPrimaryColor || '#2563eb',
                   '--tw-border-color': vendorPrimaryColor || '#2563eb'

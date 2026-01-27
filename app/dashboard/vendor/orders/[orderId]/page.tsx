@@ -47,10 +47,8 @@ export default function OrderDetailsPage() {
         ? await import('@/lib/utils/auth-storage')
         : { getVendorId: () => null, getAuthData: () => null }
 
-      let storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
-      if (!storedVendorId) {
-        storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-      }
+      // SECURITY FIX: No localStorage fallback
+      const storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
 
       if (!storedVendorId) {
         throw new Error('Vendor ID not found. Please log in again.')

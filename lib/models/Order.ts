@@ -26,6 +26,7 @@ export interface IOrder extends Document {
   dispatchLocation: string
   companyId: string // String ID reference to Company (alphanumeric)
   companyIdNum: number // Numeric company ID for backward compatibility
+  locationId?: string // String ID reference to Location (for location admin approval workflow)
   // Structured shipping address fields
   shipping_address_line_1: string // L1: House / Building / Street (REQUIRED)
   shipping_address_line_2?: string // L2: Area / Locality (OPTIONAL)
@@ -42,6 +43,10 @@ export interface IOrder extends Document {
   personalPaymentAmount?: number // Amount paid personally (if isPersonalPayment is true)
   orderType?: 'NORMAL' | 'REPLACEMENT' // Order type: NORMAL (default) or REPLACEMENT (for returns)
   returnRequestId?: string // Reference to return request if this is a replacement order
+  // ============================================================================
+  // SOURCE TYPE FIELD (Post-Delivery Workflow Extension)
+  // ============================================================================
+  sourceType?: 'PR_PO' | 'MANUAL' // Order source: PR_PO (from PR→PO workflow) or MANUAL (direct order)
   // PR (Purchase Requisition) Extension Fields
   pr_number?: string // Client/customer generated PR number (unique per company)
   pr_date?: Date // Date PR was raised
@@ -204,6 +209,11 @@ const OrderSchema = new Schema<IOrder>(
       required: true,
       index: true,
     },
+    locationId: {
+      type: String,
+      required: false, // Optional for backward compatibility
+      index: true, // Index for location admin approval queries
+    },
     shipping_address_line_1: {
       type: String,
       required: true,
@@ -292,6 +302,18 @@ const OrderSchema = new Schema<IOrder>(
     returnRequestId: {
       type: String,
       index: true,
+    },
+    // ============================================================================
+    // SOURCE TYPE FIELD (Post-Delivery Workflow Extension)
+    // Determines whether order originated from PR→PO workflow or was created manually
+    // This field is auto-populated during order creation based on company settings
+    // ============================================================================
+    sourceType: {
+      type: String,
+      enum: ['PR_PO', 'MANUAL'],
+      required: false, // Optional for backward compatibility with existing orders
+      index: true,
+      // Default will be set in createOrder based on company.enable_pr_po_workflow
     },
     // PR (Purchase Requisition) Extension Fields
     pr_number: {

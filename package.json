@@ -26,6 +26,7 @@
     "fix-order-prices": "node scripts/fix-order-prices.js",
     "fix-missing-pr-status": "npx tsx scripts/fix-missing-pr-status.ts",
     "enable-workflow-and-fix-orders": "npx tsx scripts/enable-workflow-and-fix-orders.ts",
+    "seed-workflows": "npx tsx scripts/seed-workflow-configurations.ts",
     "delete-all-orders": "node scripts/delete-all-orders.js",
     "backup": "node scripts/backup-application.js",
     "backup-zip": "powershell -ExecutionPolicy Bypass -File scripts/create-backup-zip.ps1",
@@ -70,10 +71,13 @@
     "test:api": "node scripts/run-api-tests.js",
     "test:api:generate": "node scripts/generate-api-tests.js",
     "test:api:map": "node scripts/generate-api-route-map.js",
-    "validate:string-ids": "node scripts/validate-string-ids.js"
+    "validate:string-ids": "node scripts/validate-string-ids.js",
+    "seed-notifications": "npx tsx scripts/seed-notification-templates.ts",
+    "test-email": "npx tsx scripts/test-email.ts"
   },
   "dependencies": {
     "@types/nodemailer": "^7.0.5",
+    "@types/react-grid-layout": "^1.3.6",
     "adm-zip": "^0.5.16",
     "archiver": "^7.0.1",
     "autoprefixer": "10.4.23",
@@ -85,6 +89,7 @@
     "postcss": "8.5.6",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-grid-layout": "^2.2.2",
     "recharts": "^2.10.3",
     "tailwindcss": "3.4.19",
     "twilio": "^5.11.1",

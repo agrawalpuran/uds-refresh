@@ -59,7 +59,9 @@ export default function DesignationEligibilityPage() {
       const loadData = async () => {
         try {
           setLoading(true)
-          const storedCompanyId = localStorage.getItem('companyId')
+          // SECURITY FIX: Use sessionStorage only
+          const { getCompanyId } = await import('@/lib/utils/auth-storage')
+          const storedCompanyId = getCompanyId()
           if (storedCompanyId) {
             setCompanyId(storedCompanyId)
             

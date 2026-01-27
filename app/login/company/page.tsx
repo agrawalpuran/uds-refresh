@@ -143,9 +143,13 @@ export default function CompanyLogin() {
         companyId: company.id
       })
 
-      // CRITICAL SECURITY FIX: Do NOT write to localStorage as it's shared across tabs
-      // Only use sessionStorage which is tab-specific
-      // This prevents cross-tab authentication leakage
+      // CRITICAL SECURITY FIX: Clear any stale localStorage auth data
+      // This prevents cross-tab/cross-user session contamination
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('companyId')
+        localStorage.removeItem('vendorId')
+      }
+      
       sessionStorage.setItem('currentActorType', 'company')
 
       console.log(`[CompanyLogin] ✅ Authentication data set, redirecting to dashboard...`)

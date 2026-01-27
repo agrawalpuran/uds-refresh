@@ -133,9 +133,13 @@ export async function POST(request: Request) {
           }
           console.log(`[Manual Shipment] Processing REPLACEMENT order ${prData.prNumber} (status: ${currentStatus}, dispatchStatus: ${dispatchStatus || 'N/A'})`)
         } else {
-          // Regular PRs must be in LINKED_TO_PO status
-          if (order.unified_pr_status !== 'LINKED_TO_PO') {
-            errors.push(`PR ${prData.prNumber} is not in LINKED_TO_PO status (current: ${order.unified_pr_status || 'N/A'})`)
+          // Regular PRs must be either:
+          // - LINKED_TO_PO (PR-PO workflow: after PO is created)
+          // - COMPANY_ADMIN_APPROVED (non-PR-PO workflow: directly after approval)
+          // This allows shipping for companies without PR-PO workflow enabled
+          const allowedStatuses = ['LINKED_TO_PO', 'COMPANY_ADMIN_APPROVED']
+          if (!allowedStatuses.includes(order.unified_pr_status)) {
+            errors.push(`PR ${prData.prNumber} is not ready for shipment (current status: ${order.unified_pr_status || 'N/A'}, required: ${allowedStatuses.join(' or ')})`)
             continue
           }
         }

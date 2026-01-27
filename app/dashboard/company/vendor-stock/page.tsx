@@ -39,11 +39,11 @@ export default function VendorStockPage() {
         setLoading(true)
         setError(null)
 
-        // Get company ID from localStorage or admin email
-        let targetCompanyId = typeof window !== 'undefined' ? localStorage.getItem('companyId') : null
+        // SECURITY FIX: Use ONLY sessionStorage (tab-specific)
+        const { getUserEmail, getCompanyId } = await import('@/lib/utils/auth-storage')
+        let targetCompanyId = getCompanyId()
         
-        if (!targetCompanyId && typeof window !== 'undefined') {
-          const { getUserEmail } = await import('@/lib/utils/auth-storage')
+        if (!targetCompanyId) {
           // CRITICAL SECURITY FIX: Use only tab-specific auth storage
           const userEmail = getUserEmail('company')
           if (userEmail) {
@@ -71,8 +71,8 @@ export default function VendorStockPage() {
         }
 
         // Get user email for authorization
-        const { getUserEmail } = await import('@/lib/utils/auth-storage')
         // CRITICAL SECURITY FIX: Use only tab-specific auth storage
+        // Note: getUserEmail already imported above on line 43
         const userEmail = getUserEmail('company')
         
         if (!userEmail) {

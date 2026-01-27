@@ -83,9 +83,34 @@ import {
 } from '../services/vendor-inventory-service'
 
 // =============================================================================
-// NOTIFICATION SERVICE (Phase 1: Simple Email Notifications)
+// NOTIFICATION SERVICE (Phase 2: Multi-Recipient Notifications)
 // =============================================================================
-import { sendOrderStatusNotification, sendOrderDeliveredNotification } from '../services/NotificationService'
+import {
+  sendOrderStatusNotification,
+  sendOrderDeliveredNotification,
+  sendOrderShippedNotification,
+  sendPOGeneratedNotification,
+  sendVendorNewOrderNotification,
+  sendVendorPONotification,
+  sendCompanyAdminApprovalNotification,
+  sendLocationAdminApprovalNotification,
+  sendLocationAdminPONotification,
+  sendCompanyAdminPONotification,
+  sendCompanyAdminDeliveryNotification,
+  sendGRNCreatedNotification,
+  sendGRNAcknowledgedNotification,
+  sendGRNApprovedNotification,
+  sendInvoiceCreatedNotification,
+  sendInvoiceApprovedNotification,
+  sendInvoicePaidNotification,
+  dispatchOrderNotifications,
+} from '../services/NotificationService'
+import {
+  resolveVendorRecipient,
+  resolveCompanyAdminRecipients,
+  resolveLocationAdminRecipient,
+  resolveEmployeeLocationAdmin,
+} from '../services/NotificationRecipientResolver'
 
 // Ensure Branch model is registered
 if (!mongoose.models.Branch) {
@@ -1711,13 +1736,26 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
 export async function getAllProducts(): Promise<any[]> {
   await connectDB()
   
-  const products = await Uniform.find()
-    .populate('vendorId', 'id name')
-    .lean()
+  // Don't use populate - vendorId is a String field, not ObjectId reference
+  const products = await Uniform.find().lean()
+
+  // Get unique vendor IDs and build vendor map for manual lookup
+  const vendorIds = [...new Set(products.map((p: any) => p.vendorId).filter(Boolean))]
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
+  const vendorMap = new Map(vendors.map((v: any) => [v.id, { id: v.id, name: v.name }]))
 
   // Convert to plain objects and ensure attributes are preserved
   return products.map((p: any) => {
     const plain = toPlainObject(p)
+    
+    // Manual vendor lookup (fallback for string ID)
+    if (p.vendorId && typeof p.vendorId === 'string') {
+      const vendor = vendorMap.get(p.vendorId)
+      if (vendor) {
+        plain.vendorId = vendor
+      }
+    }
+    
     // Explicitly preserve attribute fields
     if (p.attribute1_name !== undefined) plain.attribute1_name = p.attribute1_name
     if (p.attribute1_value !== undefined) plain.attribute1_value = p.attribute1_value
@@ -1980,18 +2018,25 @@ export async function createProduct(productData: {
     throw err
   }
   
-  // Fetch the created product with populated fields using the string ID (more reliable)
-  const created = await Uniform.findOne({ id: productId })
-    .populate('vendorId', 'id name')
-    .lean()
+  // Fetch the created product (don't use populate - vendorId is String, not ObjectId ref)
+  const created = await Uniform.findOne({ id: productId }).lean()
   
   if (!created) {
-    // Fallback: try to use the created product directly
-    await newProduct.populate('vendorId', 'id name')
+    // Fallback: use the created product directly
     return toPlainObject(newProduct)
   }
   
-  return toPlainObject(created)
+  const plain = toPlainObject(created)
+  
+  // Manual vendor lookup if vendorId exists (fallback for string ID)
+  if (created.vendorId && typeof created.vendorId === 'string') {
+    const vendor = await Vendor.findOne({ id: created.vendorId }).select('id name').lean()
+    if (vendor) {
+      plain.vendorId = { id: vendor.id, name: vendor.name }
+    }
+  }
+  
+  return plain
 }
 
 export async function updateProduct(
@@ -4639,67 +4684,81 @@ export async function isBranchAdmin(email: string, branchId: string): Promise<bo
 }
 
 /**
+ * Get the branch for which an employee ID is Branch Admin
+ * This is the PRIMARY method - uses employee ID directly, independent of email
+ * @param employeeId The employee ID (string like "EMP-000001" or "300004")
+ * @returns Branch object if employee is a Branch Admin, null otherwise
+ */
+export async function getBranchByAdminEmployeeId(employeeId: string): Promise<any | null> {
+  console.log(`[getBranchByAdminEmployeeId] Looking up branch for employee: ${employeeId}`)
+  await connectDB()
+  
+  if (!employeeId) {
+    console.log(`[getBranchByAdminEmployeeId] ❌ Employee ID is empty`)
+    return null
+  }
+  
+  const Branch = require('../models/Branch').default
+  
+  // Query by string adminId - this is how it should be stored
+  const branch = await Branch.findOne({ adminId: employeeId }).lean()
+  
+  if (!branch) {
+    console.log(`[getBranchByAdminEmployeeId] ❌ No branch found for admin: ${employeeId}`)
+    return null
+  }
+  
+  console.log(`[getBranchByAdminEmployeeId] ✅ Found branch: ${branch.name} (${branch.id})`)
+  
+  // Manually populate companyId since it's a string reference
+  const branchObj = toPlainObject(branch)
+  if (branchObj.companyId && typeof branchObj.companyId === 'string') {
+    const companyInfo = await Company.findOne({ id: branchObj.companyId })
+      .select('id name')
+      .lean()
+    if (companyInfo) {
+      branchObj.companyId = toPlainObject(companyInfo)
+    }
+  }
+  
+  return branchObj
+}
+
+/**
  * Get the branch for which an employee is Branch Admin
+ * This method first looks up the employee by email, then uses their employee ID
  * @param email Employee email
  * @returns Branch object if employee is a Branch Admin, null otherwise
  */
 export async function getBranchByAdminEmail(email: string): Promise<any | null> {
+  console.log(`[getBranchByAdminEmail] Looking up branch for email: ${email}`)
   await connectDB()
   
-  // Find employee by email (handle encryption)
-  const { encrypt, decrypt } = require('../utils/encryption')
-  const trimmedEmail = email.trim()
-  let encryptedEmail: string
-  
-  try {
-    encryptedEmail = encrypt(trimmedEmail)
-  } catch (error) {
-    encryptedEmail = ''
+  if (!email) {
+    console.log(`[getBranchByAdminEmail] ❌ Email is empty`)
+    return null
   }
   
-  // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
-  
-  // If not found, try decryption matching
-  if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
-    for (const emp of allEmployees) {
-      if (emp.email && typeof emp.email === 'string') {
-        try {
-          const decryptedEmail = decrypt(emp.email)
-          if (decryptedEmail.toLowerCase() === trimmedEmail.toLowerCase()) {
-            employee = emp
-            break
-          }
-        } catch (error) {
-          continue
-        }
-      }
-    }
-  }
+  // Find employee by email
+  const employee = await getEmployeeByEmail(email.trim().toLowerCase())
   
   if (!employee) {
+    console.log(`[getBranchByAdminEmail] ❌ Employee not found for email: ${email}`)
     return null
   }
   
-  // Find branch where this employee is admin
-  // CRITICAL FIX: Query by both ObjectId and string adminId
-  const Branch = require('../models/Branch').default
-  const employeeStringIdForBranch = employee.id || employee.employeeId || ''
-  const branch = await Branch.findOne({ 
-    $or: [
-      { adminId: employee._id },
-      { adminId: employeeStringIdForBranch }
-    ]
-  })
-    .populate('companyId', 'id name')
-    .lean()
+  console.log(`[getBranchByAdminEmail] ✅ Employee found: ${employee.id} (${employee.firstName} ${employee.lastName})`)
   
-  if (!branch) {
+  // Use the employee ID to find branch (admin status is tied to employee ID, not email)
+  const employeeIdStr = employee.id || employee.employeeId || ''
+  
+  if (!employeeIdStr) {
+    console.log(`[getBranchByAdminEmail] ❌ Could not find employee ID`)
     return null
   }
   
-  return toPlainObject(branch)
+  // Delegate to the employee ID-based function
+  return getBranchByAdminEmployeeId(employeeIdStr)
 }
 
 // ========== LOCATION ADMIN AUTHORIZATION FUNCTIONS ==========
@@ -4769,67 +4828,29 @@ export async function isLocationAdmin(email: string, locationId: string): Promis
 }
 
 /**
- * Get the location ID for which an employee is Location Admin
- * @param email Employee email
- * @returns Location ID if employee is a Location Admin, null otherwise
+ * Get the location for which an employee ID is Location Admin
+ * This is the PRIMARY method - uses employee ID directly, independent of email
+ * @param employeeId The employee ID (string like "EMP-000001" or "300004")
+ * @returns Location object if employee is a Location Admin, null otherwise
  */
-export async function getLocationByAdminEmail(email: string): Promise<any | null> {
+export async function getLocationByAdminEmployeeId(employeeId: string): Promise<any | null> {
+  console.log(`[getLocationByAdminEmployeeId] Looking up location for employee: ${employeeId}`)
   await connectDB()
   
-  // Find employee by email (handle encryption)
-  const { encrypt, decrypt } = require('../utils/encryption')
-  const trimmedEmail = email.trim()
-  let encryptedEmail: string
-  
-  try {
-    encryptedEmail = encrypt(trimmedEmail)
-  } catch (error) {
-    encryptedEmail = ''
-  }
-  
-  // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
-  
-  // If not found, try decryption matching
-  if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
-    for (const emp of allEmployees) {
-      if (emp.email && typeof emp.email === 'string') {
-        try {
-          const decryptedEmail = decrypt(emp.email)
-          if (decryptedEmail.toLowerCase() === trimmedEmail.toLowerCase()) {
-            employee = emp
-            break
-          }
-        } catch (error) {
-          continue
-        }
-      }
-    }
-  }
-  
-  if (!employee) {
-    return null
-  }
-  
-  // Find location where this employee is admin
-  // CRITICAL: adminId is stored as STRING ID (6-digit numeric), not ObjectId
-  const employeeIdString = employee.id || employee.employeeId
-  if (!employeeIdString) {
+  if (!employeeId) {
+    console.log(`[getLocationByAdminEmployeeId] ❌ Employee ID is empty`)
     return null
   }
   
   // Find location by string adminId
-  const location = await Location.findOne({ 
-    $or: [
-      { adminId: employeeIdString },
-      { adminId: String(employeeIdString) }
-    ]
-  }).lean()
+  const location = await Location.findOne({ adminId: employeeId }).lean()
   
   if (!location) {
+    console.log(`[getLocationByAdminEmployeeId] ❌ No location found for admin: ${employeeId}`)
     return null
   }
+  
+  console.log(`[getLocationByAdminEmployeeId] ✅ Found location: ${location.name} (${location.id})`)
   
   const locationObj = toPlainObject(location)
   
@@ -4862,6 +4883,43 @@ export async function getLocationByAdminEmail(email: string): Promise<any | null
   }
   
   return locationObj
+}
+
+/**
+ * Get the location for which an employee is Location Admin
+ * This method first looks up the employee by email, then uses their employee ID
+ * @param email Employee email
+ * @returns Location object if employee is a Location Admin, null otherwise
+ */
+export async function getLocationByAdminEmail(email: string): Promise<any | null> {
+  console.log(`[getLocationByAdminEmail] Looking up location for email: ${email}`)
+  await connectDB()
+  
+  if (!email) {
+    console.log(`[getLocationByAdminEmail] ❌ Email is empty`)
+    return null
+  }
+  
+  // Find employee by email
+  const employee = await getEmployeeByEmail(email.trim().toLowerCase())
+  
+  if (!employee) {
+    console.log(`[getLocationByAdminEmail] ❌ Employee not found for email: ${email}`)
+    return null
+  }
+  
+  console.log(`[getLocationByAdminEmail] ✅ Employee found: ${employee.id} (${employee.firstName} ${employee.lastName})`)
+  
+  // Use the employee ID to find location (admin status is tied to employee ID, not email)
+  const employeeIdStr = employee.id || employee.employeeId || ''
+  
+  if (!employeeIdStr) {
+    console.log(`[getLocationByAdminEmail] ❌ Could not find employee ID`)
+    return null
+  }
+  
+  // Delegate to the employee ID-based function
+  return getLocationByAdminEmployeeId(employeeIdStr)
 }
 
 /**
@@ -5155,229 +5213,128 @@ export async function getEmployeesByLocation(locationId: string): Promise<any[]>
   return decryptedEmployees.map((e: any) => toPlainObject(e))
 }
 
+/**
+ * Get company where the given employee ID is an admin
+ * This is the PRIMARY method - uses employee ID directly, independent of email
+ * @param employeeId The employee ID (string like "EMP-000001" or "300004")
+ * @returns Company object or null if not found/not admin
+ */
+export async function getCompanyByAdminEmployeeId(employeeId: string): Promise<any | null> {
+  console.log(`[getCompanyByAdminEmployeeId] ========================================`)
+  console.log(`[getCompanyByAdminEmployeeId] 🚀 FUNCTION CALLED`)
+  console.log(`[getCompanyByAdminEmployeeId] Input employeeId: "${employeeId}"`)
+  
+  await connectDB()
+  
+  if (!employeeId) {
+    console.error(`[getCompanyByAdminEmployeeId] ❌ Employee ID is empty or null`)
+    return null
+  }
+  
+  const db = mongoose.connection.db
+  if (!db) {
+    console.error(`[getCompanyByAdminEmployeeId] Database connection not available`)
+    return null
+  }
+  
+  // STRATEGY 1: Check Company.adminId field directly (simpler, more reliable)
+  console.log(`[getCompanyByAdminEmployeeId] 🔍 STEP 1: Checking Company.adminId field directly...`)
+  let companyDoc = await db.collection('companies').findOne({
+    adminId: employeeId
+  })
+  
+  if (companyDoc) {
+    console.log(`[getCompanyByAdminEmployeeId] ✅ Found company via adminId field: ${companyDoc.name} (${companyDoc.id})`)
+    const company = toPlainObject(companyDoc)
+    if (companyDoc.id !== undefined) company.id = companyDoc.id
+    console.log(`[getCompanyByAdminEmployeeId] ========================================`)
+    return company
+  }
+  
+  // STRATEGY 2: Check companyadmins collection (for multiple admin support)
+  console.log(`[getCompanyByAdminEmployeeId] 🔍 STEP 2: Checking companyadmins collection...`)
+  const adminRecord = await db.collection('companyadmins').findOne({
+    employeeId: employeeId
+  })
+  
+  if (adminRecord) {
+    console.log(`[getCompanyByAdminEmployeeId] ✅ Found admin record, companyId: ${adminRecord.companyId}`)
+    const adminCompanyIdStr = String(adminRecord.companyId || '')
+    
+    companyDoc = await db.collection('companies').findOne({
+      id: adminCompanyIdStr
+    })
+    
+    if (companyDoc) {
+      console.log(`[getCompanyByAdminEmployeeId] ✅ Found company: ${companyDoc.name} (${companyDoc.id})`)
+      const company = toPlainObject(companyDoc)
+      if (companyDoc.id !== undefined) company.id = companyDoc.id
+      console.log(`[getCompanyByAdminEmployeeId] ========================================`)
+      return company
+    }
+  }
+  
+  console.log(`[getCompanyByAdminEmployeeId] ❌ No company found for employee ID: ${employeeId}`)
+  console.log(`[getCompanyByAdminEmployeeId] ========================================`)
+  return null
+}
+
+/**
+ * Get company where the given email is an admin
+ * This method first looks up the employee by email, then uses their employee ID
+ * Email can change, but admin status is tied to employee ID
+ * @param email The email to search for
+ * @returns Company object or null if not found/not admin
+ */
 export async function getCompanyByAdminEmail(email: string): Promise<any | null> {
   console.log(`[getCompanyByAdminEmail] ========================================`)
   console.log(`[getCompanyByAdminEmail] 🚀 FUNCTION CALLED`)
   console.log(`[getCompanyByAdminEmail] Input email: "${email}"`)
-  console.log(`[getCompanyByAdminEmail] Input type: ${typeof email}`)
-  console.log(`[getCompanyByAdminEmail] Input length: ${email?.length || 0}`)
   
   await connectDB()
-  console.log(`[getCompanyByAdminEmail] ✅ Database connected`)
   
   if (!email) {
     console.error(`[getCompanyByAdminEmail] ❌ Email is empty or null`)
-    console.log(`[getCompanyByAdminEmail] ========================================`)
     return null
   }
   
   // Normalize email: trim and lowercase for consistent comparison
   const normalizedEmail = email.trim().toLowerCase()
   console.log(`[getCompanyByAdminEmail] Normalized email: "${normalizedEmail}"`)
-  console.log(`[getCompanyByAdminEmail] Normalization: trim="${email.trim()}", lowercase="${email.trim().toLowerCase()}"`)
   
+  // STEP 1: Find employee by email
   console.log(`[getCompanyByAdminEmail] 🔍 STEP 1: Looking up employee by email...`)
-  console.log(`[getCompanyByAdminEmail] Calling getEmployeeByEmail("${normalizedEmail}")...`)
-  
-  const employeeStartTime = Date.now()
-  // Use getEmployeeByEmail which has robust fallback logic for finding employees
-  // This ensures we can find the employee even if encryption doesn't match exactly
   const employee = await getEmployeeByEmail(normalizedEmail)
-  const employeeDuration = Date.now() - employeeStartTime
-  
-  console.log(`[getCompanyByAdminEmail] ⏱️ getEmployeeByEmail completed in ${employeeDuration}ms`)
   
   if (!employee) {
-    console.error(`[getCompanyByAdminEmail] ❌ STEP 1 FAILED: Employee not found`)
-    console.error(`[getCompanyByAdminEmail] Email searched: "${normalizedEmail}"`)
-    console.error(`[getCompanyByAdminEmail] This means the employee does not exist in the database`)
-    console.error(`[getCompanyByAdminEmail] Possible causes:`)
-    console.error(`[getCompanyByAdminEmail]   1. Email not in database`)
-    console.error(`[getCompanyByAdminEmail]   2. Email encryption mismatch`)
-    console.error(`[getCompanyByAdminEmail]   3. Email case/whitespace mismatch`)
+    console.error(`[getCompanyByAdminEmail] ❌ Employee not found for email: ${normalizedEmail}`)
     console.log(`[getCompanyByAdminEmail] ========================================`)
     return null
   }
   
-  console.log(`[getCompanyByAdminEmail] ✅ STEP 1 SUCCESS: Employee found`)
-  console.log(`[getCompanyByAdminEmail] Employee details:`, {
-    id: employee.id,
-    employeeId: employee.employeeId,
-    email: employee.email,
-    _id: employee._id?.toString(),
-    _idType: typeof employee._id,
-    companyId: employee.companyId,
-    companyIdType: typeof employee.companyId
-  })
+  console.log(`[getCompanyByAdminEmail] ✅ Employee found: ${employee.id} (${employee.firstName} ${employee.lastName})`)
   
-  // Find company where this employee is an admin
-  // We need the employee's _id (ObjectId) to match against admin records
-  // Since getEmployeeByEmail returns a plain object, we need to fetch the raw employee document
-  const db = mongoose.connection.db
-  if (!db) {
-    console.error(`[getCompanyByAdminEmail] Database connection not available`)
-    return null
-  }
-  
-  // Use string ID for employee lookup
+  // STEP 2: Use the employee ID to find company (this is the smart part!)
+  // Admin status is tied to employee ID, not email
   const employeeIdStr = employee.id || employee.employeeId || ''
   
-  console.log(`[getCompanyByAdminEmail] 🔍 Getting employee ID:`, {
-    id: employee.id,
-    employeeId: employee.employeeId,
-    email: employee.email
-  })
-  
   if (!employeeIdStr) {
-    console.error(`[getCompanyByAdminEmail] ❌ CRITICAL: Could not find employee ID`)
-    console.error(`[getCompanyByAdminEmail] Employee object:`, {
-      id: employee.id,
-      employeeId: employee.employeeId,
-      email: employee.email
-    })
-    console.error(`[getCompanyByAdminEmail] This is a critical error - cannot proceed without employee ID`)
+    console.error(`[getCompanyByAdminEmail] ❌ Could not find employee ID`)
     console.log(`[getCompanyByAdminEmail] ========================================`)
     return null
   }
   
-  console.log(`[getCompanyByAdminEmail] ✅ Employee ID successfully retrieved: ${employeeIdStr}`)
+  console.log(`[getCompanyByAdminEmail] 🔍 STEP 2: Looking up company by employee ID: ${employeeIdStr}`)
   
-  console.log(`[getCompanyByAdminEmail] 🔍 STEP 2: Looking for admin record`)
-  console.log(`[getCompanyByAdminEmail] Employee ID: ${employeeIdStr}`)
+  // Delegate to the employee ID-based function
+  const company = await getCompanyByAdminEmployeeId(employeeIdStr)
   
-  // Find admin record using string ID
-  if (!db) {
-    console.error(`[getCompanyByAdminEmail] Database connection not available`)
-    return null
-  }
-  
-  console.log(`[getCompanyByAdminEmail] Querying companyadmins collection with employeeId: ${employeeIdStr}`)
-  let adminRecord = await db.collection('companyadmins').findOne({
-    employeeId: employeeIdStr
-  })
-  
-  if (adminRecord) {
-    console.log(`[getCompanyByAdminEmail] ✅ STEP 2 SUCCESS: Admin record found via direct query`)
-    console.log(`[getCompanyByAdminEmail] Admin record:`, {
-      employeeId: String(adminRecord.employeeId || ''),
-      companyId: String(adminRecord.companyId || ''),
-      canApproveOrders: adminRecord.canApproveOrders
-    })
+  if (company) {
+    console.log(`[getCompanyByAdminEmail] ✅ Company found: ${company.name} (${company.id})`)
   } else {
-    // Fallback: Try to find all admins and log for debugging
-    console.error(`[getCompanyByAdminEmail] ❌ Direct query failed, trying fallback...`)
-    const allAdmins = await db.collection('companyadmins').find({}).toArray()
-    console.error(`[getCompanyByAdminEmail] Found ${allAdmins.length} total admin records`)
-    console.error(`[getCompanyByAdminEmail] 📋 All admin records:`, allAdmins.map((a: any, index: number) => ({
-      index,
-      employeeId: String(a.employeeId || ''),
-      companyId: String(a.companyId || ''),
-      canApproveOrders: a.canApproveOrders,
-      matches: String(a.employeeId || '') === employeeIdStr ? '✅ MATCH' : '❌ NO MATCH'
-    })))
-    
-    // Try fallback matching with string comparison
-    const fallbackMatch = allAdmins.find((a: any) => {
-      if (!a.employeeId) return false
-      return String(a.employeeId) === employeeIdStr
-    })
-    
-    if (fallbackMatch) {
-      console.log(`[getCompanyByAdminEmail] ✅ Found via fallback string comparison`)
-      adminRecord = fallbackMatch
-    } else {
-      console.error(`[getCompanyByAdminEmail] ❌ STEP 2 FAILED: No admin record found`)
-      console.error(`[getCompanyByAdminEmail] Employee ID searched: ${employeeIdStr}`)
-      console.error(`[getCompanyByAdminEmail] Employee details:`, {
-        id: employee.id,
-        employeeId: employee.employeeId,
-        email: normalizedEmail,
-        employeeEmail: employee.email
-      })
-      console.error(`[getCompanyByAdminEmail] Possible causes:`)
-      console.error(`[getCompanyByAdminEmail]   1. Employee not assigned as company admin`)
-      console.error(`[getCompanyByAdminEmail]   2. Admin record employeeId format mismatch`)
-      console.log(`[getCompanyByAdminEmail] ========================================`)
-      return null
-    }
+    console.log(`[getCompanyByAdminEmail] ❌ No company admin record for employee: ${employeeIdStr}`)
   }
   
-  // Final check - if still no admin record found, return null
-  if (!adminRecord) {
-    console.error(`[getCompanyByAdminEmail] ❌ STEP 2 FAILED: No admin record found after all attempts`)
-    console.error(`[getCompanyByAdminEmail] Employee ID searched: ${employeeIdStr}`)
-    console.error(`[getCompanyByAdminEmail] Employee details:`, {
-      id: employee.id,
-      employeeId: employee.employeeId,
-      email: normalizedEmail,
-      employeeEmail: employee.email
-    })
-    console.error(`[getCompanyByAdminEmail] Possible causes:`)
-    console.error(`[getCompanyByAdminEmail]   1. Employee not assigned as company admin`)
-    console.error(`[getCompanyByAdminEmail]   2. Admin record employeeId format mismatch`)
-    console.log(`[getCompanyByAdminEmail] ========================================`)
-    return null
-  }
-  
-  console.log(`[getCompanyByAdminEmail] ✅ STEP 2 SUCCESS: Admin record found`)
-  console.log(`[getCompanyByAdminEmail] Admin record:`, {
-    employeeId: String(adminRecord.employeeId || ''),
-    companyId: String(adminRecord.companyId || ''),
-    canApproveOrders: adminRecord.canApproveOrders
-  })
-  
-  // STEP 3: Get the company using string ID
-  const adminCompanyIdStr = String(adminRecord.companyId || '')
-  console.log(`[getCompanyByAdminEmail] 🔍 STEP 3: Looking for company`)
-  console.log(`[getCompanyByAdminEmail] Company ID: ${adminCompanyIdStr}`)
-  
-  // Use string ID query
-  console.log(`[getCompanyByAdminEmail] Querying companies collection with id: ${adminCompanyIdStr}`)
-  let companyDoc = await db.collection('companies').findOne({
-    id: adminCompanyIdStr
-  })
-  
-  if (companyDoc) {
-    console.log(`[getCompanyByAdminEmail] ✅ STEP 3 SUCCESS: Company found via string ID query`)
-    console.log(`[getCompanyByAdminEmail] Company: ${companyDoc.name} (id: ${companyDoc.id})`)
-  } else {
-    console.error(`[getCompanyByAdminEmail] ❌ STEP 3 FAILED: No company found`)
-    console.error(`[getCompanyByAdminEmail] Company ID searched: ${adminCompanyIdStr}`)
-    console.error(`[getCompanyByAdminEmail] Admin record companyId: ${adminRecord.companyId}`)
-    console.error(`[getCompanyByAdminEmail] Possible causes:`)
-    console.error(`[getCompanyByAdminEmail]   1. Company was deleted`)
-    console.error(`[getCompanyByAdminEmail]   2. Admin record has incorrect companyId`)
-    console.log(`[getCompanyByAdminEmail] ========================================`)
-    return null
-  }
-  
-  // Final check - if still no company found, return null
-  if (!companyDoc) {
-    console.error(`[getCompanyByAdminEmail] ❌ STEP 3 FAILED: No company found after all attempts`)
-    console.error(`[getCompanyByAdminEmail] Company ID searched: ${adminCompanyIdStr}`)
-    console.log(`[getCompanyByAdminEmail] ========================================`)
-    return null
-  }
-  
-  console.log(`[getCompanyByAdminEmail] ✅ STEP 3 SUCCESS: Company found`)
-  console.log(`[getCompanyByAdminEmail] Company: ${companyDoc.name} (id: ${companyDoc.id}, type: ${typeof companyDoc.id})`)
-  
-  // Convert to format expected by the rest of the code
-  const company = toPlainObject(companyDoc)
-  
-  // Ensure company.id is preserved (should be numeric now)
-  if (companyDoc.id !== undefined) {
-    company.id = companyDoc.id
-  }
-  
-  console.log(`[getCompanyByAdminEmail] ✅ FINAL SUCCESS: Returning company`)
-  console.log(`[getCompanyByAdminEmail] Return value:`, {
-    id: company.id,
-    idType: typeof company.id,
-    name: company.name,
-    hasId: !!company.id,
-    hasName: !!company.name
-  })
   console.log(`[getCompanyByAdminEmail] ========================================`)
   return company
 }
@@ -5407,6 +5364,34 @@ export async function getAllEmployees(): Promise<any[]> {
     .populate('companyId', 'id name')
     .populate('locationId', 'id name address city state pincode')
     .lean()
+
+  // CRITICAL FIX: Manually populate locationId since it's stored as string ID, not ObjectId
+  const locationIds = [...new Set(employees.map((e: any) => e.locationId).filter((id: any) => id && typeof id === 'string'))]
+  const Location = require('../models/Location').default
+  const locationsMap = new Map()
+  if (locationIds.length > 0) {
+    const locations = await Location.find({ id: { $in: locationIds } }).lean()
+    for (const loc of locations) {
+      locationsMap.set(loc.id, loc)
+    }
+  }
+  
+  // Attach location data to employees
+  for (const employee of employees) {
+    if (employee.locationId && typeof employee.locationId === 'string') {
+      const location = locationsMap.get(employee.locationId)
+      if (location) {
+        employee.locationId = {
+          id: location.id,
+          name: location.name,
+          address: location.address_line_1,
+          city: location.city,
+          state: location.state,
+          pincode: location.pincode
+        }
+      }
+    }
+  }
 
   // Since we used .lean(), the post hooks don't run, so we need to manually decrypt sensitive fields
   // CRITICAL: Include 'location' in sensitiveFields for Company Admin - they need to see decrypted locations
@@ -6249,6 +6234,40 @@ export async function getEmployeesByCompany(companyId: string): Promise<any[]> {
   const employees = await query.lean()
   
   console.log(`[getEmployeesByCompany] Raw query returned ${employees?.length || 0} employees`)
+  
+  // CRITICAL FIX: Manually populate locationId since it's stored as string ID, not ObjectId
+  // The .populate('locationId', ...) above won't work for string-based references
+  const locationIds = [...new Set(employees.map((e: any) => e.locationId).filter((id: any) => id))]
+  console.log(`[getEmployeesByCompany] Unique locationIds to lookup: ${locationIds.length}`)
+  
+  // Fetch all locations for these IDs in one query
+  const Location = require('../models/Location').default
+  const locationsMap = new Map()
+  if (locationIds.length > 0) {
+    const locations = await Location.find({ id: { $in: locationIds } }).lean()
+    console.log(`[getEmployeesByCompany] Found ${locations.length} matching locations`)
+    for (const loc of locations) {
+      locationsMap.set(loc.id, loc)
+    }
+  }
+  
+  // Attach location data to employees
+  for (const employee of employees) {
+    if (employee.locationId && typeof employee.locationId === 'string') {
+      const location = locationsMap.get(employee.locationId)
+      if (location) {
+        // Replace string locationId with populated object for frontend consumption
+        employee.locationId = {
+          id: location.id,
+          name: location.name,
+          address: location.address_line_1,
+          city: location.city,
+          state: location.state,
+          pincode: location.pincode
+        }
+      }
+    }
+  }
   
   // Extract structured address data for employees with addressId
   const { getAddressById } = require('../utils/address-service')
@@ -10363,7 +10382,10 @@ export async function createOrder(orderData: {
       }
     } else {
       // PR/PO workflow not enabled - use legacy approval flow
-      console.log(`[createOrder] ⚠️ PR/PO workflow not enabled (enable_pr_po_workflow=${company.enable_pr_po_workflow}). Using legacy approval flow.`)
+      // CRITICAL FIX: Still set unified_pr_status so vendors can see the order after approval
+      // Without this, vendors can't filter orders by unified_pr_status='COMPANY_ADMIN_APPROVED'
+      prStatus = 'PENDING_COMPANY_ADMIN_APPROVAL'
+      console.log(`[createOrder] ⚠️ PR/PO workflow not enabled (enable_pr_po_workflow=${company.enable_pr_po_workflow}). Using legacy approval flow with unified_pr_status=${prStatus}`)
     }
     
     console.log(`[createOrder] Creating order for vendor ${vendor.name} (${vendor.id}):`)
@@ -10456,6 +10478,7 @@ export async function createOrder(orderData: {
         dispatchLocation: orderData.dispatchLocation || employee.dispatchPreference || 'standard',
         companyId: companyStringId, // Use string ID, not ObjectId
         companyIdNum: companyIdNum, // Numeric company ID for correlation
+        locationId: employee.locationId || undefined, // CRITICAL: Copy employee's locationId for workflow approval
         // Structured shipping address fields (REQUIRED by Order model)
         shipping_address_line_1: shippingAddress.shipping_address_line_1,
         shipping_address_line_2: shippingAddress.shipping_address_line_2,
@@ -10478,6 +10501,10 @@ export async function createOrder(orderData: {
         // UNIFIED STATUS FIELDS (primary source of truth - legacy pr_status removed)
         unified_pr_status: prStatus,
         unified_status: 'PENDING_APPROVAL',
+        // POST-DELIVERY WORKFLOW EXTENSION: Source type determines GRN/Invoice eligibility path
+        // PR_PO: Order goes through PR → PO workflow (GRN via PO)
+        // MANUAL: Order is direct/manual (GRN via orderId)
+        sourceType: isWorkflowEnabled ? 'PR_PO' : 'MANUAL',
       })
     } catch (validationError: any) {
       console.error(`[createOrder] ❌ CRITICAL: Order validation failed!`)
@@ -10572,6 +10599,72 @@ export async function createOrder(orderData: {
   // when the employee's remaining eligibility is calculated.
   // ========================================================================
   console.log(`[createOrder] 📊 Eligibility tracking: Order ${parentOrderId} will be counted in dynamic eligibility calculation`)
+
+  // ========================================================================
+  // EMAIL NOTIFICATIONS: Order Placed - Notify Admins
+  // ========================================================================
+  if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true') {
+    console.log(`[createOrder] 📧 Sending new order notifications...`)
+    
+    for (const order of createdOrders) {
+      try {
+        // Get employee name (decrypted)
+        let orderEmployeeName = employee.firstName || 'Employee'
+        if (orderEmployeeName.includes(':')) {
+          try { orderEmployeeName = decrypt(orderEmployeeName) } catch (e) { /* ignore */ }
+        }
+        
+        // Get location name if employee has a location
+        let locationName = 'N/A'
+        if (employee.locationId) {
+          const location = await Location.findOne({ id: employee.locationId }).select('name').lean()
+          locationName = location?.name || employee.locationId
+        }
+        
+        // 1. Notify Location Admin (if exists) for approval
+        if (employee.locationId) {
+          const locAdmin = await resolveLocationAdminRecipient(employee.locationId)
+          if (locAdmin) {
+            await sendLocationAdminApprovalNotification(
+              locAdmin.email,
+              locAdmin.name,
+              order.id,
+              { orderEmployeeName, companyName: order.companyName, locationName }
+            )
+            console.log(`[createOrder] 📧 Location Admin notification sent to ${locAdmin.email}`)
+          }
+        }
+        
+        // 2. Notify Company Admins for approval
+        const companyAdmins = await resolveCompanyAdminRecipients(companyIdString)
+        for (const admin of companyAdmins) {
+          await sendCompanyAdminApprovalNotification(
+            admin.email,
+            admin.name,
+            order.id,
+            { orderEmployeeName, companyName: order.companyName, locationName }
+          )
+          console.log(`[createOrder] 📧 Company Admin notification sent to ${admin.email}`)
+        }
+        
+        // 3. Notify Vendor of new order (if vendor is assigned)
+        if (order.vendorId) {
+          const vendor = await resolveVendorRecipient(order.vendorId)
+          if (vendor) {
+            await sendVendorNewOrderNotification(
+              vendor.email,
+              vendor.name,
+              order.id,
+              { companyName: order.companyName, orderEmployeeName }
+            )
+            console.log(`[createOrder] 📧 Vendor notification sent to ${vendor.email}`)
+          }
+        }
+      } catch (notifError: any) {
+        console.warn(`[createOrder] ⚠️ Notification error (non-fatal): ${notifError.message}`)
+      }
+    }
+  }
 
   // If only one order was created, return it directly
   // Otherwise, return the first order with metadata about split orders
@@ -10986,11 +11079,72 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     throw new Error(`User ${adminEmail} does not have permission to approve orders`)
   }
   
-  // Update order status
+  // CRITICAL FIX: Update ALL status fields for consistency
+  // This ensures vendors can see the order and it's removed from approvals page
   order.status = 'Awaiting fulfilment'
+  order.unified_status = 'IN_FULFILMENT' // Fix: Was not being updated
+  order.unified_pr_status = 'COMPANY_ADMIN_APPROVED' // Fix: Was undefined, vendors couldn't see
+  order.company_admin_approved_by = employee.id || employee.employeeId // Fix: Track who approved
+  order.company_admin_approved_at = new Date() // Fix: Track when approved
+  
+  console.log(`[approveOrder] ✅ Legacy approval - Updated all status fields:`)
+  console.log(`[approveOrder]   status: Awaiting fulfilment`)
+  console.log(`[approveOrder]   unified_status: IN_FULFILMENT`)
+  console.log(`[approveOrder]   unified_pr_status: COMPANY_ADMIN_APPROVED`)
+  console.log(`[approveOrder]   company_admin_approved_by: ${employee.id || employee.employeeId}`)
   }
   
   await order.save()
+  console.log(`[approveOrder] ✅ Order saved with status: ${order.status}`)
+  
+  // ========================================================================
+  // EMAIL NOTIFICATION: Order Approved → Awaiting Fulfilment
+  // ========================================================================
+  if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true') {
+    try {
+      const employeeForNotif = await Employee.findOne({ id: order.employeeId }).lean()
+      if (employeeForNotif?.email) {
+        let employeeEmail = employeeForNotif.email
+        let employeeName = `${employeeForNotif.firstName || ''} ${employeeForNotif.lastName || ''}`.trim() || 'Customer'
+        
+        // Decrypt fields if encrypted
+        const { decrypt } = require('../utils/encryption')
+        if (employeeEmail.includes(':')) {
+          try { employeeEmail = decrypt(employeeEmail) } catch (e) { /* ignore */ }
+        }
+        if (employeeForNotif.firstName?.includes(':')) {
+          try { employeeName = `${decrypt(employeeForNotif.firstName)} ${decrypt(employeeForNotif.lastName || '')}`.trim() } catch (e) { /* ignore */ }
+        }
+        
+        sendOrderStatusNotification(
+          employeeEmail,
+          employeeName,
+          order.id || String(order._id),
+          'Awaiting fulfilment',
+          'Awaiting approval',
+          {}
+        ).catch(err => console.warn(`[approveOrder] ⚠️ Notification failed (non-fatal): ${err.message}`))
+        
+        console.log(`[approveOrder] 📧 Employee notification queued for ${employeeEmail}`)
+      }
+      
+      // Notify Vendor that order is approved and ready for fulfillment
+      if (order.vendorId) {
+        const vendor = await resolveVendorRecipient(order.vendorId)
+        if (vendor) {
+          sendVendorNewOrderNotification(
+            vendor.email,
+            vendor.name,
+            order.id || String(order._id),
+            { companyName: company?.name || '', orderStatus: 'Awaiting fulfilment' }
+          ).catch(err => console.warn(`[approveOrder] ⚠️ Vendor notification failed (non-fatal): ${err.message}`))
+          console.log(`[approveOrder] 📧 Vendor notification queued for ${vendor.email}`)
+        }
+      }
+    } catch (notifError: any) {
+      console.warn(`[approveOrder] ⚠️ Failed to send notification: ${notifError.message}`)
+    }
+  }
   
   // Use string id field - populate doesn't work with string IDs, so manually fetch related data
   const orderIdStr = order.id || String(order._id || '')
@@ -11369,6 +11523,40 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     
     console.log(`[approveOrderByParentId] ✅ Updated ${updatedCount} of ${childOrders.length} child order(s) with Site Admin approval`)
     
+    // ========================================================================
+    // EMAIL NOTIFICATION: Site Admin Bulk Approval → Awaiting Fulfilment
+    // ========================================================================
+    if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true' && updatedCount > 0) {
+      try {
+        const employeeForNotif = await Employee.findOne({ id: firstOrder.employeeId }).lean()
+        if (employeeForNotif?.email) {
+          let employeeEmail = employeeForNotif.email
+          let employeeName = `${employeeForNotif.firstName || ''} ${employeeForNotif.lastName || ''}`.trim() || 'Customer'
+          
+          const { decrypt } = require('../utils/encryption')
+          if (employeeEmail.includes(':')) {
+            try { employeeEmail = decrypt(employeeEmail) } catch (e) { /* ignore */ }
+          }
+          if (employeeForNotif.firstName?.includes(':')) {
+            try { employeeName = `${decrypt(employeeForNotif.firstName)} ${decrypt(employeeForNotif.lastName || '')}`.trim() } catch (e) { /* ignore */ }
+          }
+          
+          sendOrderStatusNotification(
+            employeeEmail,
+            employeeName,
+            parentOrderId,
+            'Awaiting fulfilment',
+            'Awaiting approval',
+            {}
+          ).catch(err => console.warn(`[approveOrderByParentId] ⚠️ Notification failed (non-fatal): ${err.message}`))
+          
+          console.log(`[approveOrderByParentId] 📧 Notification queued for ${employeeEmail}`)
+        }
+      } catch (notifError: any) {
+        console.warn(`[approveOrderByParentId] ⚠️ Failed to send notification: ${notifError.message}`)
+      }
+    }
+    
     // Return the first order as representative - use string id field instead of _id
     const firstOrderId = firstOrder.id || String(firstOrder._id || '')
     const populatedOrder = await Order.findOne({ id: firstOrderId })
@@ -11466,6 +11654,40 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     
     console.log(`[approveOrderByParentId] ✅ Updated ${updatedCount} of ${childOrders.length} child order(s) with Company Admin approval`)
     
+    // ========================================================================
+    // EMAIL NOTIFICATION: Bulk Order Approved → Awaiting Fulfilment
+    // ========================================================================
+    if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true' && updatedCount > 0) {
+      try {
+        const employeeForNotif = await Employee.findOne({ id: firstOrder.employeeId }).lean()
+        if (employeeForNotif?.email) {
+          let employeeEmail = employeeForNotif.email
+          let employeeName = `${employeeForNotif.firstName || ''} ${employeeForNotif.lastName || ''}`.trim() || 'Customer'
+          
+          const { decrypt } = require('../utils/encryption')
+          if (employeeEmail.includes(':')) {
+            try { employeeEmail = decrypt(employeeEmail) } catch (e) { /* ignore */ }
+          }
+          if (employeeForNotif.firstName?.includes(':')) {
+            try { employeeName = `${decrypt(employeeForNotif.firstName)} ${decrypt(employeeForNotif.lastName || '')}`.trim() } catch (e) { /* ignore */ }
+          }
+          
+          sendOrderStatusNotification(
+            employeeEmail,
+            employeeName,
+            parentOrderId,
+            'Awaiting fulfilment',
+            'Awaiting approval',
+            {}
+          ).catch(err => console.warn(`[approveOrderByParentId] ⚠️ Notification failed (non-fatal): ${err.message}`))
+          
+          console.log(`[approveOrderByParentId] 📧 Notification queued for ${employeeEmail}`)
+        }
+      } catch (notifError: any) {
+        console.warn(`[approveOrderByParentId] ⚠️ Failed to send notification: ${notifError.message}`)
+      }
+    }
+    
     // Return the first order as representative - use string id field instead of _id
     const firstOrderId = firstOrder.id || String(firstOrder._id || '')
     const populatedOrder = await Order.findOne({ id: firstOrderId })
@@ -11506,23 +11728,36 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
   // CRITICAL FIX: Approve ALL child orders (including those that skipped approval)
   // This ensures all vendor orders are synchronized to "Awaiting fulfilment" status
   // and are visible to vendors after parent approval
-  console.log(`[approveOrderByParentId] 🔄 Updating all child orders to 'Awaiting fulfilment' status...`)
+  console.log(`[approveOrderByParentId] 🔄 Updating all child orders with full status fields...`)
   
   let updatedCount = 0
   for (const childOrder of childOrders) {
     const previousStatus = childOrder.status
+    const previousUnifiedStatus = childOrder.unified_status
+    const previousUnifiedPRStatus = childOrder.unified_pr_status
+    
     if (childOrder.status === 'Awaiting approval' || childOrder.status === 'Awaiting fulfilment') {
+      // CRITICAL FIX: Update ALL status fields for consistency
+      // This ensures vendors can see the order and it's removed from approvals page
       childOrder.status = 'Awaiting fulfilment'
+      childOrder.unified_status = 'IN_FULFILMENT' // Fix: Was not being updated
+      childOrder.unified_pr_status = 'COMPANY_ADMIN_APPROVED' // Fix: Was undefined, vendors couldn't see
+      childOrder.company_admin_approved_by = employee.id || employee.employeeId // Fix: Track who approved
+      childOrder.company_admin_approved_at = new Date() // Fix: Track when approved
+      
       await childOrder.save()
       updatedCount++
-      console.log(`[approveOrderByParentId] ✅ Updated order ${childOrder.id}: ${previousStatus} → Awaiting fulfilment`)
+      console.log(`[approveOrderByParentId] ✅ Updated order ${childOrder.id}:`)
+      console.log(`[approveOrderByParentId]    status: ${previousStatus} → Awaiting fulfilment`)
+      console.log(`[approveOrderByParentId]    unified_status: ${previousUnifiedStatus || 'N/A'} → IN_FULFILMENT`)
+      console.log(`[approveOrderByParentId]    unified_pr_status: ${previousUnifiedPRStatus || 'N/A'} → COMPANY_ADMIN_APPROVED`)
       console.log(`[approveOrderByParentId]    Vendor: ${(childOrder as any).vendorName || 'N/A'} (${childOrder.vendorId?.toString() || 'N/A'})`)
     } else {
       console.log(`[approveOrderByParentId] ⚠️ Skipping order ${childOrder.id} (status: ${previousStatus}, not awaiting approval/fulfilment)`)
     }
   }
   
-  console.log(`[approveOrderByParentId] ✅ Updated ${updatedCount} of ${childOrders.length} child order(s)`)
+  console.log(`[approveOrderByParentId] ✅ Updated ${updatedCount} of ${childOrders.length} child order(s) with full status fields`)
   
   // CRITICAL: Verify all orders were updated correctly
   const verifyOrders = await Order.find({ parentOrderId: parentOrderId }).select('id status vendorId vendorName').lean()
@@ -12518,7 +12753,17 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
             employeeName,
             orderId,
             { companyName: (orderRaw as any).companyName, vendorName: (orderRaw as any).vendorName }
-          ).catch(err => console.warn(`[updateOrderStatus] ⚠️ Notification failed (non-fatal): ${err.message}`))
+          ).catch(err => console.warn(`[updateOrderStatus] ⚠️ Employee notification failed (non-fatal): ${err.message}`))
+        } else if (status === 'Dispatched') {
+          // ORDER_SHIPPED notification with tracking number
+          const trackingNumber = (orderRaw as any).trackingNumber || 'Not Available'
+          sendOrderShippedNotification(
+            employeeEmail,
+            employeeName,
+            orderId,
+            trackingNumber,
+            { companyName: (orderRaw as any).companyName, vendorName: (orderRaw as any).vendorName }
+          ).catch(err => console.warn(`[updateOrderStatus] ⚠️ Employee shipped notification failed (non-fatal): ${err.message}`))
         } else {
           sendOrderStatusNotification(
             employeeEmail,
@@ -12527,12 +12772,40 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
             status,
             previousStatus,
             { companyName: (orderRaw as any).companyName, vendorName: (orderRaw as any).vendorName }
-          ).catch(err => console.warn(`[updateOrderStatus] ⚠️ Notification failed (non-fatal): ${err.message}`))
+          ).catch(err => console.warn(`[updateOrderStatus] ⚠️ Employee notification failed (non-fatal): ${err.message}`))
         }
         
-        console.log(`[updateOrderStatus] 📧 Notification queued for ${employeeEmail}`)
+        console.log(`[updateOrderStatus] 📧 Employee notification queued for ${employeeEmail}`)
       } else {
-        console.log(`[updateOrderStatus] ⚠️ No employee email found, skipping notification`)
+        console.log(`[updateOrderStatus] ⚠️ No employee email found, skipping employee notification`)
+      }
+      
+      // Notify Company Admin on Delivery
+      if (status === 'Delivered' && orderRaw.companyId) {
+        const companyAdmins = await resolveCompanyAdminRecipients(orderRaw.companyId)
+        for (const admin of companyAdmins) {
+          sendCompanyAdminDeliveryNotification(
+            admin.email,
+            admin.name,
+            orderId,
+            { orderEmployeeName: employeeName, companyName: (orderRaw as any).companyName }
+          ).catch(err => console.warn(`[updateOrderStatus] ⚠️ Company Admin notification failed (non-fatal): ${err.message}`))
+          console.log(`[updateOrderStatus] 📧 Company Admin delivery notification queued for ${admin.email}`)
+        }
+        
+        // Notify Location Admin on Delivery (if employee has a location)
+        if (employee?.locationId) {
+          const locAdmin = await resolveLocationAdminRecipient(employee.locationId as string)
+          if (locAdmin) {
+            sendOrderDeliveredNotification(
+              locAdmin.email,
+              locAdmin.name,
+              orderId,
+              { orderEmployeeName: employeeName, companyName: (orderRaw as any).companyName }
+            ).catch(err => console.warn(`[updateOrderStatus] ⚠️ Location Admin notification failed (non-fatal): ${err.message}`))
+            console.log(`[updateOrderStatus] 📧 Location Admin delivery notification queued for ${locAdmin.email}`)
+          }
+        }
       }
     } catch (notifyError: any) {
       // Non-fatal: Don't fail order update if notification fails
@@ -12785,6 +13058,25 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
   // (parent and splits) are synchronized to maintain consistency across
   // Employee and Vendor views.
   // ========================================================================
+  // CRITICAL FIX: DO NOT sync status to sibling orders!
+  // Each vendor's order should be updated INDEPENDENTLY.
+  // The aggregated status for employees is calculated at DISPLAY TIME
+  // via calculateAggregatedOrderStatus() in getOrdersByEmployee().
+  //
+  // Previous bug (fixed): This code was updating ALL sibling orders when one
+  // vendor shipped/delivered, causing other vendors' orders to incorrectly
+  // show as "Dispatched" or "Delivered" even though they hadn't processed
+  // their items yet.
+  //
+  // Multi-vendor order flow:
+  // 1. Employee places order with items from Vendor A and Vendor B
+  // 2. System creates split orders: Parent + Split-A (Vendor A) + Split-B (Vendor B)
+  // 3. Vendor A ships/delivers → Only Split-A status is updated
+  // 4. Vendor B ships/delivers → Only Split-B status is updated
+  // 5. Employee view: calculateAggregatedOrderStatus() computes overall status
+  //    - If Split-A = Delivered, Split-B = Dispatched → "Partially Delivered"
+  //    - If both = Delivered → "Delivered"
+  // ========================================================================
   try {
     const orderWithParent = order as any
     const currentOrderId = order.id
@@ -12793,114 +13085,22 @@ export async function updateOrderStatus(orderId: string, status: 'Awaiting appro
     // Check if this is a split order (has parentOrderId and ID contains vendor suffix)
     const isSplitOrder = parentOrderId && currentOrderId !== parentOrderId && currentOrderId.includes('-10')
     
-    console.log(`[updateOrderStatus] 🔄 STATUS SYNC: Checking for related orders...`)
+    console.log(`[updateOrderStatus] 🔄 STATUS SYNC INFO (NO SIBLING SYNC):`)
     console.log(`[updateOrderStatus]   Current order: ${currentOrderId}`)
     console.log(`[updateOrderStatus]   Parent order ID: ${parentOrderId || 'N/A'}`)
     console.log(`[updateOrderStatus]   Is split order: ${isSplitOrder}`)
     
     if (isSplitOrder && parentOrderId) {
-      // This is a SPLIT ORDER - sync status to PARENT and OTHER SPLITS
-      console.log(`[updateOrderStatus] 🔄 SYNC: Split order updated, syncing to parent and siblings...`)
-      
-      // Find all related orders (parent + all splits with same parentOrderId)
-      const relatedOrders = await Order.find({
-        $or: [
-          { id: parentOrderId }, // Parent order
-          { parentOrderId: parentOrderId, id: { $ne: currentOrderId } } // Sibling split orders
-        ]
-      })
-      
-      console.log(`[updateOrderStatus]   Found ${relatedOrders.length} related order(s)`)
-      
-      // Update status on all related orders
-      for (const relatedOrder of relatedOrders) {
-        const relatedId = relatedOrder.id
-        const relatedPrevStatus = relatedOrder.status
-        
-        if (relatedPrevStatus !== status) {
-          console.log(`[updateOrderStatus]   Syncing ${relatedId}: ${relatedPrevStatus} -> ${status}`)
-          
-          // Build update payload
-          const syncUpdate: any = {
-            status: status,
-            dispatchStatus: order.dispatchStatus,
-            deliveryStatus: order.deliveryStatus,
-          }
-          
-          // Include unified status fields
-          if (order.unified_status) {
-            syncUpdate.unified_status = order.unified_status
-            syncUpdate.unified_status_updated_at = new Date()
-            syncUpdate.unified_status_updated_by = 'status_sync'
-          }
-          
-          // Include dispatch/delivery dates
-          if (status === 'Dispatched') {
-            syncUpdate.dispatchedDate = order.dispatchedDate || new Date()
-          }
-          if (status === 'Delivered') {
-            syncUpdate.deliveredDate = order.deliveredDate || new Date()
-          }
-          
-          await Order.updateOne({ id: relatedId }, { $set: syncUpdate })
-          console.log(`[updateOrderStatus]   ✅ Synced ${relatedId} to status: ${status}`)
-        } else {
-          console.log(`[updateOrderStatus]   ⏭️ ${relatedId} already at status: ${status}`)
-        }
-      }
-    } else if (parentOrderId === currentOrderId || !parentOrderId) {
-      // This could be a PARENT ORDER - sync status to all SPLIT ORDERS
-      // Check if there are split orders for this parent
-      const splitOrders = await Order.find({
-        parentOrderId: currentOrderId,
-        id: { $ne: currentOrderId }
-      })
-      
-      if (splitOrders.length > 0) {
-        console.log(`[updateOrderStatus] 🔄 SYNC: Parent order updated, syncing to ${splitOrders.length} split order(s)...`)
-        
-        for (const splitOrder of splitOrders) {
-          const splitId = splitOrder.id
-          const splitPrevStatus = splitOrder.status
-          
-          if (splitPrevStatus !== status) {
-            console.log(`[updateOrderStatus]   Syncing ${splitId}: ${splitPrevStatus} -> ${status}`)
-            
-            // Build update payload
-            const syncUpdate: any = {
-              status: status,
-              dispatchStatus: order.dispatchStatus,
-              deliveryStatus: order.deliveryStatus,
-            }
-            
-            // Include unified status fields
-            if (order.unified_status) {
-              syncUpdate.unified_status = order.unified_status
-              syncUpdate.unified_status_updated_at = new Date()
-              syncUpdate.unified_status_updated_by = 'status_sync'
-            }
-            
-            // Include dispatch/delivery dates
-            if (status === 'Dispatched') {
-              syncUpdate.dispatchedDate = order.dispatchedDate || new Date()
-            }
-            if (status === 'Delivered') {
-              syncUpdate.deliveredDate = order.deliveredDate || new Date()
-            }
-            
-            await Order.updateOne({ id: splitId }, { $set: syncUpdate })
-            console.log(`[updateOrderStatus]   ✅ Synced ${splitId} to status: ${status}`)
-          } else {
-            console.log(`[updateOrderStatus]   ⏭️ ${splitId} already at status: ${status}`)
-          }
-        }
-      } else {
-        console.log(`[updateOrderStatus]   ℹ️ No split orders found for this order`)
-      }
+      // This is a SPLIT ORDER - DO NOT sync to parent or siblings!
+      // Each vendor updates ONLY their own order.
+      console.log(`[updateOrderStatus] ℹ️ Split order detected. NOT syncing to parent or siblings.`)
+      console.log(`[updateOrderStatus] ℹ️ Each vendor ships independently. Employee view shows aggregated status.`)
+    } else {
+      console.log(`[updateOrderStatus] ℹ️ Standard order (not a split). No sibling sync needed.`)
     }
   } catch (syncError: any) {
     // Log but don't fail the main operation
-    console.error(`[updateOrderStatus] ⚠️ Status sync error (non-fatal):`, syncError.message)
+    console.error(`[updateOrderStatus] ⚠️ Status sync check error (non-fatal):`, syncError.message)
   }
   
   // Populate and return - use string id field instead of _id
@@ -12930,6 +13130,10 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
   // CRITICAL FIX: Order.companyId is a STRING ID (6-digit numeric), not ObjectId
   const queryFilter: any = {
     companyId: company.id,
+    // CRITICAL FIX: Exclude orders that are already Delivered or Dispatched
+    // These orders should NOT appear in pending approvals regardless of unified_pr_status
+    // This handles cases where status was incorrectly synced from sibling orders
+    status: { $nin: ['Delivered', 'Dispatched'] },
   }
   
   // If PR/PO workflow is enabled, show orders based on site admin approval configuration
@@ -12971,6 +13175,8 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
     ]
     console.log(`[getPendingApprovals] Legacy workflow. Showing all orders with status 'Awaiting approval' except PENDING_SITE_ADMIN_APPROVAL.`)
   }
+  
+  console.log(`[getPendingApprovals] Query filter excludes Delivered/Dispatched orders to prevent stale data from appearing.`)
   
   // OPTIMIZATION: Fetch all pending orders (parent + child) in single query using $or
   // This eliminates the need for two separate queries
@@ -15082,6 +15288,148 @@ export async function createPurchaseOrderFromPRs(
   console.log(`[createPurchaseOrderFromPRs] Linked ${ordersToProcess.length} order(s)`)
   console.log(`[createPurchaseOrderFromPRs] ========================================`)
   
+  // ========================================================================
+  // EMAIL NOTIFICATION: PO Generated
+  // Send notification to employees, vendors, and company admins
+  // ========================================================================
+  if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true' && createdPOs.length > 0) {
+    try {
+      // Get unique employee IDs from orders
+      const uniqueEmployeeIds = [...new Set(ordersToProcess.map((o: any) => o.employeeId))]
+      
+      // 1. Notify Employees
+      for (const employeeId of uniqueEmployeeIds) {
+        try {
+          const employeeForNotif = await Employee.findOne({ id: employeeId }).lean()
+          if (employeeForNotif?.email) {
+            let employeeEmail = employeeForNotif.email
+            let employeeName = `${employeeForNotif.firstName || ''} ${employeeForNotif.lastName || ''}`.trim() || 'Customer'
+            
+            const { decrypt } = require('../utils/encryption')
+            if (employeeEmail.includes(':')) {
+              try { employeeEmail = decrypt(employeeEmail) } catch (e) { /* ignore */ }
+            }
+            if (employeeForNotif.firstName?.includes(':')) {
+              try { employeeName = `${decrypt(employeeForNotif.firstName)} ${decrypt(employeeForNotif.lastName || '')}`.trim() } catch (e) { /* ignore */ }
+            }
+            
+            // Get PO number(s) for this employee's orders
+            const employeeOrders = ordersToProcess.filter((o: any) => o.employeeId === employeeId)
+            const employeeOrderIds = employeeOrders.map((o: any) => o.id)
+            const relatedPOs = createdPOs.filter((po: any) => 
+              po.po_order_items?.some((item: any) => employeeOrderIds.includes(item.orderId))
+            )
+            const poNumbers = relatedPOs.map((po: any) => po.client_po_number).filter(Boolean)
+            
+            // Send notification for each PO (or combined if multiple)
+            const poNumberStr = poNumbers.length > 0 ? poNumbers.join(', ') : poNumber
+            
+            sendPOGeneratedNotification(
+              employeeEmail,
+              employeeName,
+              poNumberStr,
+              { vendorName: relatedPOs[0]?.vendor?.name || 'Vendor' }
+            ).catch(err => console.warn(`[createPurchaseOrderFromPRs] ⚠️ Employee notification failed (non-fatal): ${err.message}`))
+            
+            console.log(`[createPurchaseOrderFromPRs] 📧 Employee PO notification queued for ${employeeEmail} (PO: ${poNumberStr})`)
+          }
+        } catch (empError: any) {
+          console.warn(`[createPurchaseOrderFromPRs] ⚠️ Failed to send notification to employee ${employeeId}: ${empError.message}`)
+        }
+      }
+      
+      // 2. Notify Vendors - each PO goes to its respective vendor
+      for (const po of createdPOs) {
+        try {
+          const vendorId = po.vendorId
+          if (vendorId) {
+            const vendorRecipient = await resolveVendorRecipient(vendorId)
+            if (vendorRecipient) {
+              sendVendorPONotification(
+                vendorRecipient.email,
+                vendorRecipient.name,
+                po.client_po_number,
+                { companyName: company.name, orderId: ordersToProcess[0]?.id }
+              ).catch(err => console.warn(`[createPurchaseOrderFromPRs] ⚠️ Vendor notification failed (non-fatal): ${err.message}`))
+              console.log(`[createPurchaseOrderFromPRs] 📧 Vendor PO notification queued for ${vendorRecipient.email} (PO: ${po.client_po_number})`)
+            }
+          }
+        } catch (vendorError: any) {
+          console.warn(`[createPurchaseOrderFromPRs] ⚠️ Failed to send vendor notification: ${vendorError.message}`)
+        }
+      }
+      
+      // 3. Notify Company Admins - all POs for the company
+      try {
+        const companyAdmins = await resolveCompanyAdminRecipients(company.id)
+        const allPoNumbers = createdPOs.map((po: any) => po.client_po_number).filter(Boolean).join(', ')
+        
+        for (const admin of companyAdmins) {
+          sendCompanyAdminPONotification(
+            admin.email,
+            admin.name,
+            allPoNumbers,
+            { vendorName: createdPOs[0]?.vendor?.name || 'Multiple Vendors', orderId: ordersToProcess[0]?.id }
+          ).catch(err => console.warn(`[createPurchaseOrderFromPRs] ⚠️ Company Admin notification failed (non-fatal): ${err.message}`))
+          console.log(`[createPurchaseOrderFromPRs] 📧 Company Admin PO notification queued for ${admin.email}`)
+        }
+      } catch (adminError: any) {
+        console.warn(`[createPurchaseOrderFromPRs] ⚠️ Failed to send company admin notification: ${adminError.message}`)
+      }
+      
+      // 4. Notify Location Admins - for each unique location in the orders
+      try {
+        // Get unique location IDs from employees whose orders are being processed
+        const uniqueLocationIds = new Set<string>()
+        const locationNames = new Map<string, string>()
+        
+        for (const order of ordersToProcess) {
+          if (order.employeeId) {
+            const orderEmployee = await Employee.findOne({ 
+              $or: [{ id: order.employeeId }, { employeeId: order.employeeId }] 
+            }).select('locationId').lean()
+            
+            if (orderEmployee?.locationId) {
+              const locationId = orderEmployee.locationId as string
+              uniqueLocationIds.add(locationId)
+              
+              // Get location name if not already cached
+              if (!locationNames.has(locationId)) {
+                const location = await Location.findOne({ id: locationId }).select('name').lean()
+                locationNames.set(locationId, location?.name || locationId)
+              }
+            }
+          }
+        }
+        
+        const allPoNumbers = createdPOs.map((po: any) => po.client_po_number).filter(Boolean).join(', ')
+        
+        // Send notification to each location admin
+        for (const locationId of uniqueLocationIds) {
+          const locAdmin = await resolveLocationAdminRecipient(locationId)
+          if (locAdmin) {
+            const locationName = locationNames.get(locationId) || locationId
+            sendLocationAdminPONotification(
+              locAdmin.email,
+              locAdmin.name,
+              allPoNumbers,
+              { 
+                vendorName: createdPOs[0]?.vendor?.name || 'Multiple Vendors', 
+                locationName,
+                companyName: company.name
+              }
+            ).catch(err => console.warn(`[createPurchaseOrderFromPRs] ⚠️ Location Admin notification failed (non-fatal): ${err.message}`))
+            console.log(`[createPurchaseOrderFromPRs] 📧 Location Admin PO notification queued for ${locAdmin.email} (Location: ${locationName})`)
+          }
+        }
+      } catch (locAdminError: any) {
+        console.warn(`[createPurchaseOrderFromPRs] ⚠️ Failed to send location admin notification: ${locAdminError.message}`)
+      }
+    } catch (notifError: any) {
+      console.warn(`[createPurchaseOrderFromPRs] ⚠️ Failed to process notifications: ${notifError.message}`)
+    }
+  }
+  
   return {
     success: true,
     purchaseOrders: createdPOs,
@@ -15099,12 +15447,29 @@ export async function getPendingApprovalCount(companyId: string): Promise<number
   
   // CRITICAL FIX: Count by both ObjectId and string companyId
   const companyStrIdApproval = company.id || ''
+  
+  // FIX: Use unified_pr_status for new workflow, with fallback to legacy status
   const count = await Order.countDocuments({
-    $or: [
-      { companyId: company._id },
-      { companyId: companyStrIdApproval }
-    ],
-    status: 'Awaiting approval',
+    $and: [
+      // Company filter
+      {
+        $or: [
+          { companyId: company._id },
+          { companyId: companyStrIdApproval }
+        ]
+      },
+      // Status filter - unified_pr_status OR legacy fallback
+      {
+        $or: [
+          { unified_pr_status: 'PENDING_COMPANY_ADMIN_APPROVAL' },
+          // Fallback for legacy orders without unified status
+          { 
+            unified_pr_status: { $exists: false },
+            status: 'Awaiting approval'
+          }
+        ]
+      }
+    ]
   })
   
   return count
@@ -15247,9 +15612,13 @@ export async function updatePRShipmentStatus(
   }
   
   // Validate PR is in correct status (unified_pr_status only - legacy pr_status removed)
+  // Allow shipment for:
+  // - LINKED_TO_PO: Companies with PR-PO workflow (order linked to a PO)
+  // - COMPANY_ADMIN_APPROVED: Companies without PR-PO workflow (order approved directly)
   const prStatus = pr.unified_pr_status
-  if (prStatus !== 'LINKED_TO_PO') {
-    throw new Error(`PR ${prId} is not in LINKED_TO_PO status (current: ${prStatus})`)
+  const allowedStatuses = ['LINKED_TO_PO', 'COMPANY_ADMIN_APPROVED']
+  if (!allowedStatuses.includes(prStatus)) {
+    throw new Error(`PR ${prId} is not ready for shipment (current status: ${prStatus}, required: ${allowedStatuses.join(' or ')})`)
   }
   
   // MANDATORY VALIDATION: Check required fields
@@ -15582,48 +15951,20 @@ export async function updatePRShipmentStatus(
     console.log(`[updatePRShipmentStatus]   Parent order ID: ${parentOrderId || 'N/A'}`)
     console.log(`[updatePRShipmentStatus]   Is split order: ${isSplitOrder}`)
     
+    // CRITICAL FIX: DO NOT sync status to sibling orders!
+    // Each vendor's order should be updated independently.
+    // The aggregated status for employees is calculated at display time
+    // via calculateAggregatedOrderStatus() in getOrdersByEmployee().
+    // 
+    // Previous bug: This code was updating ALL sibling orders when one vendor shipped,
+    // causing other vendors' orders to incorrectly show as "Dispatched" even though
+    // they hadn't shipped their items.
+    //
+    // Now: Only the specific vendor's order is updated. Employee view calculates
+    // aggregate status like "Partially Dispatched" dynamically.
     if (isSplitOrder && parentOrderId) {
-      // This is a SPLIT ORDER - sync status to PARENT and OTHER SPLITS
-      console.log(`[updatePRShipmentStatus] 🔄 SYNC: Split order dispatched, syncing to parent and siblings...`)
-      
-      // Find all related orders (parent + all splits with same parentOrderId)
-      const relatedOrders = await Order.find({
-        $or: [
-          { id: parentOrderId }, // Parent order
-          { parentOrderId: parentOrderId, id: { $ne: currentOrderId } } // Sibling split orders
-        ]
-      })
-      
-      console.log(`[updatePRShipmentStatus]   Found ${relatedOrders.length} related order(s)`)
-      
-      // Update status on all related orders
-      for (const relatedOrder of relatedOrders) {
-        const relatedId = relatedOrder.id
-        const relatedPrevStatus = relatedOrder.status
-        
-        if (relatedPrevStatus !== 'Dispatched') {
-          console.log(`[updatePRShipmentStatus]   Syncing ${relatedId}: ${relatedPrevStatus} -> Dispatched`)
-          
-          // Build update payload
-          const syncUpdate: any = {
-            status: 'Dispatched',
-            dispatchStatus: 'SHIPPED',
-            dispatchedDate: pr.dispatchedDate || new Date(),
-          }
-          
-          // Include unified status fields
-          if (pr.unified_status) {
-            syncUpdate.unified_status = pr.unified_status
-            syncUpdate.unified_status_updated_at = new Date()
-            syncUpdate.unified_status_updated_by = 'pr_shipment_sync'
-          }
-          
-          await Order.updateOne({ id: relatedId }, { $set: syncUpdate })
-          console.log(`[updatePRShipmentStatus]   ✅ Synced ${relatedId} to status: Dispatched`)
-        } else {
-          console.log(`[updatePRShipmentStatus]   ⏭️ ${relatedId} already at status: Dispatched`)
-        }
-      }
+      console.log(`[updatePRShipmentStatus] ℹ️ Split order detected. NOT syncing to siblings (each vendor ships independently).`)
+      console.log(`[updatePRShipmentStatus] ℹ️ Employee view will show aggregated status via calculateAggregatedOrderStatus().`)
     }
   } catch (syncError: any) {
     // Log but don't fail the main operation
@@ -17034,22 +17375,70 @@ export async function getRejectedOrdersForCompanyAdmin(companyId: string): Promi
 
 /**
  * Get pending return request count for a company
+ * Matches the query logic of getReturnRequestsByCompany for consistency
  */
 export async function getPendingReturnRequestCount(companyId: string): Promise<number> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId }).select('_id id').lean()
-  if (!company) {
-    return 0
+  console.log(`[getPendingReturnRequestCount] ========== START ==========`)
+  console.log(`[getPendingReturnRequestCount] Input companyId: "${companyId}" (type: ${typeof companyId})`)
+  
+  // ReturnRequest may store companyId in different formats depending on how orders were created
+  // We need to query using all possible formats to ensure we find all matching records
+  
+  const isObjectId = /^[a-f0-9]{24}$/i.test(companyId)
+  const possibleCompanyIds: string[] = [companyId]
+  
+  if (isObjectId) {
+    // Input is ObjectId - also get the string company ID
+    const { ObjectId } = require('mongodb')
+    const company = await Company.findOne({ _id: new ObjectId(companyId) }).select('id').lean()
+    if (company && company.id) {
+      possibleCompanyIds.push(String(company.id))
+      console.log(`[getPendingReturnRequestCount] ObjectId input, also checking string ID: ${company.id}`)
+    }
+  } else {
+    // Input is string ID - also get the ObjectId if company exists
+    const company = await Company.findOne({ id: companyId }).select('_id id').lean()
+    if (company) {
+      if (company._id) {
+        possibleCompanyIds.push(String(company._id))
+      }
+      console.log(`[getPendingReturnRequestCount] String ID input "${companyId}", found company: _id=${company._id}, id=${company.id}`)
+    } else {
+      console.error(`[getPendingReturnRequestCount] ⚠️ Company NOT found for ID: ${companyId}`)
+    }
   }
   
-  // Query by string ID (company.id) since ReturnRequest stores string IDs
-  const count = await ReturnRequest.countDocuments({
-    companyId: company.id,
-    status: 'REQUESTED',
+  console.log(`[getPendingReturnRequestCount] Querying with companyIds: [${possibleCompanyIds.join(', ')}]`)
+  
+  // DEBUG: First check total return requests for this company (any status)
+  const totalCount = await ReturnRequest.countDocuments({
+    companyId: { $in: possibleCompanyIds },
+  })
+  console.log(`[getPendingReturnRequestCount] Total return requests (any status): ${totalCount}`)
+  
+  // If we have some returns, check what statuses they have
+  if (totalCount > 0) {
+    const statusBreakdown = await ReturnRequest.aggregate([
+      { $match: { companyId: { $in: possibleCompanyIds } } },
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ])
+    console.log(`[getPendingReturnRequestCount] Status breakdown:`, JSON.stringify(statusBreakdown))
+  }
+  
+  // Return count of ALL return requests (excluding REJECTED)
+  // This includes REQUESTED, APPROVED, and COMPLETED - all valid return requests
+  // Only REJECTED returns are excluded as they were denied
+  const activeCount = await ReturnRequest.countDocuments({
+    companyId: { $in: possibleCompanyIds },
+    status: { $ne: 'REJECTED' },
   })
   
-  return count
+  console.log(`[getPendingReturnRequestCount] Found ${activeCount} return requests (excluding REJECTED)`)
+  console.log(`[getPendingReturnRequestCount] ========== END ==========`)
+  
+  return activeCount
 }
 
 /**
@@ -17059,21 +17448,75 @@ export async function getPendingReturnRequestCount(companyId: string): Promise<n
 export async function getNewFeedbackCount(companyId: string): Promise<number> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId }).select('_id id').lean()
-  if (!company) {
-    return 0
+  console.log(`[getNewFeedbackCount] ========== START ==========`)
+  console.log(`[getNewFeedbackCount] Input companyId: "${companyId}" (type: ${typeof companyId})`)
+  
+  // ProductFeedback may store companyId in different formats depending on how it was created
+  // We need to query using all possible formats to ensure we find all matching records
+  
+  const isObjectId = /^[a-f0-9]{24}$/i.test(companyId)
+  const possibleCompanyIds: string[] = [companyId]
+  
+  if (isObjectId) {
+    // Input is ObjectId - also get the string company ID
+    const { ObjectId } = require('mongodb')
+    const company = await Company.findOne({ _id: new ObjectId(companyId) }).select('id').lean()
+    if (company && company.id) {
+      possibleCompanyIds.push(String(company.id))
+      console.log(`[getNewFeedbackCount] ObjectId input, also checking string ID: ${company.id}`)
+    }
+  } else {
+    // Input is string ID - also get the ObjectId if company exists
+    const company = await Company.findOne({ id: companyId }).select('_id id').lean()
+    if (company) {
+      if (company._id) {
+        possibleCompanyIds.push(String(company._id))
+      }
+      console.log(`[getNewFeedbackCount] String ID input "${companyId}", found company: _id=${company._id}, id=${company.id}`)
+    } else {
+      console.error(`[getNewFeedbackCount] ⚠️ Company NOT found for ID: ${companyId}`)
+    }
   }
   
-  // Query by string ID (company.id) since ProductFeedback stores string IDs
-  const count = await ProductFeedback.countDocuments({
-    companyId: company.id,
-    $or: [
-      { viewedAt: { $exists: false } },
-      { viewedAt: null }
-    ]
-  })
+  // Also prepare numeric company ID for companyIdNum field check
+  const numericCompanyId = parseInt(companyId, 10)
+  const hasNumericId = !isNaN(numericCompanyId)
   
-  return count
+  console.log(`[getNewFeedbackCount] Querying with companyIds: [${possibleCompanyIds.join(', ')}]`)
+  if (hasNumericId) {
+    console.log(`[getNewFeedbackCount] Also checking companyIdNum: ${numericCompanyId}`)
+  }
+  
+  // Build query to check both companyId (string) and companyIdNum (number)
+  const companyQuery = hasNumericId 
+    ? { $or: [{ companyId: { $in: possibleCompanyIds } }, { companyIdNum: numericCompanyId }] }
+    : { companyId: { $in: possibleCompanyIds } }
+  
+  // DEBUG: First check total feedback for this company (any viewedAt status)
+  const totalCount = await ProductFeedback.countDocuments(companyQuery)
+  console.log(`[getNewFeedbackCount] Total feedback (any status): ${totalCount}`)
+  
+  // If we have some feedback, check how many are viewed vs unviewed
+  if (totalCount > 0) {
+    const viewedQuery = hasNumericId 
+      ? { 
+          $and: [
+            { $or: [{ companyId: { $in: possibleCompanyIds } }, { companyIdNum: numericCompanyId }] },
+            { viewedAt: { $ne: null } }
+          ]
+        }
+      : { companyId: { $in: possibleCompanyIds }, viewedAt: { $ne: null } }
+    
+    const viewedCount = await ProductFeedback.countDocuments(viewedQuery)
+    console.log(`[getNewFeedbackCount] Viewed feedback: ${viewedCount}, Unviewed: ${totalCount - viewedCount}`)
+  }
+  
+  // Return TOTAL count (all feedback) so dashboard shows all feedback
+  // This includes both viewed and unviewed feedback
+  console.log(`[getNewFeedbackCount] Returning total count: ${totalCount}`)
+  console.log(`[getNewFeedbackCount] ========== END ==========`)
+  
+  return totalCount
 }
 
 /**
@@ -17105,7 +17548,7 @@ export async function markFeedbackAsViewed(companyId: string, adminEmail: string
 }
 
 /**
- * Get pending order approval count for a location (for Location Admin)
+ * Get pending order approval count for a location (for Location Admin / Site Admin)
  */
 export async function getPendingApprovalCountByLocation(locationId: string): Promise<number> {
   await connectDB()
@@ -17124,9 +17567,18 @@ export async function getPendingApprovalCountByLocation(locationId: string): Pro
     return 0
   }
   
+  // FIX: Use unified_pr_status for new workflow, with fallback to legacy status
+  // Location Admin (Site Admin) sees orders pending SITE_ADMIN_APPROVAL
   const count = await Order.countDocuments({
     employeeId: { $in: employeeIds },
-    status: 'Awaiting approval',
+    $or: [
+      { unified_pr_status: 'PENDING_SITE_ADMIN_APPROVAL' },
+      // Fallback for legacy orders without unified status
+      { 
+        unified_pr_status: { $exists: false },
+        status: 'Awaiting approval'
+      }
+    ]
   })
   
   return count
@@ -17134,6 +17586,7 @@ export async function getPendingApprovalCountByLocation(locationId: string): Pro
 
 /**
  * Get pending order count for a vendor (orders awaiting fulfilment/dispatch)
+ * Shows orders that are approved and assigned to vendor, awaiting action
  */
 export async function getPendingOrderCountByVendor(vendorId: string): Promise<number> {
   await connectDB()
@@ -17145,12 +17598,37 @@ export async function getPendingOrderCountByVendor(vendorId: string): Promise<nu
   
   // CRITICAL FIX: Count by both ObjectId and string vendorId
   const vendorStrIdPending = (vendor as any).id || ''
+  
+  // FIX: Use unified_pr_status for new workflow
+  // Vendor sees orders after Company Admin approval until delivery
   const count = await Order.countDocuments({
-    $or: [
-      { vendorId: (vendor as any)._id },
-      { vendorId: vendorStrIdPending }
-    ],
-    status: { $in: ['Awaiting fulfilment', 'Dispatched'] },
+    $and: [
+      // Vendor filter
+      {
+        $or: [
+          { vendorId: (vendor as any)._id },
+          { vendorId: vendorStrIdPending }
+        ]
+      },
+      // Status filter - orders in vendor fulfillment stages
+      {
+        $or: [
+          // New unified statuses - orders after approval, before full delivery
+          { unified_pr_status: { $in: [
+            'COMPANY_ADMIN_APPROVED',  // Just approved, pending PO
+            'LINKED_TO_PO',            // PO created
+            'PO_CREATED',              // PO created  
+            'IN_SHIPMENT',             // Being shipped
+            'PARTIALLY_DELIVERED'      // Partial delivery
+          ]}},
+          // Fallback for legacy orders without unified status
+          { 
+            unified_pr_status: { $exists: false },
+            status: { $in: ['Awaiting fulfilment', 'Dispatched', 'confirmed'] }
+          }
+        ]
+      }
+    ]
   })
   
   return count
@@ -17248,6 +17726,46 @@ export async function getApprovedInvoiceCount(vendorId: string): Promise<number>
   const count = await Invoice.countDocuments({
     vendorId: vendorId,
     invoiceStatus: 'APPROVED'
+  })
+  
+  return count
+}
+
+/**
+ * Get pending GRN approval count for a company (for Company Admin badge)
+ * Counts GRNs raised by vendors that are awaiting company admin approval
+ */
+export async function getPendingGRNCountForCompany(companyId: string): Promise<number> {
+  await connectDB()
+  
+  // Count GRNs for this company that are in RAISED status (pending approval)
+  const count = await GRN.countDocuments({
+    companyId: companyId,
+    $or: [
+      { grnStatus: 'RAISED' },
+      { unified_grn_status: 'RAISED' },
+      { unified_grn_status: 'PENDING_APPROVAL' }
+    ]
+  })
+  
+  return count
+}
+
+/**
+ * Get pending Invoice approval count for a company (for Company Admin badge)
+ * Counts Invoices raised by vendors that are awaiting company admin approval
+ */
+export async function getPendingInvoiceCountForCompany(companyId: string): Promise<number> {
+  await connectDB()
+  
+  // Count Invoices for this company that are in RAISED status (pending approval)
+  const count = await Invoice.countDocuments({
+    companyId: companyId,
+    $or: [
+      { invoiceStatus: 'RAISED' },
+      { unified_invoice_status: 'RAISED' },
+      { unified_invoice_status: 'PENDING_APPROVAL' }
+    ]
   })
   
   return count
@@ -17351,6 +17869,147 @@ export async function getVendorCompanies(): Promise<any[]> {
   // Products are linked to companies directly, and vendors supply products
   // No explicit vendor-company relationship is needed
   return []
+}
+
+/**
+ * Get all companies that a specific vendor supplies products to.
+ * Derives this from ProductVendor + ProductCompany relationships.
+ * 
+ * Logic:
+ * 1. Get all products linked to this vendor (from ProductVendor)
+ * 2. Get all companies linked to those products (from ProductCompany)
+ * 3. Return unique list of companies
+ */
+export async function getCompaniesByVendor(vendorId: string): Promise<any[]> {
+  await connectDB()
+  
+  console.log(`[getCompaniesByVendor] Getting companies for vendor: ${vendorId}`)
+  
+  const db = mongoose.connection.db
+  if (!db) {
+    throw new Error('Database connection not available')
+  }
+  
+  // Step 1: Get all products linked to this vendor
+  const productVendorLinks = await db.collection('productvendors').find({ 
+    vendorId: vendorId 
+  }).toArray()
+  
+  console.log(`[getCompaniesByVendor] Found ${productVendorLinks.length} ProductVendor links for vendor ${vendorId}`)
+  
+  if (productVendorLinks.length === 0) {
+    console.log(`[getCompaniesByVendor] No products found for vendor ${vendorId}`)
+    return []
+  }
+  
+  // Extract product IDs
+  const productIds = productVendorLinks
+    .map((link: any) => link.productId)
+    .filter((id: any) => id)
+  
+  console.log(`[getCompaniesByVendor] Product IDs:`, productIds)
+  
+  // Step 2: Get all companies linked to these products
+  const productCompanyLinks = await db.collection('productcompanies').find({
+    productId: { $in: productIds }
+  }).toArray()
+  
+  console.log(`[getCompaniesByVendor] Found ${productCompanyLinks.length} ProductCompany links for products`)
+  
+  if (productCompanyLinks.length === 0) {
+    console.log(`[getCompaniesByVendor] No companies found for these products`)
+    return []
+  }
+  
+  // Get unique company IDs
+  const companyIds = [...new Set(productCompanyLinks.map((link: any) => link.companyId))]
+  
+  console.log(`[getCompaniesByVendor] Unique company IDs:`, companyIds)
+  
+  // Step 3: Fetch company details
+  const companies = await Company.find({
+    id: { $in: companyIds }
+  }).select('id name primaryColor secondaryColor logo').lean()
+  
+  console.log(`[getCompaniesByVendor] Found ${companies.length} companies`)
+  
+  // Also create a map of productId -> companyIds for filtering
+  const productCompanyMap = new Map<string, string[]>()
+  productCompanyLinks.forEach((link: any) => {
+    const existingCompanies = productCompanyMap.get(link.productId) || []
+    existingCompanies.push(link.companyId)
+    productCompanyMap.set(link.productId, existingCompanies)
+  })
+  
+  return companies.map((c: any) => ({
+    id: c.id,
+    name: c.name,
+    primaryColor: c.primaryColor,
+    secondaryColor: c.secondaryColor,
+    logo: c.logo,
+  }))
+}
+
+/**
+ * Get products for a vendor filtered by a specific company.
+ * Returns only products that are both linked to the vendor AND the company.
+ */
+export async function getProductsByVendorAndCompany(vendorId: string, companyId: string): Promise<any[]> {
+  await connectDB()
+  
+  console.log(`[getProductsByVendorAndCompany] Getting products for vendor: ${vendorId}, company: ${companyId}`)
+  
+  const db = mongoose.connection.db
+  if (!db) {
+    throw new Error('Database connection not available')
+  }
+  
+  // Step 1: Get all products linked to this vendor
+  const productVendorLinks = await db.collection('productvendors').find({ 
+    vendorId: vendorId 
+  }).toArray()
+  
+  const vendorProductIds = productVendorLinks.map((link: any) => link.productId).filter((id: any) => id)
+  
+  if (vendorProductIds.length === 0) {
+    return []
+  }
+  
+  // Step 2: Get products also linked to the company
+  const productCompanyLinks = await db.collection('productcompanies').find({
+    productId: { $in: vendorProductIds },
+    companyId: companyId
+  }).toArray()
+  
+  const filteredProductIds = productCompanyLinks.map((link: any) => link.productId)
+  
+  if (filteredProductIds.length === 0) {
+    return []
+  }
+  
+  // Step 3: Fetch product details
+  const products = await Uniform.find({
+    id: { $in: filteredProductIds }
+  }).lean()
+  
+  console.log(`[getProductsByVendorAndCompany] Found ${products.length} products for vendor ${vendorId} and company ${companyId}`)
+  
+  return products.map((p: any) => ({
+    id: p.id,
+    name: p.name,
+    sku: p.sku,
+    category: p.category,
+    gender: p.gender,
+    sizes: p.sizes,
+    price: p.price,
+    image: p.image,
+    attribute1_name: p.attribute1_name,
+    attribute1_value: p.attribute1_value,
+    attribute2_name: p.attribute2_name,
+    attribute2_value: p.attribute2_value,
+    attribute3_name: p.attribute3_name,
+    attribute3_value: p.attribute3_value,
+  }))
 }
 
 // ========== CREATE/UPDATE FUNCTIONS ==========
@@ -17753,15 +18412,22 @@ export async function getLowStockItems(vendorId: string): Promise<any[]> {
   console.log(`[getLowStockItems] ✅ Extracted ${assignedProductIds.length} assigned product ID(s)`)
   
   // CRITICAL: Only query inventory for assigned products using string IDs
+  // Don't use populate - vendorId/productId are String fields, not ObjectId refs
   const inventoryRecords = await VendorInventory.find({ 
     vendorId: vendorIdStr,
-    productId: { $in: assignedProductIds } // CRITICAL: Only inventory for assigned products
-  })
-    .populate('productId', 'id name category gender sizes price sku')
-    .populate('vendorId', 'id name')
-    .lean()
+    productId: { $in: assignedProductIds }
+  }).lean()
   
   console.log(`[getLowStockItems] ✅ Found ${inventoryRecords.length} inventory record(s) for assigned products`)
+
+  // Build product map for manual lookup (using string IDs)
+  const products = await Uniform.find({ id: { $in: assignedProductIds } })
+    .select('id name category gender sizes price sku')
+    .lean()
+  const productMap = new Map(products.map((p: any) => [p.id, p]))
+  
+  // Get vendor info (single vendor, already known)
+  const vendorInfo = { id: vendorIdStr, name: vendor.name }
 
   const lowStockItems: any[] = []
 
@@ -17784,15 +18450,19 @@ export async function getLowStockItems(vendorId: string): Promise<any[]> {
     }
 
     if (Object.keys(lowStockSizes).length > 0) {
+      // Manual lookup for product info (fallback for string ID)
+      const productId = typeof inv.productId === 'string' ? inv.productId : String(inv.productId)
+      const product = productMap.get(productId)
+      
       lowStockItems.push({
         id: inv.id,
-        vendorId: inv.vendorId?.id || inv.vendorId?.toString(),
-        vendorName: inv.vendorId?.name,
-        productId: inv.productId?.id || inv.productId?.toString(),
-        productName: inv.productId?.name,
-        productCategory: inv.productId?.category,
-        productGender: inv.productId?.gender,
-        productSku: inv.productId?.sku,
+        vendorId: vendorInfo.id,
+        vendorName: vendorInfo.name,
+        productId: product?.id || productId,
+        productName: product?.name || 'Unknown Product',
+        productCategory: product?.category || 'N/A',
+        productGender: product?.gender || 'N/A',
+        productSku: product?.sku || 'N/A',
         sizeInventory,
         lowInventoryThreshold,
         lowStockSizes,
@@ -18206,7 +18876,7 @@ export async function getVendorInventory(vendorId: string, productId?: string): 
 export async function getVendorWiseInventoryForCompany(companyId: string | number): Promise<any[]> {
   await connectDB()
   
-  // Get company ObjectId
+  // Get company
   const company = await Company.findOne({ id: String(companyId) })
   if (!company) {
     console.warn(`[getVendorWiseInventoryForCompany] Company not found: ${companyId}`)
@@ -18229,204 +18899,66 @@ export async function getVendorWiseInventoryForCompany(companyId: string | numbe
     return []
   }
   
-  const productObjectIds = productCompanyLinks
+  // Get the string product IDs from the links
+  const linkedProductIds = productCompanyLinks
     .map((link: any) => link.productId)
     .filter((id: any) => id)
   
-  if (productObjectIds.length === 0) {
+  if (linkedProductIds.length === 0) {
     return []
   }
   
-  console.log(`[getVendorWiseInventoryForCompany] 🔍 Finding inventory for ${productObjectIds.length} products`)
-  
-  // First, get raw inventory records to inspect vendorId structure
-  const rawInventoryRecords = await db.collection('vendorinventories').find({
-    productId: { $in: productObjectIds }
-  }).toArray()
-  
-  console.log(`[getVendorWiseInventoryForCompany] 📊 Raw inventory records from DB: ${rawInventoryRecords.length}`)
-  if (rawInventoryRecords.length > 0) {
-    const sampleRaw = rawInventoryRecords[0]
-    console.log(`[getVendorWiseInventoryForCompany] 📋 Sample raw inventory record:`, {
-      id: sampleRaw.id,
-      vendorId: sampleRaw.vendorId,
-      vendorIdType: sampleRaw.vendorId?.constructor?.name,
-      vendorIdString: sampleRaw.vendorId?.toString(),
-      productId: sampleRaw.productId,
-      productIdType: sampleRaw.productId?.constructor?.name
-    })
-  }
+  console.log(`[getVendorWiseInventoryForCompany] 🔍 Finding inventory for ${linkedProductIds.length} products`)
   
   // Get all vendor inventories for these products
+  // VendorInventory stores productId as STRING, so query with string IDs
   const inventoryRecords = await VendorInventory.find({
-    productId: { $in: productObjectIds }
-  })
-    .populate('productId', 'id name sku category gender')
-    .populate('vendorId', 'id name')
-    .lean()
+    productId: { $in: linkedProductIds }
+  }).lean()
   
-  console.log(`[getVendorWiseInventoryForCompany] ✅ Found ${inventoryRecords.length} inventory records via Mongoose`)
+  console.log(`[getVendorWiseInventoryForCompany] ✅ Found ${inventoryRecords.length} inventory records`)
   
-  // Log sample of populated records
-  if (inventoryRecords.length > 0) {
-    const samplePopulated = inventoryRecords[0]
-    console.log(`[getVendorWiseInventoryForCompany] 📋 Sample populated inventory record:`, {
-      id: samplePopulated.id,
-      vendorId: samplePopulated.vendorId,
-      vendorIdType: typeof samplePopulated.vendorId,
-      vendorIdIsObject: typeof samplePopulated.vendorId === 'object',
-      vendorIdKeys: samplePopulated.vendorId && typeof samplePopulated.vendorId === 'object' ? Object.keys(samplePopulated.vendorId) : 'N/A',
-      productId: samplePopulated.productId,
-      productIdType: typeof samplePopulated.productId
-    })
+  if (inventoryRecords.length === 0) {
+    return []
   }
   
-  // Get all vendors for manual lookup (fallback if populate fails)
-  const allVendors = await Vendor.find({}).lean()
-  console.log(`[getVendorWiseInventoryForCompany] 📦 Loaded ${allVendors.length} vendors from database`)
+  // Get unique vendor and product IDs from inventory records
+  const vendorIds = [...new Set(inventoryRecords.map((inv: any) => inv.vendorId).filter(Boolean))]
+  const productIds = [...new Set(inventoryRecords.map((inv: any) => inv.productId).filter(Boolean))]
   
-  const vendorMap = new Map()
+  console.log(`[getVendorWiseInventoryForCompany] 📦 Looking up ${vendorIds.length} vendors and ${productIds.length} products`)
+  
+  // Build vendor map using string ID field (not _id)
+  const allVendors = await Vendor.find({ id: { $in: vendorIds } }).lean()
+  const vendorMap = new Map<string, any>()
   allVendors.forEach((v: any) => {
-    if (v._id) {
-      const vendorIdStr = v._id.toString()
-      vendorMap.set(vendorIdStr, { id: v.id, name: v.name })
-      console.log(`[getVendorWiseInventoryForCompany] 📝 Mapped vendor: ${vendorIdStr} -> ${v.name} (id: ${v.id})`)
+    if (v.id) {
+      vendorMap.set(String(v.id), { id: v.id, name: v.name })
     }
   })
-  
   console.log(`[getVendorWiseInventoryForCompany] 🗺️  Vendor map size: ${vendorMap.size}`)
   
-  // Build a map of inventory ID -> vendorId from raw records for reliable lookup
-  const inventoryVendorMap = new Map<string, any>()
-  rawInventoryRecords.forEach((raw: any) => {
-    if (raw.id && raw.vendorId) {
-      let vendorIdStr: string | null = null
-      if (typeof raw.vendorId === 'string') {
-        vendorIdStr = raw.vendorId
-      } else if (raw.vendorId.toString) {
-        vendorIdStr = raw.vendorId.toString()
-      } else if (raw.vendorId._id) {
-        vendorIdStr = raw.vendorId._id.toString()
-      }
-      
-      if (vendorIdStr) {
-        inventoryVendorMap.set(raw.id, vendorIdStr)
-        console.log(`[getVendorWiseInventoryForCompany] 📝 Mapped inventory ${raw.id} -> vendorId ${vendorIdStr}`)
-      }
+  // Build product map using string ID field (not _id)
+  const allProducts = await Uniform.find({ id: { $in: productIds } }).lean()
+  const productMap = new Map<string, any>()
+  allProducts.forEach((p: any) => {
+    if (p.id) {
+      productMap.set(String(p.id), { 
+        id: p.id, 
+        name: p.name, 
+        sku: p.sku, 
+        category: p.category, 
+        gender: p.gender 
+      })
     }
   })
-  
-  console.log(`[getVendorWiseInventoryForCompany] 🗺️  Inventory-Vendor map size: ${inventoryVendorMap.size}`)
+  console.log(`[getVendorWiseInventoryForCompany] 🗺️  Product map size: ${productMap.size}`)
   
   // Format the data for display
-  const formattedInventory = inventoryRecords.map((inv: any, index: number) => {
-    console.log(`\n[getVendorWiseInventoryForCompany] 🔄 Processing inventory record ${index + 1}/${inventoryRecords.length}`)
-    console.log(`[getVendorWiseInventoryForCompany]   Inventory ID: ${inv.id || 'N/A'}`)
-    console.log(`[getVendorWiseInventoryForCompany]   Raw vendorId type: ${typeof inv.vendorId}`)
-    console.log(`[getVendorWiseInventoryForCompany]   Raw vendorId value:`, inv.vendorId)
-    console.log(`[getVendorWiseInventoryForCompany]   Raw vendorId constructor: ${inv.vendorId?.constructor?.name}`)
-    
-    // Also get the raw record for comparison
-    const rawRecord = rawInventoryRecords.find((r: any) => r.id === inv.id)
-    if (rawRecord) {
-      console.log(`[getVendorWiseInventoryForCompany]   📦 Raw DB vendorId:`, rawRecord.vendorId)
-      console.log(`[getVendorWiseInventoryForCompany]   📦 Raw DB vendorId type: ${rawRecord.vendorId?.constructor?.name}`)
-      console.log(`[getVendorWiseInventoryForCompany]   📦 Raw DB vendorId string: ${rawRecord.vendorId?.toString()}`)
-    }
-    
-    const product = inv.productId
-    let vendor = inv.vendorId
-    
-    console.log(`[getVendorWiseInventoryForCompany]   Initial vendor from populate:`, vendor)
-    console.log(`[getVendorWiseInventoryForCompany]   Has vendor.name? ${!!(vendor && vendor.name)}`)
-    
-    // Fallback: if populate didn't work, try manual lookup
-    if (!vendor || !vendor.name) {
-      console.log(`[getVendorWiseInventoryForCompany]   ⚠️  Populate failed, trying manual lookup...`)
-      
-      // Try multiple ways to extract vendorId
-      let vendorIdStr: string | null = null
-      
-      if (inv.vendorId) {
-        if (typeof inv.vendorId === 'string') {
-          vendorIdStr = inv.vendorId
-          console.log(`[getVendorWiseInventoryForCompany]   📌 vendorId is string: ${vendorIdStr}`)
-        } else if (inv.vendorId._id) {
-          vendorIdStr = inv.vendorId._id.toString()
-          console.log(`[getVendorWiseInventoryForCompany]   📌 vendorId._id found: ${vendorIdStr}`)
-        } else if (inv.vendorId.toString) {
-          vendorIdStr = inv.vendorId.toString()
-          console.log(`[getVendorWiseInventoryForCompany]   📌 vendorId.toString(): ${vendorIdStr}`)
-        } else if (typeof inv.vendorId === 'object' && inv.vendorId.constructor?.name === 'ObjectId') {
-          vendorIdStr = inv.vendorId.toString()
-          console.log(`[getVendorWiseInventoryForCompany]   📌 vendorId is ObjectId: ${vendorIdStr}`)
-        }
-      }
-      
-      // Also check raw vendorId field from inventory record
-      if (!vendorIdStr && inv.vendorId) {
-        const rawVendorId = inv.vendorId
-        if (rawVendorId && typeof rawVendorId === 'object' && rawVendorId._id) {
-          vendorIdStr = rawVendorId._id.toString()
-          console.log(`[getVendorWiseInventoryForCompany]   📌 Found vendorId from raw field: ${vendorIdStr}`)
-        }
-      }
-      
-      if (vendorIdStr) {
-        console.log(`[getVendorWiseInventoryForCompany]   🔍 Looking up vendorId: ${vendorIdStr}`)
-        console.log(`[getVendorWiseInventoryForCompany]   🗺️  Vendor map has key? ${vendorMap.has(vendorIdStr)}`)
-        
-        if (vendorMap.has(vendorIdStr)) {
-          vendor = vendorMap.get(vendorIdStr)
-          console.log(`[getVendorWiseInventoryForCompany]   ✅ Found vendor in map:`, vendor)
-        } else {
-          console.log(`[getVendorWiseInventoryForCompany]   ❌ Vendor not found in map for ID: ${vendorIdStr}`)
-          console.log(`[getVendorWiseInventoryForCompany]   📋 Available vendor IDs in map:`, Array.from(vendorMap.keys()).slice(0, 5))
-        }
-      } else {
-        console.log(`[getVendorWiseInventoryForCompany]   ❌ Could not extract vendorId string`)
-      }
-      
-      // Try to extract from populated object structure
-      if ((!vendor || !vendor.name) && inv.vendorId && typeof inv.vendorId === 'object') {
-        console.log(`[getVendorWiseInventoryForCompany]   🔄 Trying to extract from populated object...`)
-        console.log(`[getVendorWiseInventoryForCompany]   📦 Populated object keys:`, Object.keys(inv.vendorId))
-        vendor = {
-          id: inv.vendorId.id || inv.vendorId._id?.toString() || 'N/A',
-          name: inv.vendorId.name || 'Unknown Vendor'
-        }
-        console.log(`[getVendorWiseInventoryForCompany]   📝 Extracted vendor:`, vendor)
-      }
-    }
-    
-    // Final fallback: use inventory-vendor map built from raw records
-    if (!vendor || !vendor.name || vendor.name === 'Unknown Vendor') {
-      console.log(`[getVendorWiseInventoryForCompany]   🔄 Final fallback: using inventory-vendor map...`)
-      
-      const mappedVendorId = inventoryVendorMap.get(inv.id)
-      if (mappedVendorId) {
-        console.log(`[getVendorWiseInventoryForCompany]   📝 Found vendorId from map: ${mappedVendorId}`)
-        if (vendorMap.has(mappedVendorId)) {
-          vendor = vendorMap.get(mappedVendorId)
-          console.log(`[getVendorWiseInventoryForCompany]   ✅ Final lookup successful:`, vendor)
-        } else {
-          console.log(`[getVendorWiseInventoryForCompany]   ❌ VendorId ${mappedVendorId} not in vendor map`)
-          console.log(`[getVendorWiseInventoryForCompany]   📋 Available vendor IDs:`, Array.from(vendorMap.keys()).slice(0, 10))
-        }
-      } else {
-        console.log(`[getVendorWiseInventoryForCompany]   ❌ Inventory ${inv.id} not in inventory-vendor map`)
-      }
-    }
-    
-    // Log final vendor result
-    console.log(`[getVendorWiseInventoryForCompany]   ✅ Final vendor for record:`, vendor)
-    console.log(`[getVendorWiseInventoryForCompany]   📝 Vendor name: ${vendor?.name || 'MISSING'}`)
-    
-    // Ensure we always have a vendor object
-    if (!vendor || !vendor.name) {
-      console.log(`[getVendorWiseInventoryForCompany]   ⚠️  WARNING: No vendor found, using fallback`)
-      vendor = { id: 'N/A', name: 'Unknown Vendor' }
-    }
+  const formattedInventory = inventoryRecords.map((inv: any) => {
+    // Look up vendor and product using string IDs
+    const vendor = vendorMap.get(String(inv.vendorId)) || { id: inv.vendorId || 'N/A', name: 'Unknown Vendor' }
+    const product = productMap.get(String(inv.productId)) || { id: inv.productId || 'N/A', name: 'Unknown Product', sku: 'N/A', category: 'N/A', gender: 'N/A' }
     
     // Convert sizeInventory Map to object
     const sizeInventoryObj = inv.sizeInventory instanceof Map
@@ -18452,36 +18984,23 @@ export async function getVendorWiseInventoryForCompany(companyId: string | numbe
     }
     
     return {
-      sku: product?.sku || 'N/A',
-      productName: product?.name || 'Unknown Product',
-      productId: product?.id || 'N/A',
-      vendorName: vendor?.name || 'Unknown Vendor',
-      vendorId: vendor?.id || 'N/A',
+      sku: product.sku || 'N/A',
+      productName: product.name || 'Unknown Product',
+      productId: product.id || 'N/A',
+      vendorName: vendor.name || 'Unknown Vendor',
+      vendorId: vendor.id || 'N/A',
       availableStock: totalStock,
       threshold: overallThreshold,
       sizeInventory: sizeInventoryObj,
       lowInventoryThreshold: thresholdObj,
       stockStatus,
       lastUpdated: inv.updatedAt || inv.createdAt || null,
-      category: product?.category || 'N/A',
-      gender: product?.gender || 'N/A',
+      category: product.category || 'N/A',
+      gender: product.gender || 'N/A',
     }
   })
   
-  // Summary log
-  const vendorNameCounts = new Map<string, number>()
-  formattedInventory.forEach((item: any) => {
-    const vendorName = item.vendorName || 'Unknown Vendor'
-    vendorNameCounts.set(vendorName, (vendorNameCounts.get(vendorName) || 0) + 1)
-  })
-  
-  console.log(`\n[getVendorWiseInventoryForCompany] 📊 SUMMARY:`)
-  console.log(`[getVendorWiseInventoryForCompany]   Total inventory records: ${formattedInventory.length}`)
-  console.log(`[getVendorWiseInventoryForCompany]   Vendor distribution:`)
-  vendorNameCounts.forEach((count, vendorName) => {
-    console.log(`[getVendorWiseInventoryForCompany]     - ${vendorName}: ${count} record(s)`)
-  })
-  console.log(`[getVendorWiseInventoryForCompany] ✅ Returning ${formattedInventory.length} formatted inventory records\n`)
+  console.log(`[getVendorWiseInventoryForCompany] ✅ Returning ${formattedInventory.length} formatted inventory records`)
   
   return formattedInventory
 }
@@ -20223,19 +20742,33 @@ export async function getProductsForDesignation(
     return []
   }
   
-  // Fetch products using string id field
+  // Fetch products using string id field (don't use populate - vendorId is String, not ObjectId ref)
   const products = await Uniform.find({
     id: { $in: productIdStrings }
-  })
-    .populate('vendorId', 'id name')
-    .lean()
+  }).lean()
   
   console.log(`[getProductsForDesignation] Fetched ${products.length} products from database`)
+  
+  // Build vendor map for manual lookup (fallback for string IDs)
+  const vendorIds = [...new Set(products.map((p: any) => p.vendorId).filter(Boolean))]
+  const vendors = await Vendor.find({ id: { $in: vendorIds } }).select('id name').lean()
+  const vendorMap = new Map(vendors.map((v: any) => [v.id, { id: v.id, name: v.name }]))
+  
+  // Enhance products with vendor info
+  const productsWithVendor = products.map((p: any) => {
+    if (p.vendorId && typeof p.vendorId === 'string') {
+      const vendor = vendorMap.get(p.vendorId)
+      if (vendor) {
+        return { ...p, vendorId: vendor }
+      }
+    }
+    return p
+  })
   
   // ============================================================
   // STEP 9: APPLY GENDER FILTER (IF SPECIFIED)
   // ============================================================
-  let filteredProducts = products
+  let filteredProducts = productsWithVendor
   
   if (gender) {
     filteredProducts = products.filter((product: any) => {
@@ -23212,14 +23745,96 @@ export async function approveReturnRequest(
   // CRITICAL: First query without populate to see raw vendorId, then populate for full details
   let originalOrderRaw = await Order.findOne({ id: returnRequest.originalOrderId }).lean()
   
-  // Try with parentOrderId (for split orders - the stored ID might be a parent order ID)
+  // CRITICAL FIX: For split orders, the originalOrderId might be a PARENT order ID
+  // In this case, we need to find the SPECIFIC child order that belongs to the vendor
+  // who supplies the returned product. We do this by looking up ProductVendor mapping.
+  let isSplitOrderByParentId = false
   if (!originalOrderRaw) {
-    originalOrderRaw = await Order.findOne({ parentOrderId: returnRequest.originalOrderId }).lean()
+    // Find ALL child orders with this parentOrderId
+    const childOrdersRaw = await Order.find({ parentOrderId: returnRequest.originalOrderId })
+      .sort({ id: 1 }) // Sort to ensure consistent ordering
+      .lean()
+    
+    if (childOrdersRaw.length > 0) {
+      isSplitOrderByParentId = true
+      console.log(`[approveReturnRequest] 🔍 Split order detected: ${childOrdersRaw.length} child orders found for parent ${returnRequest.originalOrderId}`)
+      
+      // CRITICAL FIX: Determine the correct vendor by looking up the ProductVendor mapping
+      // The productId from the return request tells us which product is being returned
+      const returnedProductId = String(returnRequest.productId || returnRequest.uniformId)
+      console.log(`[approveReturnRequest] 🔍 Looking up vendor for returned product: ${returnedProductId}`)
+      
+      // Query ProductVendor collection to find which vendor supplies this product
+      const db = mongoose.connection.db
+      let correctVendorId: string | null = null
+      
+      if (db) {
+        const productVendorMapping = await db.collection('productvendors').findOne({ 
+          productId: returnedProductId 
+        })
+        
+        if (productVendorMapping) {
+          correctVendorId = productVendorMapping.vendorId
+          console.log(`[approveReturnRequest] ✅ Found vendor for product ${returnedProductId}: ${correctVendorId}`)
+        } else {
+          console.warn(`[approveReturnRequest] ⚠️ No ProductVendor mapping found for product ${returnedProductId}`)
+        }
+      }
+      
+      // Find the child order that belongs to the correct vendor
+      if (correctVendorId) {
+        for (const childOrder of childOrdersRaw) {
+          console.log(`[approveReturnRequest] 🔍 Checking child order ${childOrder.id}:`, {
+            vendorId: childOrder.vendorId,
+            vendorName: childOrder.vendorName,
+            matchesCorrectVendor: childOrder.vendorId === correctVendorId
+          })
+          
+          if (childOrder.vendorId === correctVendorId) {
+            originalOrderRaw = childOrder
+            console.log(`[approveReturnRequest] ✅ Found correct child order by vendor: ${childOrder.id} (vendor: ${childOrder.vendorName || childOrder.vendorId})`)
+            break
+          }
+        }
+      }
+      
+      // Fallback: If vendor lookup failed, try item index method (legacy)
+      if (!originalOrderRaw) {
+        console.warn(`[approveReturnRequest] ⚠️ Vendor lookup did not find matching child order, falling back to item index method`)
+        
+        let currentItemIndex = 0
+        for (const childOrder of childOrdersRaw) {
+          const childItems = childOrder.items || []
+          
+          if (returnRequest.originalOrderItemIndex >= currentItemIndex && 
+              returnRequest.originalOrderItemIndex < currentItemIndex + childItems.length) {
+            originalOrderRaw = childOrder
+            console.log(`[approveReturnRequest] ⚠️ Using fallback: Found child order by item index ${returnRequest.originalOrderItemIndex}: ${childOrder.id}`)
+            break
+          }
+          currentItemIndex += childItems.length
+        }
+      }
+      
+      // Last resort: use first child order
+      if (!originalOrderRaw) {
+        console.warn(`[approveReturnRequest] ⚠️ Could not find child order, using first child order as last resort`)
+        originalOrderRaw = childOrdersRaw[0]
+      }
+    }
   }
   
   if (!originalOrderRaw) {
     throw new Error(`Original order not found: ${returnRequest.originalOrderId}`)
   }
+  
+  // Log the selected order
+  console.log(`[approveReturnRequest] 📦 Using order for return:`, {
+    orderId: originalOrderRaw.id,
+    vendorId: originalOrderRaw.vendorId,
+    vendorName: originalOrderRaw.vendorName,
+    isSplitOrderByParentId
+  })
   
   // DEBUG: Log raw order to see actual vendorId in database
   console.log(`[approveReturnRequest] 🔍 DEBUG: Raw order from database:`, {
@@ -23783,14 +24398,22 @@ export async function getPOsEligibleForGRN(vendorId: string): Promise<any[]> {
   }
   
   // Get all POs for this vendor
+  // NOTE: PurchaseOrder.companyId is a STRING ID, NOT an ObjectId - populate() won't work
   const pos = await PurchaseOrder.find({ vendorId: vendorId })
-    .populate('companyId', 'id name')
     .sort({ po_date: -1 })
     .lean()
   
   if (pos.length === 0) {
     return []
   }
+  
+  // CRITICAL FIX: Manually fetch company names since populate doesn't work with string IDs
+  const companyIds = [...new Set(pos.map(po => po.companyId).filter(Boolean))]
+  const companies = await Company.find({ id: { $in: companyIds } })
+    .select('id name')
+    .lean()
+  const companyMap = new Map(companies.map((c: any) => [c.id, c.name]))
+  console.log(`[getPOsEligibleForGRN] Fetched ${companies.length} company name(s) for ${companyIds.length} unique company ID(s)`)
   
   // Get all existing GRNs to filter out POs that already have GRN
   const existingGRNs = await GRN.find({ vendorId: vendorId })
@@ -23847,14 +24470,17 @@ export async function getPOsEligibleForGRN(vendorId: string): Promise<any[]> {
           }
         }
         
+        // CRITICAL FIX: Use companyMap to get company name since populate doesn't work with string IDs
+        const companyIdStr = typeof po.companyId === 'string' ? po.companyId : String(po.companyId)
+        
         eligiblePOs.push({
           poId: po.id,
           poNumber: po.client_po_number,
           poDate: po.po_date,
           vendorId: po.vendorId,
           vendorName: vendor.name,
-          companyId: (po.companyId as any)?.id || po.companyId,
-          companyName: (po.companyId as any)?.name || '',
+          companyId: companyIdStr,
+          companyName: companyMap.get(companyIdStr) || '',
           deliveryDate: latestDeliveryDate,
           itemCount: totalItems,
           shippingStatus: shippingStatus
@@ -23876,6 +24502,361 @@ export async function getPOsEligibleForGRN(vendorId: string): Promise<any[]> {
     const dateB = new Date(b.deliveryDate || 0).getTime()
     return dateB - dateA
   })
+}
+
+// =============================================================================
+// POST-DELIVERY WORKFLOW FOR MANUAL ORDERS
+// These functions extend GRN/Invoice creation to support orders created without
+// the PR→PO workflow. They follow the same post-delivery flow but reference
+// orders directly instead of through POs.
+// =============================================================================
+
+/**
+ * Get Manual Orders eligible for GRN creation by vendor
+ * Eligibility criteria:
+ * - Order does NOT have a linked PO (order.sourceType !== 'PR_PO' OR no POOrder mapping exists)
+ * - Order.deliveryStatus = 'DELIVERED' (fully delivered)
+ * - Order.vendorId matches the requesting vendor
+ * - No GRN exists for this order (checked via GRN.orderId)
+ * @param vendorId Vendor ID
+ * @returns Array of eligible manual orders with delivery details
+ */
+export async function getManualOrdersEligibleForGRN(vendorId: string): Promise<any[]> {
+  await connectDB()
+  
+  // Get vendor
+  const vendor = await Vendor.findOne({ id: vendorId }).select('_id id name').lean()
+  if (!vendor) {
+    throw new Error(`Vendor not found: ${vendorId}`)
+  }
+  
+  console.log(`[getManualOrdersEligibleForGRN] 🔍 Checking orders for vendor: ${vendorId} (${vendor.name})`)
+  
+  // ============ DIAGNOSTIC: Check ALL delivered orders first (ignoring vendorId) ============
+  const allDeliveredOrders = await Order.find({
+    $or: [
+      { deliveryStatus: 'DELIVERED' },
+      { unified_status: 'DELIVERED' },
+      { status: 'Delivered' }
+    ]
+  })
+    .select('id vendorId vendorName status deliveryStatus unified_status sourceType dispatchLocation')
+    .sort({ orderDate: -1 })
+    .limit(20)
+    .lean()
+  
+  console.log(`[getManualOrdersEligibleForGRN] 📊 DIAGNOSTIC: Found ${allDeliveredOrders.length} total delivered orders (all vendors):`)
+  for (const o of allDeliveredOrders) {
+    const vendorMatch = o.vendorId === vendorId ? '✅ MATCH' : `❌ vendorId=${o.vendorId || 'NULL'}`
+    console.log(`[getManualOrdersEligibleForGRN]   - Order ${o.id}: ${vendorMatch}, status=${o.status}, deliveryStatus=${o.deliveryStatus}, unified_status=${o.unified_status}, sourceType=${o.sourceType || 'NULL'}, dispatch=${o.dispatchLocation}`)
+  }
+  // ============ END DIAGNOSTIC ============
+  
+  // Get all orders for this vendor that are fully delivered
+  // IMPORTANT: Check for orders that are DELIVERED and don't have a PO linked
+  const orders = await Order.find({
+    vendorId: vendorId,
+    $or: [
+      { deliveryStatus: 'DELIVERED' },
+      { unified_status: 'DELIVERED' },
+      { status: 'Delivered' }
+    ]
+  })
+    .select('id employeeId employeeName items total status orderDate dispatchLocation companyId deliveryStatus unified_status pr_number deliveredDate sourceType vendorId')
+    .sort({ deliveredDate: -1, orderDate: -1 })
+    .lean()
+  
+  if (orders.length === 0) {
+    console.log(`[getManualOrdersEligibleForGRN] ⚠️ No delivered orders found for vendor ${vendorId}`)
+    console.log(`[getManualOrdersEligibleForGRN] 💡 TIP: Check if orders have correct vendorId field set`)
+    return []
+  }
+  
+  console.log(`[getManualOrdersEligibleForGRN] Found ${orders.length} delivered order(s) for vendor ${vendorId}`)
+  
+  // Get all order IDs to check for POOrder mappings (these would be PR→PO orders)
+  const orderIds = orders.map(o => o.id)
+  
+  // Find orders that have POOrder mappings (these are PR→PO orders, NOT manual orders)
+  const poOrderMappings = await POOrder.find({ order_id: { $in: orderIds } })
+    .select('order_id')
+    .lean()
+  
+  const ordersWithPO = new Set(poOrderMappings.map(m => m.order_id))
+  console.log(`[getManualOrdersEligibleForGRN] ${ordersWithPO.size} order(s) have PO mappings (will be excluded)`)
+  
+  // Get existing GRNs for manual orders to filter out orders that already have GRN
+  const existingGRNs = await GRN.find({
+    vendorId: vendorId,
+    orderId: { $in: orderIds },
+    sourceType: 'MANUAL'
+  })
+    .select('orderId')
+    .lean()
+  
+  const ordersWithGRN = new Set(existingGRNs.map((g: any) => g.orderId))
+  console.log(`[getManualOrdersEligibleForGRN] ${ordersWithGRN.size} order(s) already have GRN (will be excluded)`)
+  
+  // Get company names for display
+  const companyIds = [...new Set(orders.map(o => o.companyId).filter(Boolean))]
+  const companies = await Company.find({ id: { $in: companyIds } })
+    .select('id name')
+    .lean()
+  const companyMap = new Map(companies.map((c: any) => [c.id, c.name]))
+  
+  // Filter to only manual orders (no PO) that don't already have GRN
+  const eligibleOrders: any[] = []
+  
+  for (const order of orders) {
+    // Skip if order has a PO mapping (it's a PR→PO order)
+    if (ordersWithPO.has(order.id)) {
+      console.log(`[getManualOrdersEligibleForGRN] Order ${order.id} has PO mapping, skipping`)
+      continue
+    }
+    
+    // Skip if order already has sourceType = 'PR_PO' 
+    if (order.sourceType === 'PR_PO') {
+      console.log(`[getManualOrdersEligibleForGRN] Order ${order.id} has sourceType=PR_PO, skipping`)
+      continue
+    }
+    
+    // Skip if GRN already exists
+    if (ordersWithGRN.has(order.id)) {
+      console.log(`[getManualOrdersEligibleForGRN] Order ${order.id} already has GRN, skipping`)
+      continue
+    }
+    
+    // Validate all items are fully delivered
+    const items = order.items || []
+    let allItemsDelivered = true
+    let failedItem = null
+    for (const item of items) {
+      const orderedQty = item.quantity || 0
+      const deliveredQty = item.deliveredQuantity || 0
+      if (deliveredQty < orderedQty) {
+        allItemsDelivered = false
+        failedItem = { name: item.uniformName, ordered: orderedQty, delivered: deliveredQty }
+        break
+      }
+    }
+    
+    if (!allItemsDelivered) {
+      console.log(`[getManualOrdersEligibleForGRN] ❌ Order ${order.id} has items not fully delivered:`)
+      console.log(`[getManualOrdersEligibleForGRN]   - Item: ${failedItem?.name}, ordered=${failedItem?.ordered}, deliveredQuantity=${failedItem?.delivered}`)
+      console.log(`[getManualOrdersEligibleForGRN]   💡 FIX: Ensure item.deliveredQuantity matches item.quantity when marking as delivered`)
+      continue
+    }
+    
+    console.log(`[getManualOrdersEligibleForGRN] ✅ Order ${order.id} is eligible for GRN`)
+    
+    // Calculate totals for display
+    let totalItems = items.length
+    let totalQuantity = 0
+    for (const item of items) {
+      totalQuantity += item.deliveredQuantity || item.quantity || 0
+    }
+    
+    eligibleOrders.push({
+      orderId: order.id,
+      orderDate: order.orderDate,
+      employeeId: order.employeeId,
+      employeeName: order.employeeName,
+      vendorId: order.vendorId,
+      vendorName: vendor.name,
+      companyId: order.companyId,
+      companyName: companyMap.get(order.companyId) || '',
+      deliveryDate: order.deliveredDate || order.orderDate,
+      itemCount: totalItems,
+      totalQuantity: totalQuantity,
+      totalAmount: order.total || 0,
+      deliveryStatus: order.deliveryStatus || order.unified_status || order.status,
+      sourceType: 'MANUAL' // Mark as manual order
+    })
+  }
+  
+  console.log(`[getManualOrdersEligibleForGRN] ✅ Found ${eligibleOrders.length} eligible manual order(s) for GRN creation`)
+  
+  return eligibleOrders.sort((a, b) => {
+    const dateA = new Date(a.deliveryDate || 0).getTime()
+    const dateB = new Date(b.deliveryDate || 0).getTime()
+    return dateB - dateA
+  })
+}
+
+/**
+ * Create GRN for a Manual Order (Post-Delivery Workflow)
+ * This is the manual order equivalent of createGRNByVendor.
+ * Instead of referencing a PO, it references the Order directly.
+ * @param orderId Order ID (the manual order)
+ * @param grnNumber GRN number (vendor provided)
+ * @param grnDate GRN date
+ * @param vendorId Vendor ID
+ * @param remarks Optional remarks
+ * @returns Created GRN
+ */
+export async function createGRNForManualOrder(
+  orderId: string,
+  grnNumber: string,
+  grnDate: Date,
+  vendorId: string,
+  remarks?: string
+): Promise<any> {
+  await connectDB()
+  
+  // Get vendor
+  const vendor = await Vendor.findOne({ id: vendorId }).select('_id id name').lean()
+  if (!vendor) {
+    throw new Error(`Vendor not found: ${vendorId}`)
+  }
+  
+  // Get Order
+  const order = await Order.findOne({ id: orderId }).lean()
+  if (!order) {
+    throw new Error(`Order not found: ${orderId}`)
+  }
+  
+  // Validate vendor authorization
+  if (order.vendorId !== vendorId) {
+    throw new Error(`Vendor ${vendorId} is not authorized to create GRN for order ${orderId}`)
+  }
+  
+  // Validate order is fully delivered
+  const isDelivered = order.deliveryStatus === 'DELIVERED' || 
+                      order.unified_status === 'DELIVERED' || 
+                      order.status === 'Delivered'
+  
+  if (!isDelivered) {
+    throw new Error(`Order ${orderId} is not fully delivered (current status: ${order.deliveryStatus || order.unified_status || order.status}). Order must be fully delivered before creating GRN.`)
+  }
+  
+  // Validate this is NOT a PR→PO order
+  const poOrderMapping = await POOrder.findOne({ order_id: orderId }).lean()
+  if (poOrderMapping) {
+    throw new Error(`Order ${orderId} is linked to PO. Use the standard GRN creation flow for PR→PO orders.`)
+  }
+  
+  // Check if GRN already exists for this order
+  const existingGRN = await GRN.findOne({ orderId: orderId, sourceType: 'MANUAL' })
+  if (existingGRN) {
+    throw new Error(`GRN already exists for order ${orderId}. Only one GRN per order is allowed.`)
+  }
+  
+  // Validate all items are fully delivered
+  const items = order.items || []
+  for (const item of items) {
+    const orderedQty = item.quantity || 0
+    const deliveredQty = item.deliveredQuantity || 0
+    
+    if (deliveredQty < orderedQty) {
+      throw new Error(`Order ${orderId} item ${item.uniformName || item.productId} has delivered quantity (${deliveredQty}) less than ordered quantity (${orderedQty}). All items must be fully delivered before creating GRN.`)
+    }
+  }
+  
+  // Collect items for GRN (same format as PR→PO GRNs)
+  const grnItems: Array<{
+    productCode: string
+    size: string
+    orderedQuantity: number
+    deliveredQuantity: number
+    rejectedQuantity: number
+    condition: 'ACCEPTED' | 'PARTIAL' | 'REJECTED'
+    remarks?: string
+  }> = []
+  
+  for (const item of items) {
+    const orderedQty = item.quantity || 0
+    const deliveredQty = item.deliveredQuantity || orderedQty // Default to ordered if not tracked
+    
+    grnItems.push({
+      productCode: item.productId || item.uniformId || '',
+      size: item.size || '',
+      orderedQuantity: orderedQty,
+      deliveredQuantity: deliveredQty,
+      rejectedQuantity: 0, // Default: no rejections
+      condition: 'ACCEPTED', // Default: all accepted
+      remarks: undefined
+    })
+  }
+  
+  // Generate GRN ID (6-10 digit numeric)
+  const grnId = String(Date.now()).slice(-10).padStart(6, '0')
+  
+  // Get company info
+  const companyIdString = typeof order.companyId === 'string' ? order.companyId : String(order.companyId)
+  const company = await Company.findOne({ id: companyIdString }).select('id name').lean()
+  
+  // DUAL-WRITE: GRN status (behind feature flag)
+  let unifiedGRNFields: Record<string, any> = {}
+  if (process.env.DUAL_WRITE_ENABLED === "true") {
+    try {
+      const dualWriteResult = safeDualWriteGRNStatus(grnId, 'RAISED' as UnifiedGRNStatus, null, null, { updatedBy: vendorId, source: 'createGRNForManualOrder' })
+      unifiedGRNFields = dualWriteResult.unifiedUpdate
+      console.log(`[createGRNForManualOrder] 🔄 DUAL-WRITE: GRN ${grnId} → unified_grn_status=RAISED`)
+    } catch (dualWriteError: any) {
+      console.error(`[createGRNForManualOrder] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+    }
+  }
+  
+  // Create GRN with manual order workflow flags
+  // NOTE: poNumber is OPTIONAL for manual orders - can be added later if needed
+  const grn = await GRN.create({
+    id: grnId,
+    grnId: grnId,
+    grnNumber: grnNumber.trim(),
+    companyId: companyIdString,
+    vendorId: vendorId,
+    poNumber: undefined, // Optional for manual orders - use undefined to skip validation
+    prNumbers: order.pr_number ? [order.pr_number] : [], // Use PR number if available
+    orderId: orderId, // Direct reference to order (POST-DELIVERY EXTENSION)
+    sourceType: 'MANUAL', // Mark as manual order GRN (POST-DELIVERY EXTENSION)
+    items: grnItems,
+    status: 'CREATED',
+    createdBy: vendorId,
+    grnRaisedByVendor: true,
+    grnAcknowledgedByCompany: false,
+    grnStatus: 'RAISED',
+    remarks: remarks?.trim(),
+    ...unifiedGRNFields, // Include unified fields if flag enabled
+  })
+  
+  console.log(`[createGRNForManualOrder] ✅ Created GRN: ${grnId} for Manual Order: ${orderId} by vendor: ${vendorId}`)
+  
+  // Return created GRN
+  const createdGRN = await GRN.findOne({ id: grnId }).lean()
+  
+  const result = toPlainObject(createdGRN)
+  if (vendor) {
+    (result as any).vendorName = vendor.name
+  }
+  if (company && company.name) {
+    (result as any).companyName = company.name
+  }
+  
+  // ========================================================================
+  // EMAIL NOTIFICATION: GRN Created - Notify Company Admins
+  // ========================================================================
+  if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true' && companyIdString) {
+    try {
+      const companyAdmins = await resolveCompanyAdminRecipients(companyIdString)
+      for (const admin of companyAdmins) {
+        sendGRNCreatedNotification(
+          admin.email,
+          admin.name,
+          grnId,
+          {
+            poNumber: `Manual Order: ${orderId}`, // Use order ID as reference
+            vendorName: vendor?.name || 'Vendor',
+            companyName: company?.name || '',
+          }
+        ).catch(err => console.warn(`[createGRNForManualOrder] ⚠️ Company Admin notification failed (non-fatal): ${err.message}`))
+        console.log(`[createGRNForManualOrder] 📧 GRN notification queued for Company Admin ${admin.email}`)
+      }
+    } catch (notifError: any) {
+      console.warn(`[createGRNForManualOrder] ⚠️ Failed to send notifications: ${notifError.message}`)
+    }
+  }
+  
+  return result
 }
 
 /**
@@ -24043,6 +25024,30 @@ export async function createGRNByVendor(
   }
   if (company && company.name) {
     (result as any).companyName = company.name
+  }
+  
+  // ========================================================================
+  // EMAIL NOTIFICATION: GRN Created - Notify Company Admins
+  // ========================================================================
+  if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true' && companyIdString) {
+    try {
+      const companyAdmins = await resolveCompanyAdminRecipients(companyIdString)
+      for (const admin of companyAdmins) {
+        sendGRNCreatedNotification(
+          admin.email,
+          admin.name,
+          grnId,
+          {
+            poNumber,
+            vendorName: vendor?.name || 'Vendor',
+            companyName: company?.name || '',
+          }
+        ).catch(err => console.warn(`[createGRNByVendor] ⚠️ Company Admin notification failed (non-fatal): ${err.message}`))
+        console.log(`[createGRNByVendor] 📧 GRN notification queued for Company Admin ${admin.email}`)
+      }
+    } catch (notifError: any) {
+      console.warn(`[createGRNByVendor] ⚠️ Failed to send notifications: ${notifError.message}`)
+    }
   }
   
   return result
@@ -24293,9 +25298,25 @@ export async function acknowledgeGRN(
   let vendorName = null
   let companyName = null
   if (updatedGRN && updatedGRN.vendorId) {
-    const vendor = await Vendor.findOne({ id: updatedGRN.vendorId }).select('id name').lean()
+    const vendor = await Vendor.findOne({ id: updatedGRN.vendorId }).select('id name email').lean()
     if (vendor) {
       vendorName = (vendor as any).name
+      
+      // ========================================================================
+      // EMAIL NOTIFICATION: GRN Acknowledged - Notify Vendor
+      // ========================================================================
+      if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true' && (vendor as any).email) {
+        sendGRNAcknowledgedNotification(
+          (vendor as any).email,
+          (vendor as any).name || 'Vendor',
+          grnId,
+          {
+            poNumber: updatedGRN.poNumber,
+            acknowledgedBy,
+          }
+        ).catch(err => console.warn(`[acknowledgeGRN] ⚠️ Vendor notification failed (non-fatal): ${err.message}`))
+        console.log(`[acknowledgeGRN] 📧 GRN acknowledged notification queued for Vendor ${(vendor as any).email}`)
+      }
     }
   }
   if (updatedGRN && updatedGRN.companyId) {
@@ -24369,9 +25390,25 @@ export async function approveGRN(
   let vendorName = null
   let companyName = null
   if (updatedGRN && updatedGRN.vendorId) {
-    const vendor = await Vendor.findOne({ id: updatedGRN.vendorId }).select('id name').lean()
+    const vendor = await Vendor.findOne({ id: updatedGRN.vendorId }).select('id name email').lean()
     if (vendor) {
       vendorName = (vendor as any).name
+      
+      // ========================================================================
+      // EMAIL NOTIFICATION: GRN Approved - Notify Vendor
+      // ========================================================================
+      if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true' && (vendor as any).email) {
+        sendGRNApprovedNotification(
+          (vendor as any).email,
+          (vendor as any).name || 'Vendor',
+          grnId,
+          {
+            poNumber: updatedGRN.poNumber,
+            approvedBy,
+          }
+        ).catch(err => console.warn(`[approveGRN] ⚠️ Vendor notification failed (non-fatal): ${err.message}`))
+        console.log(`[approveGRN] 📧 GRN approved notification queued for Vendor ${(vendor as any).email}`)
+      }
     }
   }
   if (updatedGRN && updatedGRN.companyId) {
@@ -24465,7 +25502,7 @@ export async function createInvoiceByVendor(
   
   // Get products from Uniform model (using product codes which are stored in 'id' field)
   const products = await Uniform.find({ id: { $in: productCodes } })
-    .select('id name _id')
+    .select('id name _id price')
     .lean()
   
   const productMap = new Map(products.map((p: any) => [p.id, p]))
@@ -24503,6 +25540,26 @@ export async function createInvoiceByVendor(
     priceMap.set(p.id, price)
   })
   
+  // ========================================================================
+  // POST-DELIVERY EXTENSION: For manual orders, get prices from original Order
+  // if ProductVendor prices are not available
+  // ========================================================================
+  let orderItemPriceMap = new Map<string, number>()
+  const grnOrderId = (grn as any).orderId
+  if (grnOrderId) {
+    const originalOrder = await Order.findOne({ id: grnOrderId }).select('items').lean()
+    if (originalOrder && originalOrder.items) {
+      for (const item of originalOrder.items) {
+        const itemProductCode = (item as any).productId || (item as any).uniformId || ''
+        const itemPrice = (item as any).price || 0
+        if (itemProductCode && itemPrice > 0) {
+          orderItemPriceMap.set(itemProductCode, itemPrice)
+        }
+      }
+      console.log(`[createInvoiceByVendor] 📦 Manual order ${grnOrderId}: Found ${orderItemPriceMap.size} item price(s) from original order`)
+    }
+  }
+  
   // Build invoice items from GRN items
   const invoiceItems: Array<{
     productCode: string
@@ -24517,7 +25574,19 @@ export async function createInvoiceByVendor(
   
   for (const grnItem of grn.items) {
     const product = productMap.get(grnItem.productCode)
-    const unitPrice = priceMap.get(grnItem.productCode) || 0
+    
+    // Price lookup priority:
+    // 1. ProductVendor price (for PR→PO orders)
+    // 2. Original Order item price (for manual orders)
+    // 3. Product catalog price (fallback)
+    let unitPrice = priceMap.get(grnItem.productCode) || 0
+    if (unitPrice === 0) {
+      unitPrice = orderItemPriceMap.get(grnItem.productCode) || 0
+    }
+    if (unitPrice === 0 && product?.price) {
+      unitPrice = product.price
+    }
+    
     const quantity = grnItem.deliveredQuantity || grnItem.orderedQuantity || 0
     const lineTotal = unitPrice * quantity
     
@@ -24557,6 +25626,7 @@ export async function createInvoiceByVendor(
   }
   
   // Create Invoice with all required fields
+  // POST-DELIVERY EXTENSION: Include orderId and sourceType from GRN for manual orders
   const invoice = await Invoice.create({
     id: invoiceId,
     invoiceId: invoiceId,
@@ -24569,8 +25639,11 @@ export async function createInvoiceByVendor(
     grnId: grnId,
     grnNumber: grn.grnNumber,
     grnApprovedDate: grn.approvedAt || null,
-    poNumber: grn.poNumber,
+    poNumber: grn.poNumber || null, // May be null for manual orders
     prNumbers: grn.prNumbers || [],
+    // POST-DELIVERY EXTENSION: Direct order reference for manual orders
+    orderId: (grn as any).orderId || null,
+    sourceType: (grn as any).sourceType || 'PR_PO',
     invoiceItems: invoiceItems,
     invoiceAmount: finalAmount,
     invoiceStatus: 'RAISED',
@@ -24599,6 +25672,36 @@ export async function createInvoiceByVendor(
     (result as any).companyName = company.name
   }
   
+  // ========================================================================
+  // EMAIL NOTIFICATION: Invoice Created - Notify Company Admins
+  // POST-DELIVERY EXTENSION: Handle manual orders (no PO number)
+  // ========================================================================
+  if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true' && grn.companyId) {
+    try {
+      const companyAdmins = await resolveCompanyAdminRecipients(grn.companyId)
+      // For manual orders, show Order ID instead of PO number
+      const referenceNumber = grn.poNumber || ((grn as any).orderId ? `Manual Order: ${(grn as any).orderId}` : grnId)
+      
+      for (const admin of companyAdmins) {
+        sendInvoiceCreatedNotification(
+          admin.email,
+          admin.name,
+          invoiceId,
+          {
+            grnNumber: grn.grnNumber || grnId,
+            poNumber: referenceNumber,
+            vendorName: vendorForQuery?.name || 'Vendor',
+            companyName: company?.name || '',
+            invoiceAmount: finalAmount.toString(),
+          }
+        ).catch(err => console.warn(`[createInvoiceByVendor] ⚠️ Company Admin notification failed (non-fatal): ${err.message}`))
+        console.log(`[createInvoiceByVendor] 📧 Invoice notification queued for Company Admin ${admin.email}`)
+      }
+    } catch (notifError: any) {
+      console.warn(`[createInvoiceByVendor] ⚠️ Failed to send notifications: ${notifError.message}`)
+    }
+  }
+  
   return result
 }
 
@@ -24622,10 +25725,47 @@ export async function getInvoicesByVendor(vendorId: string): Promise<any[]> {
   
   const companyMap = new Map(companies.map((c: any) => [c.id, c.name]))
   
+  // Get rejection details for rejected invoices
+  const rejectedInvoiceIds = invoices
+    .filter((inv: any) => inv.unified_invoice_status === 'REJECTED' || inv.invoiceStatus === 'REJECTED')
+    .map((inv: any) => inv.id)
+  
+  let rejectionMap = new Map()
+  if (rejectedInvoiceIds.length > 0) {
+    try {
+      const WorkflowRejection = (await import('../models/WorkflowRejection')).default
+      const rejections = await WorkflowRejection.find({
+        entityType: 'INVOICE',
+        entityId: { $in: rejectedInvoiceIds }
+      })
+        .sort({ createdAt: -1 })
+        .lean()
+      
+      // Map by entityId (get the latest rejection for each invoice)
+      for (const rej of rejections) {
+        if (!rejectionMap.has(rej.entityId)) {
+          rejectionMap.set(rej.entityId, {
+            rejectionReasonCode: rej.reasonCode,
+            rejectionReasonLabel: rej.reasonLabel,
+            rejectionRemarks: rej.remarks,
+            rejectedBy: rej.rejectedByName || rej.rejectedBy,
+            rejectedAt: rej.createdAt,
+          })
+        }
+      }
+    } catch (err) {
+      console.warn('[getInvoicesByVendor] Could not fetch rejection details:', err)
+    }
+  }
+  
   return invoices.map((invoice: any) => {
     const plain = toPlainObject(invoice)
     if (plain.companyId && companyMap.has(plain.companyId)) {
       (plain as any).companyName = companyMap.get(plain.companyId)
+    }
+    // Add rejection details if invoice was rejected
+    if (rejectionMap.has(plain.id)) {
+      Object.assign(plain, rejectionMap.get(plain.id))
     }
     return plain
   })
@@ -24714,12 +25854,30 @@ export async function approveInvoice(
   const invoiceIdStr = invoice.id || String(invoice._id || '')
   const updatedInvoice = await Invoice.findOne({ id: invoiceIdStr }).lean()
   
-  const vendor = await Vendor.findOne({ id: invoice.vendorId }).select('id name').lean()
+  const vendor = await Vendor.findOne({ id: invoice.vendorId }).select('id name email').lean()
   const company = await Company.findOne({ id: invoice.companyId }).select('id name').lean()
   
   const result = toPlainObject(updatedInvoice)
   if (vendor) {
     (result as any).vendorName = vendor.name
+    
+    // ========================================================================
+    // EMAIL NOTIFICATION: Invoice Approved - Notify Vendor
+    // ========================================================================
+    if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true' && (vendor as any).email) {
+      sendInvoiceApprovedNotification(
+        (vendor as any).email,
+        (vendor as any).name || 'Vendor',
+        invoiceId,
+        {
+          grnNumber: updatedInvoice?.grnNumber || '',
+          poNumber: updatedInvoice?.poNumber || '',
+          approvedBy,
+          invoiceAmount: updatedInvoice?.invoiceAmount?.toString() || '',
+        }
+      ).catch(err => console.warn(`[approveInvoice] ⚠️ Vendor notification failed (non-fatal): ${err.message}`))
+      console.log(`[approveInvoice] 📧 Invoice approved notification queued for Vendor ${(vendor as any).email}`)
+    }
   }
   if (company) {
     (result as any).companyName = company.name

@@ -4,3 +4,12 @@
     "silent": true
   }
 }
+
+{
+  "crons": [
+    {
+      "path": "/api/admin/notifications/queue/process",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

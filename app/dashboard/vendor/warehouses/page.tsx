@@ -32,20 +32,15 @@ export default function VendorWarehousesPage() {
       try {
         setLoading(true)
         
-        // Get vendor ID using the same method as other vendor pages
+        // SECURITY FIX: Use ONLY sessionStorage (tab-specific) - NO localStorage fallback
         const { getVendorId, getAuthData } = typeof window !== 'undefined' 
           ? await import('@/lib/utils/auth-storage') 
           : { getVendorId: () => null, getAuthData: () => null }
         
-        // Try sessionStorage first (from current login) - MOST RELIABLE
-        let storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
+        // Use ONLY sessionStorage (tab-specific)
+        const storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
         
-        // Fallback to localStorage (may be stale)
-        if (!storedVendorId) {
-          storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-        }
-        
-        console.log('[VendorWarehousesPage] VendorId resolved:', storedVendorId)
+        console.log('[VendorWarehousesPage] VendorId from sessionStorage:', storedVendorId)
         
         if (storedVendorId) {
           setVendorId(storedVendorId)

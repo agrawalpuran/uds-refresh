@@ -31,8 +31,8 @@
 
 import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
-import { Plus, Search, Edit, Package, Save, X } from 'lucide-react'
-import { getProductsByVendor, getVendorInventory, updateVendorInventory, getLowStockItems, getVendorByEmail, getProductById } from '@/lib/data-mongodb'
+import { Plus, Search, Edit, Package, Save, X, Building2 } from 'lucide-react'
+import { getProductsByVendor, getVendorInventory, updateVendorInventory, getLowStockItems, getVendorByEmail, getProductById, getCompaniesByVendor, getProductsByVendorAndCompany } from '@/lib/data-mongodb'
 import Image from 'next/image'
 import { getUniformImage } from '@/lib/utils/image-mapping'
 
@@ -47,6 +47,9 @@ export default function InventoryPage() {
   const [editingThresholds, setEditingThresholds] = useState<{ [size: string]: number }>({})
   const [saving, setSaving] = useState(false)
   const [lowStockItems, setLowStockItems] = useState<any[]>([])
+  const [companies, setCompanies] = useState<any[]>([])
+  const [filterCompany, setFilterCompany] = useState<string>('all') // 'all' shows all products
+  const [companiesLoading, setCompaniesLoading] = useState(true)
   
   // Get vendor ID from localStorage (set during login)
   useEffect(() => {
@@ -54,28 +57,19 @@ export default function InventoryPage() {
       try {
         setLoading(true)
         
-        // CRITICAL FIX: Prioritize sessionStorage (from current login) over localStorage (may be stale)
-        // sessionStorage is tab-specific and set during login, localStorage may have old data from previous login
+        // SECURITY FIX: Use ONLY sessionStorage (tab-specific) - NO localStorage fallback
+        // localStorage is shared across tabs and causes session cross-contamination
         const { getUserEmail, getVendorId, getAuthData } = typeof window !== 'undefined' 
           ? await import('@/lib/utils/auth-storage') 
           : { getUserEmail: () => null, getVendorId: () => null, getAuthData: () => null }
         
-        // STEP 1: Try sessionStorage first (from current login) - MOST RELIABLE
+        // Use ONLY sessionStorage (tab-specific)
         let targetVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
         const storedUserEmail = getUserEmail('vendor')
         
-        console.log('[Inventory] 🔍 VendorId resolution (priority order):')
-        console.log('[Inventory]   1. sessionStorage (getVendorId):', getVendorId())
-        console.log('[Inventory]   2. sessionStorage (getAuthData):', getAuthData('vendor')?.vendorId)
+        console.log('[Inventory] 🔍 VendorId from sessionStorage:', targetVendorId)
         
-        // STEP 2: Fallback to localStorage (may be stale, but better than nothing)
-        if (!targetVendorId) {
-          const localStorageVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-          console.log('[Inventory]   3. localStorage (fallback):', localStorageVendorId)
-          targetVendorId = localStorageVendorId
-        }
-        
-        // STEP 3: If vendorId is still not found but userEmail exists, try to get vendor by email
+        // If vendorId is not found but userEmail exists, try to get vendor by email
         if (!targetVendorId && storedUserEmail) {
           console.log('[Inventory]   4. Email lookup (last resort):', storedUserEmail)
           console.log('[Inventory] vendorId not found, trying to get vendor by email:', storedUserEmail)
@@ -125,30 +119,20 @@ export default function InventoryPage() {
         console.log('[Inventory] Loading data for vendorId:', targetVendorId)
         setVendorId(targetVendorId)
         
-        // Load products linked to this vendor (PRIMARY METHOD)
-        console.log('[Inventory] Fetching products for vendor:', targetVendorId)
-        let vendorProducts = await getProductsByVendor(targetVendorId)
-        console.log('[Inventory] Products from getProductsByVendor:', vendorProducts.length)
-        console.log('[Inventory] Product names:', vendorProducts.map((p: any) => `${p.name} (${p.sku})`))
-        
-        // CRITICAL: NO FALLBACK - ProductVendor relationships are the SINGLE SOURCE OF TRUTH
-        // If no products are returned, vendor has no assigned products
-        // Do NOT fall back to inventory records - this would show unassigned products
-        if (vendorProducts.length === 0) {
-          console.warn('[Inventory] ⚠️ No products from getProductsByVendor - vendor has no products assigned via ProductVendor relationships')
-          console.warn('[Inventory] ⚠️ NOT using fallback to inventory records (would violate access control)')
-          console.warn('[Inventory] ⚠️ Vendor must have products assigned by Super Admin to see them in catalog/inventory')
-          
-          // Still fetch inventory for display (if any exists), but don't use it to derive products
-          // Inventory is only used for displaying stock levels for products that are already assigned
-          const inventory = await getVendorInventory(targetVendorId)
-          console.log('[Inventory] Inventory records found (for display only, NOT used to derive products):', inventory.length)
+        // Fetch companies for this vendor first
+        try {
+          setCompaniesLoading(true)
+          const vendorCompanies = await getCompaniesByVendor(targetVendorId)
+          console.log('[Inventory] ✅ Loaded', vendorCompanies.length, 'companies for vendor', targetVendorId)
+          setCompanies(vendorCompanies)
+          // Default filter is 'all' - shows products for all companies
+        } catch (error) {
+          console.error('[Inventory] Error loading companies:', error)
+        } finally {
+          setCompaniesLoading(false)
         }
         
-        console.log('[Inventory] Final products count:', vendorProducts.length)
-        setProducts(vendorProducts)
-        
-        // Load inventory data for all products
+        // Load inventory data for all products (needed for inventory management)
         console.log('[Inventory] Fetching inventory for vendor:', targetVendorId)
         const inventory = await getVendorInventory(targetVendorId)
         console.log('[Inventory] Inventory records received:', inventory.length)
@@ -161,6 +145,8 @@ export default function InventoryPage() {
         // Load low stock items
         const lowStock = await getLowStockItems(targetVendorId)
         setLowStockItems(lowStock)
+        
+        // Products will be loaded by the company filter effect
       } catch (error) {
         console.error('[Inventory] Error loading inventory:', error)
       } finally {
@@ -170,6 +156,49 @@ export default function InventoryPage() {
     
     loadData()
   }, [])
+  
+  // Effect to filter products when company filter changes
+  useEffect(() => {
+    const filterByCompany = async () => {
+      if (!vendorId) {
+        setProducts([])
+        return
+      }
+
+      try {
+        setLoading(true)
+        
+        if (filterCompany === 'all') {
+          // Fetch all products for the vendor (across all companies)
+          const allProducts = await getProductsByVendor(vendorId)
+          console.log('[Inventory] Loaded', allProducts.length, 'products for all companies')
+          setProducts(allProducts)
+        } else {
+          // Fetch products filtered by specific company
+          const filteredProducts = await getProductsByVendorAndCompany(vendorId, filterCompany)
+          console.log('[Inventory] Loaded', filteredProducts.length, 'products for company', filterCompany)
+          setProducts(filteredProducts)
+        }
+        
+        // Refresh inventory data for these products
+        const inventory = await getVendorInventory(vendorId)
+        const inventoryMap = new Map()
+        inventory.forEach((inv: any) => {
+          inventoryMap.set(inv.productId, inv)
+        })
+        setInventoryData(inventoryMap)
+      } catch (error) {
+        console.error('[Inventory] Error filtering products by company:', error)
+        setProducts([])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    if (companies.length > 0 && vendorId) {
+      filterByCompany()
+    }
+  }, [filterCompany, companies, vendorId])
   
   const handleEdit = (product: any) => {
     const inventory = inventoryData.get(product.id)
@@ -293,8 +322,35 @@ export default function InventoryPage() {
           </div>
         )}
 
-        {/* Search */}
+        {/* Filters */}
         <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Company Filter - Required */}
+            <div className="relative">
+              <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <select
+                value={filterCompany}
+                onChange={(e) => setFilterCompany(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+                disabled={companiesLoading}
+              >
+                {companiesLoading ? (
+                  <option value="all">Loading companies...</option>
+                ) : companies.length === 0 ? (
+                  <option value="all">No companies mapped</option>
+                ) : (
+                  <>
+                    <option value="all">All Companies</option>
+                    {companies.map((company) => (
+                      <option key={company.id} value={company.id}>
+                        {company.name}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </div>
+            {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
             <input
@@ -304,6 +360,7 @@ export default function InventoryPage() {
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
+            </div>
           </div>
         </div>
 

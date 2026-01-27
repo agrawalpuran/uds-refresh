@@ -40,7 +40,7 @@ Write-Host "Full Path: $backupRoot" -ForegroundColor Yellow
 Write-Host ""
 
 # Create backup directory structure
-Write-Host "📁 Creating backup directory structure..." -ForegroundColor Green
+Write-Host "[1/5] Creating backup directory structure..." -ForegroundColor Green
 $applicationDir = Join-Path $backupRoot "application"
 $databaseDir = Join-Path $backupRoot "database"
 
@@ -48,7 +48,7 @@ New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $applicationDir -Force | Out-Null
 New-Item -ItemType Directory -Path $databaseDir -Force | Out-Null
 
-Write-Host "✅ Backup directory structure created" -ForegroundColor Green
+Write-Host "  [OK] Backup directory structure created" -ForegroundColor Green
 Write-Host ""
 
 # Directories/files to exclude from backup
@@ -96,7 +96,7 @@ function Should-Exclude {
 }
 
 # Backup application filesystem
-Write-Host "📦 Backing up application filesystem..." -ForegroundColor Green
+Write-Host "[2/5] Backing up application filesystem..." -ForegroundColor Green
 $startTime = Get-Date
 
 $filesCopied = 0
@@ -122,19 +122,19 @@ Get-ChildItem -Path $projectRoot -Recurse | ForEach-Object {
                 $filesCopied++
             }
         } catch {
-            Write-Warning "⚠️  Could not copy $relativePath : $_"
+            Write-Warning "  [WARN] Could not copy $relativePath"
         }
     }
 }
 
 $duration = ((Get-Date) - $startTime).TotalSeconds
-Write-Host "✅ Application backup completed in $([math]::Round($duration, 2))s" -ForegroundColor Green
-Write-Host "   Files copied: $filesCopied" -ForegroundColor Gray
-Write-Host "   Directories copied: $dirsCopied" -ForegroundColor Gray
+Write-Host "  [OK] Application backup completed in $([math]::Round($duration, 2))s" -ForegroundColor Green
+Write-Host "       Files copied: $filesCopied" -ForegroundColor Gray
+Write-Host "       Directories copied: $dirsCopied" -ForegroundColor Gray
 Write-Host ""
 
 # Backup MongoDB database
-Write-Host "💾 Backing up MongoDB database..." -ForegroundColor Green
+Write-Host "[3/5] Backing up MongoDB database..." -ForegroundColor Green
 
 # Check if mongodump is available
 $mongodumpAvailable = $false
@@ -142,52 +142,45 @@ try {
     $null = Get-Command mongodump -ErrorAction Stop
     $mongodumpAvailable = $true
 } catch {
-    Write-Host "   ℹ️  mongodump not found, using Node.js backup method..." -ForegroundColor Yellow
+    Write-Host "       mongodump not found, using Node.js backup method..." -ForegroundColor Yellow
 }
 
 if ($mongodumpAvailable) {
     # Use mongodump
-    Write-Host "   Using mongodump..." -ForegroundColor Gray
+    Write-Host "       Using mongodump..." -ForegroundColor Gray
     
     $dumpDir = Join-Path $databaseDir "dump"
     $dumpCommand = "mongodump --uri=`"$mongodbUri`" --out=`"$databaseDir`""
     
     try {
         Invoke-Expression $dumpCommand
-        Write-Host "✅ Database backup completed using mongodump" -ForegroundColor Green
+        Write-Host "  [OK] Database backup completed using mongodump" -ForegroundColor Green
     } catch {
-        Write-Warning "⚠️  mongodump failed, trying Node.js method..."
+        Write-Warning "  [WARN] mongodump failed, trying Node.js method..."
         $mongodumpAvailable = $false
     }
 }
 
 if (-not $mongodumpAvailable) {
     # Use Node.js backup script
-    Write-Host "   Using Node.js backup method..." -ForegroundColor Gray
+    Write-Host "       Using Node.js backup method..." -ForegroundColor Gray
     
     $backupScript = Join-Path $scriptDir "backup-database.js"
     if (Test-Path $backupScript) {
         $env:MONGODB_URI = $mongodbUri
+        $env:BACKUP_OUTPUT_DIR = $databaseDir
         $output = node $backupScript 2>&1
-        
-        # Move backup file if it was created in a different location
-        $backupFiles = Get-ChildItem -Path (Split-Path -Parent $projectRoot) -Filter "mongodb-backup-*" -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if ($backupFiles) {
-            $backupJson = Get-ChildItem -Path $backupFiles.FullName -Filter "database-backup.json" -Recurse | Select-Object -First 1
-            if ($backupJson) {
-                Copy-Item -Path $backupJson.FullName -Destination (Join-Path $databaseDir "database-backup.json") -Force
-                Write-Host "✅ Database backup completed using Node.js method" -ForegroundColor Green
-            }
-        }
+        Write-Host $output
+        Write-Host "  [OK] Database backup completed using Node.js method" -ForegroundColor Green
     } else {
-        Write-Warning "⚠️  backup-database.js not found, skipping database backup"
+        Write-Warning "  [WARN] backup-database.js not found, skipping database backup"
     }
 }
 
 Write-Host ""
 
 # Create backup manifest
-Write-Host "📋 Creating backup manifest..." -ForegroundColor Green
+Write-Host "[4/5] Creating backup manifest..." -ForegroundColor Green
 
 $manifest = @{
     backupType = "complete"
@@ -200,7 +193,6 @@ $manifest = @{
         excluded = $excludePatterns
     }
     database = @{
-        uri = $mongodbUri -replace "//[^:]+:[^@]+@", "//***:***@"
         destination = $databaseDir
         method = if ($mongodumpAvailable) { "mongodump" } else { "nodejs" }
     }
@@ -214,11 +206,11 @@ $manifest = @{
 $manifestFile = Join-Path $backupRoot "BACKUP_MANIFEST.json"
 $manifest | ConvertTo-Json -Depth 10 | Set-Content -Path $manifestFile -Encoding UTF8
 
-Write-Host "✅ Manifest created" -ForegroundColor Green
+Write-Host "  [OK] Manifest created" -ForegroundColor Green
 Write-Host ""
 
 # Calculate backup size
-Write-Host "📊 Calculating backup size..." -ForegroundColor Green
+Write-Host "[5/5] Calculating backup size..." -ForegroundColor Green
 $backupSize = (Get-ChildItem -Path $backupRoot -Recurse -File | Measure-Object -Property Length -Sum).Sum
 
 function Format-Size {
@@ -236,13 +228,13 @@ function Format-Size {
 }
 
 $formattedSize = Format-Size $backupSize
-Write-Host "   Total backup size: $formattedSize" -ForegroundColor Gray
+Write-Host "       Total backup size: $formattedSize" -ForegroundColor Gray
 Write-Host ""
 
 # Create compressed archive if requested
 $zipFile = $null
 if ($Compress) {
-    Write-Host "🗜️  Creating compressed archive..." -ForegroundColor Green
+    Write-Host "[EXTRA] Creating compressed archive..." -ForegroundColor Green
     
     $zipFileName = "$backupDirName.zip"
     $zipFilePath = Join-Path $BackupLocation $zipFileName
@@ -260,14 +252,14 @@ if ($Compress) {
         $zipSize = (Get-Item $zipFilePath).Length
         $zipFormattedSize = Format-Size $zipSize
         
-        Write-Host "✅ Compressed archive created: $zipFileName" -ForegroundColor Green
-        Write-Host "   Archive size: $zipFormattedSize" -ForegroundColor Gray
-        Write-Host "   Compression ratio: $([math]::Round((1 - ($zipSize / $backupSize)) * 100, 2))%" -ForegroundColor Gray
+        Write-Host "  [OK] Compressed archive created: $zipFileName" -ForegroundColor Green
+        Write-Host "       Archive size: $zipFormattedSize" -ForegroundColor Gray
+        Write-Host "       Compression ratio: $([math]::Round((1 - ($zipSize / $backupSize)) * 100, 2))%" -ForegroundColor Gray
         Write-Host ""
         
         $zipFile = $zipFilePath
     } catch {
-        Write-Warning "⚠️  Failed to create compressed archive: $_"
+        Write-Warning "  [WARN] Failed to create compressed archive"
     }
 }
 
@@ -276,7 +268,7 @@ $totalDuration = ((Get-Date) - $startTime).TotalSeconds
 
 $separator = [string]::new('=', 80)
 Write-Host $separator -ForegroundColor Cyan
-Write-Host "✅ COMPLETE BACKUP COMPLETED SUCCESSFULLY" -ForegroundColor Green
+Write-Host "COMPLETE BACKUP COMPLETED SUCCESSFULLY" -ForegroundColor Green
 Write-Host $separator -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Backup Location: $backupRoot" -ForegroundColor Yellow
@@ -292,7 +284,5 @@ if ($zipFile) {
     Write-Host "  [Archive] $zipFile" -ForegroundColor White
 }
 Write-Host ""
-$separator = [string]::new('=', 80)
 Write-Host $separator -ForegroundColor Cyan
 Write-Host ""
-

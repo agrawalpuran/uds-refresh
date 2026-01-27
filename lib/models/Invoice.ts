@@ -21,12 +21,17 @@ export interface IInvoice extends Document {
   grnId: string // GRN ID this invoice is for (unique: one invoice per GRN)
   grnNumber: string // GRN number (for reference)
   grnApprovedDate?: Date // GRN approval date
-  poNumber: string // PO number (for reference)
+  poNumber?: string // PO number (for reference) - optional for MANUAL orders
   prNumbers: string[] // Array of PR numbers associated with the PO
+  // ============================================================================
+  // MANUAL ORDER SUPPORT (Post-Delivery Workflow Extension)
+  // ============================================================================
+  orderId?: string // Direct order reference (for MANUAL orders without PO)
+  sourceType?: 'PR_PO' | 'MANUAL' // Invoice source type: PR_PO (from PO) or MANUAL (direct from order)
   invoiceItems: IInvoiceItem[] // Invoice line items (derived from GRN/PR items)
   invoiceAmount: number // Total invoice amount
   /** @deprecated Use unified_invoice_status instead. Cleanup Phase: 5, Flag: FEATURE_FLAG_REMOVE_OLD_FIELDS */
-  invoiceStatus: 'RAISED' | 'APPROVED' // Invoice status
+  invoiceStatus: 'RAISED' | 'APPROVED' | 'REJECTED' // Invoice status
   raisedBy: string // Vendor ID who raised the invoice
   approvedBy?: string // Company admin identifier who approved (nullable)
   approvedAt?: Date // Timestamp of approval (nullable)
@@ -171,15 +176,37 @@ const InvoiceSchema = new Schema<IInvoice>(
     },
     poNumber: {
       type: String,
-      required: true,
+      required: false, // Made optional to support MANUAL orders (without PO)
       trim: true,
       maxlength: 50,
       index: true,
+      // NOTE: For PR_PO orders, this is required (validated in business logic)
+      // For MANUAL orders, this can be null/undefined
     },
     prNumbers: {
       type: [String],
       required: true,
       default: [],
+    },
+    // ============================================================================
+    // MANUAL ORDER SUPPORT (Post-Delivery Workflow Extension)
+    // ============================================================================
+    orderId: {
+      type: String,
+      required: false, // For MANUAL orders, this references the Order.id directly
+      index: true,
+      validate: {
+        validator: function(v: string) {
+          return !v || /^[A-Za-z0-9_-]{1,50}$/.test(v)
+        },
+        message: 'Order ID must be alphanumeric (1-50 characters)'
+      }
+    },
+    sourceType: {
+      type: String,
+      enum: ['PR_PO', 'MANUAL'],
+      default: 'PR_PO', // Default to PR_PO for backward compatibility
+      index: true,
     },
     invoiceItems: {
       type: [InvoiceItemSchema],
@@ -193,7 +220,7 @@ const InvoiceSchema = new Schema<IInvoice>(
     },
     invoiceStatus: {
       type: String,
-      enum: ['RAISED', 'APPROVED'],
+      enum: ['RAISED', 'APPROVED', 'REJECTED'],
       default: 'RAISED',
       required: true,
       index: true,
@@ -237,6 +264,9 @@ InvoiceSchema.index({ companyId: 1, invoiceStatus: 1 }) // Compound index for in
 InvoiceSchema.index({ vendorId: 1, invoiceStatus: 1 }) // Compound index for invoice status queries by vendor
 InvoiceSchema.index({ invoiceDate: -1 }) // Index for date-based queries
 InvoiceSchema.index({ vendorId: 1, createdAt: -1 }) // Index for vendor invoice queries
+// Post-Delivery Workflow Extension indexes
+InvoiceSchema.index({ orderId: 1 }, { sparse: true }) // Index for manual order invoices
+InvoiceSchema.index({ sourceType: 1, vendorId: 1 }) // Index for querying invoices by source type
 
 // Pre-save hook to set invoiceId = id (alias for consistency)
 InvoiceSchema.pre('save', function(next) {

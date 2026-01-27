@@ -24,11 +24,8 @@ export default function CompanyGRNPage() {
         ? await import('@/lib/utils/auth-storage') 
         : { getCompanyId: () => null, getAuthData: () => null }
       
-      let storedCompanyId = getCompanyId() || getAuthData('company')?.companyId || null
-      
-      if (!storedCompanyId) {
-        storedCompanyId = typeof window !== 'undefined' ? localStorage.getItem('companyId') : null
-      }
+      // SECURITY FIX: No localStorage fallback
+      const storedCompanyId = getCompanyId() || getAuthData('company')?.companyId || null
       
       if (storedCompanyId) {
         setCompanyId(storedCompanyId)

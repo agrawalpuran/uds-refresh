@@ -119,9 +119,11 @@ export async function POST(request: Request) {
     }
     
     // Validate required fields
-    if (!productData.name || !productData.companyId) {
+    // Note: companyId is NOT required here - products are created independently
+    // and linked to companies via ProductCompany relationship mapping table
+    if (!productData.name) {
       return NextResponse.json({ 
-        error: 'Product name and company ID are required' 
+        error: 'Product name is required' 
       }, { status: 400 })
     }
 

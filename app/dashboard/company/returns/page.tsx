@@ -20,9 +20,9 @@ export default function CompanyReturnsPage() {
       const loadData = async () => {
         try {
           setLoading(true)
-          const storedCompanyId = localStorage.getItem('companyId')
-          // CRITICAL SECURITY FIX: Use only tab-specific auth storage
-          const { getUserEmail } = await import('@/lib/utils/auth-storage')
+          // SECURITY FIX: Use ONLY sessionStorage (tab-specific) - NO localStorage
+          const { getUserEmail, getCompanyId } = await import('@/lib/utils/auth-storage')
+          const storedCompanyId = getCompanyId()
           const userEmail = getUserEmail('company')
           
           // Check if user is Location Admin

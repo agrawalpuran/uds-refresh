@@ -1,9 +1,9 @@
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
-import { Search, CheckCircle, XCircle, Package, Truck, RefreshCw, Warehouse } from 'lucide-react'
+import { Search, CheckCircle, XCircle, Package, Truck, RefreshCw, Warehouse, Building2 } from 'lucide-react'
 import { useState, useEffect } from 'react'
-import { getOrdersByVendor, updateOrderStatus } from '@/lib/data-mongodb'
+import { getOrdersByVendor, updateOrderStatus, getCompaniesByVendor } from '@/lib/data-mongodb'
 import { maskEmployeeName, maskAddress } from '@/lib/utils/data-masking'
 
 interface Warehouse {
@@ -20,8 +20,13 @@ interface Warehouse {
 
 export default function VendorReplacementOrdersPage() {
   const [orders, setOrders] = useState<any[]>([])
+  const [allOrders, setAllOrders] = useState<any[]>([]) // Store all orders before company filtering
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
+  // Company filter states
+  const [companies, setCompanies] = useState<any[]>([])
+  const [filterCompany, setFilterCompany] = useState<string>('all')
+  const [companiesLoading, setCompaniesLoading] = useState(true)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [loadingWarehouses, setLoadingWarehouses] = useState(false)
   const [manualCouriers, setManualCouriers] = useState<Array<{ courierCode: string, courierName: string }>>([])
@@ -158,9 +163,7 @@ export default function VendorReplacementOrdersPage() {
       
       let storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
       
-      if (!storedVendorId) {
-        storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-      }
+      // SECURITY FIX: No localStorage fallback
       
       console.log('[ReplacementOrders] VendorId resolved:', storedVendorId)
       
@@ -168,10 +171,25 @@ export default function VendorReplacementOrdersPage() {
         const vendorOrders = await getOrdersByVendor(storedVendorId)
         const replacementOrders = vendorOrders.filter((order: any) => order.orderType === 'REPLACEMENT')
         console.log('Loaded replacement orders:', replacementOrders.length)
+        setAllOrders(replacementOrders) // Store all replacement orders
         setOrders(replacementOrders)
+        
+        // Load companies for filter
+        try {
+          setCompaniesLoading(true)
+          const vendorCompanies = await getCompaniesByVendor(storedVendorId)
+          console.log('[ReplacementOrders] Loaded companies for vendor:', vendorCompanies.length)
+          setCompanies(vendorCompanies)
+        } catch (companyError) {
+          console.error('[ReplacementOrders] Error loading companies:', companyError)
+        } finally {
+          setCompaniesLoading(false)
+        }
       } else {
         console.warn('No vendor ID found')
         setOrders([])
+        setAllOrders([])
+        setCompaniesLoading(false)
       }
     } catch (error) {
       console.error('Error loading replacement orders:', error)
@@ -188,9 +206,7 @@ export default function VendorReplacementOrdersPage() {
         : { getVendorId: () => null, getAuthData: () => null }
 
       let storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
-      if (!storedVendorId) {
-        storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-      }
+      // SECURITY FIX: No localStorage fallback
 
       if (storedVendorId) {
         const response = await fetch(`/api/vendor/warehouses?vendorId=${storedVendorId}`)
@@ -334,6 +350,22 @@ export default function VendorReplacementOrdersPage() {
     loadPackages()
   }, [])
 
+  // Effect to filter orders when company filter changes
+  useEffect(() => {
+    if (allOrders.length === 0) return
+    
+    if (filterCompany === 'all') {
+      setOrders(allOrders)
+    } else {
+      const filtered = allOrders.filter((order: any) => {
+        const orderCompanyId = order.companyId?.id || order.companyId || order.companyIdNum?.toString()
+        return orderCompanyId === filterCompany
+      })
+      console.log(`[ReplacementOrders] Filtered to ${filtered.length} orders for company ${filterCompany}`)
+      setOrders(filtered)
+    }
+  }, [filterCompany, allOrders])
+
   // Auto-select courier when couriers are loaded and routing is available
   useEffect(() => {
     const hasRouting = !!vendorRouting
@@ -432,10 +464,8 @@ export default function VendorReplacementOrdersPage() {
       ? await import('@/lib/utils/auth-storage')
       : { getVendorId: () => null, getAuthData: () => null }
 
-    let storedVendorId = getVendorId?.() || null
-    if (!storedVendorId) {
-      storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-    }
+    // SECURITY FIX: No localStorage fallback
+    const storedVendorId = getVendorId?.() || null
 
     if (!storedVendorId) {
       alert('Vendor ID not found. Please log in again.')
@@ -651,9 +681,7 @@ export default function VendorReplacementOrdersPage() {
         : { getVendorId: () => null, getAuthData: () => null }
 
       let storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
-      if (!storedVendorId) {
-        storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-      }
+      // SECURITY FIX: No localStorage fallback
 
       if (!storedVendorId) {
         throw new Error('Vendor ID not found. Please log in again.')
@@ -772,7 +800,9 @@ export default function VendorReplacementOrdersPage() {
         timestamp: new Date().toISOString()
       })
       
-      const storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
+      // SECURITY FIX: Use sessionStorage only
+      const { getVendorId: getVendorIdAuth } = await import('@/lib/utils/auth-storage')
+      const storedVendorId = getVendorIdAuth()
       if (!storedVendorId) {
         throw new Error('Vendor ID not found. Please log in again.')
       }
@@ -811,17 +841,44 @@ export default function VendorReplacementOrdersPage() {
           </div>
         </div>
 
-        {/* Search */}
+        {/* Search and Filter */}
         <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search replacement orders..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+          <div className="flex flex-col md:flex-row gap-4 items-center">
+            {/* Search Input */}
+            <div className="relative flex-1 w-full">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search replacement orders..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            
+            {/* Company Filter */}
+            <div className="relative md:w-1/4 w-full">
+              <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <select
+                value={filterCompany}
+                onChange={(e) => setFilterCompany(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none bg-white"
+                disabled={companiesLoading}
+              >
+                {companiesLoading ? (
+                  <option value="all">Loading...</option>
+                ) : (
+                  <>
+                    <option value="all">All Companies</option>
+                    {companies.map((company) => (
+                      <option key={company.id} value={company.id}>
+                        {company.name}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -1369,10 +1426,8 @@ export default function VendorReplacementOrdersPage() {
                         ? await import('@/lib/utils/auth-storage')
                         : { getVendorId: () => null }
 
-                      let storedVendorId = getVendorId?.() || null
-                      if (!storedVendorId) {
-                        storedVendorId = typeof window !== 'undefined' ? localStorage.getItem('vendorId') : null
-                      }
+                      // SECURITY FIX: No localStorage fallback
+                      const storedVendorId = getVendorId?.() || null
 
                       if (!storedVendorId) {
                         throw new Error('Vendor ID not found. Please log in again.')

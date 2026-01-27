@@ -149,13 +149,13 @@ export default function ConsumerOrdersPage() {
       case 'Delivered':
         return { className: 'bg-green-100 text-green-700' }
       case 'Partially Delivered':
-        return { className: 'bg-green-50 text-green-600 border border-green-200' }
+        return { className: 'bg-gradient-to-r from-green-100 to-blue-100 text-green-700 border border-green-200' }
       case 'Dispatched':
         return { className: 'bg-purple-100 text-purple-700' }
       case 'Partially Dispatched':
-        return { className: 'bg-purple-50 text-purple-600 border border-purple-200' }
+        return { className: 'bg-gradient-to-r from-blue-100 to-orange-100 text-blue-700 border border-blue-200' }
       case 'Awaiting Delivery':
-        return { className: 'bg-purple-50 text-purple-500' }
+        return { className: 'bg-blue-100 text-blue-600' }
       case 'Awaiting Dispatch':
         return company?.primaryColor 
           ? { 
@@ -183,6 +183,19 @@ export default function ConsumerOrdersPage() {
     }
   }
 
+  // Calculate progress for split orders
+  const getOrderProgress = (order: any) => {
+    if (!order.isSplitOrder || !order.items) return null
+    
+    const items = order.items
+    const total = items.length
+    const delivered = items.filter((i: any) => i._itemStatus === 'Delivered').length
+    const dispatched = items.filter((i: any) => i._itemStatus === 'Dispatched').length
+    const shipped = delivered + dispatched
+    
+    return { total, delivered, dispatched, shipped }
+  }
+
   const formatDate = (date: any) => {
     if (!date) return 'N/A'
     try {
@@ -200,6 +213,55 @@ export default function ConsumerOrdersPage() {
       return 'N/A'
     }
   }
+
+  const formatDateShort = (date: any) => {
+    if (!date) return 'N/A'
+    try {
+      const dateObj = typeof date === 'string' ? new Date(date) : date
+      if (isNaN(dateObj.getTime())) return 'N/A'
+      return dateObj.toLocaleDateString('en-US', { 
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    } catch (error) {
+      return 'N/A'
+    }
+  }
+
+  const getDateKey = (date: any) => {
+    if (!date) return 'Unknown Date'
+    try {
+      const dateObj = typeof date === 'string' ? new Date(date) : date
+      if (isNaN(dateObj.getTime())) return 'Unknown Date'
+      return dateObj.toLocaleDateString('en-US', { 
+        weekday: 'long',
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric'
+      })
+    } catch (error) {
+      return 'Unknown Date'
+    }
+  }
+
+  // Group orders by date
+  const groupedOrders = myOrders.reduce((groups: Record<string, any[]>, order) => {
+    const dateKey = getDateKey(order.orderDate)
+    if (!groups[dateKey]) {
+      groups[dateKey] = []
+    }
+    groups[dateKey].push(order)
+    return groups
+  }, {})
+
+  // Sort dates (most recent first)
+  const sortedDateKeys = Object.keys(groupedOrders).sort((a, b) => {
+    if (a === 'Unknown Date') return 1
+    if (b === 'Unknown Date') return -1
+    const dateA = new Date(groupedOrders[a][0]?.orderDate || 0)
+    const dateB = new Date(groupedOrders[b][0]?.orderDate || 0)
+    return dateB.getTime() - dateA.getTime()
+  })
 
   const handleFeedbackChange = (orderId: string, productId: string, field: 'rating' | 'comment', value: number | string) => {
     setFeedbackData(prev => ({
@@ -487,301 +549,234 @@ export default function ConsumerOrdersPage() {
             </Link>
           </div>
         ) : (
-          <div className="space-y-6">
-            {myOrders.map((order) => {
-              if (!order || !order.id) return null
-              
-              return (
-                <div key={order.id} className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-                  {/* Order Header */}
-                  <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-6 py-4 border-b border-gray-200">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-4">
-                        {getStatusIcon(order.status || 'Awaiting approval')}
-                        <div>
-                          <h3 className="text-lg font-bold text-gray-900">
-                            Order #{order.id}
-                            {/* CRITICAL SECURITY: Only show split order info to admins */}
-                            {isAdmin && order.isSplitOrder && (
-                              <span className="ml-2 text-xs font-normal text-blue-600 bg-blue-50 px-2 py-1 rounded">
-                                Split Order ({order.vendorCount} vendor{order.vendorCount > 1 ? 's' : ''})
-                              </span>
-                            )}
-                          </h3>
-                          <p className="text-sm text-gray-600">
-                            Placed on {formatDate(order.orderDate)}
-                            {/* CRITICAL SECURITY: Only show vendor names to admins */}
-                            {isAdmin && order.vendors && order.vendors.length > 0 && (
-                              <span className="ml-2 text-xs text-gray-500">
-                                • Vendors: {order.vendors.join(', ')}
-                              </span>
-                            )}
-                          </p>
-                        </div>
-                      </div>
-                      <span 
-                        className={`px-4 py-2 rounded-full text-sm font-semibold ${getStatusColor(order.status || 'Awaiting approval').className || ''}`}
-                        style={getStatusColor(order.status || 'Awaiting approval').style}
-                      >
-                        {order.status || 'Awaiting approval'}
-                      </span>
-                    </div>
-                    
-                    {/* CRITICAL SECURITY: Only show split order details to admins */}
-                    {isAdmin && order.isSplitOrder && order.splitOrders && order.splitOrders.length > 0 && (
-                      <div className="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-3">
-                        <p className="text-sm font-semibold text-blue-900 mb-2">Order Split by Vendor:</p>
-                        <div className="space-y-1">
-                          {order.splitOrders.map((split: any, idx: number) => (
-                            <div key={idx} className="text-xs text-blue-800">
-                              <span className="font-medium">{split.vendorName}:</span>
-                              <span className="ml-2">
-                                {split.itemCount} item(s)
-                                {company?.showPrices && ` - ₹${split.total.toFixed(2)}`}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+          <div className="space-y-8">
+            {sortedDateKeys.map((dateKey) => (
+              <div key={dateKey}>
+                {/* Date Header */}
+                <div className="flex items-center mb-4">
+                  <div className="flex-shrink-0 bg-gradient-to-r from-[#f76b1c] to-[#ff9a44] text-white px-4 py-2 rounded-lg shadow-md">
+                    <h2 className="text-sm font-bold">{dateKey}</h2>
                   </div>
-
-                  {/* Order Items - Grid layout for all orders */}
-                  <div className="p-6">
-                    {order.items && Array.isArray(order.items) && order.items.length > 0 ? (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        {order.items.map((item: any, idx: number) => {
-                          const productId = item.productId || item.uniformId
-                          // Check for existing feedback - try order.id first, then check split orders if available
-                          let existing = existingFeedback[order.id]?.[productId]
-                          // If not found and this is a split order, check child order IDs
-                          if (!existing && order.splitOrders && Array.isArray(order.splitOrders)) {
-                            for (const splitOrder of order.splitOrders) {
-                              if (existingFeedback[splitOrder.id]?.[productId]) {
-                                existing = existingFeedback[splitOrder.id]?.[productId]
-                                break
-                              }
-                            }
-                          }
-                          
-                          const isSubmitting = submittingFeedback[`${order.id}-${productId}`]
-                          // If feedback exists, don't allow editing - use the feedback from existing
-                          // Otherwise, use the current feedback data from state
-                          const currentFeedback = existing ? { rating: existing.rating || 0, comment: existing.comment || '' } : (feedbackData[order.id]?.[productId] || { rating: 0, comment: '' })
-                          
-                          // Check for existing return request
-                          const returnRequest = getReturnRequestStatus(order.id, idx)
-                          const hasReturnRequest = !!returnRequest
-                          
-                          // CRITICAL FIX: For split orders, ALWAYS use per-item status (_itemStatus)
-                          // For regular orders, use the order's status
-                          // NEVER fall back to aggregated order.status for split orders as it may be incorrect
-                          const itemStatus = order.isSplitOrder 
-                            ? ((item as any)._itemStatus || 'Awaiting approval') // For split orders, require _itemStatus
-                            : (order.status || 'Awaiting approval') // For standalone orders, use order.status
-                          const canRequestReturn = itemStatus === 'Delivered' && !hasReturnRequest
-                          
-                          return (
-                            <div key={idx} className="bg-white rounded-lg shadow-md p-4 border border-gray-200 hover:shadow-lg transition-shadow flex flex-col">
-                              {/* Product Info */}
-                              <div className="mb-3">
-                                <h3 className="text-sm font-semibold text-gray-900 mb-1 line-clamp-2">
-                                  {item.uniformName || 'Unknown Item'}
+                  <div className="flex-grow ml-4 h-px bg-gradient-to-r from-gray-300 to-transparent"></div>
+                  <span className="ml-4 text-sm text-gray-500 font-medium">
+                    {groupedOrders[dateKey].length} order{groupedOrders[dateKey].length > 1 ? 's' : ''}
+                  </span>
+                </div>
+                
+                {/* Orders Grid - 3 per row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {groupedOrders[dateKey].map((order: any) => {
+                    if (!order || !order.id) return null
+                    
+                    return (
+                      <div key={order.id} className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow flex flex-col">
+                        {/* Order Header - Compact */}
+                        <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-4 py-3 border-b border-gray-200">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-start space-x-2 min-w-0">
+                              {getStatusIcon(order.status || 'Awaiting approval')}
+                              <div className="min-w-0">
+                                <h3 className="text-sm font-bold text-gray-900 truncate" title={`Order #${order.id}`}>
+                                  Order #{order.id.length > 20 ? order.id.substring(order.id.length - 12) : order.id}
                                 </h3>
-                                <p className="text-xs text-gray-600 mb-2">
-                                  Size: {item.size || 'N/A'} • Qty: {item.quantity || 0}
+                                <p className="text-xs text-gray-600">
+                                  {formatDateShort(order.orderDate)}
                                 </p>
-                                {hasReturnRequest && (
-                                  <div className="mb-2">
-                                    {getReturnStatusBadge(returnRequest.status)}
-                                    {returnRequest.replacementOrderId && (
-                                      <p className="text-xs text-gray-600 mt-1">
-                                        Replacement: #{returnRequest.replacementOrderId}
-                                      </p>
-                                    )}
-                                  </div>
-                                )}
                               </div>
-                              
-                              {/* Replacement Section - Only for Delivered orders */}
-                              {/* For split orders, check item's specific status; for regular orders, check order status */}
-                              {(itemStatus === 'Delivered') && (
-                                <>
-                                  {canRequestReturn && (
-                                    <div className="mb-3 pb-3 border-b border-gray-200">
-                                      <button
-                                        onClick={() => handleRequestReplacement(order.id, idx, item)}
-                                        className="w-full flex items-center justify-center space-x-1.5 bg-blue-600 text-white px-2 py-1.5 rounded-lg text-xs font-medium hover:bg-blue-700 transition-colors"
-                                      >
-                                        <RefreshCw className="h-3 w-3" />
-                                        <span>Request Replacement</span>
-                                      </button>
-                                    </div>
-                                  )}
-                                  
-                                  {hasReturnRequest && !canRequestReturn && (
-                                    <div className="mb-3 pb-3 border-b border-gray-200">
-                                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-2">
-                                        <p className="text-xs text-gray-700">
-                                          Return Status: <strong>{returnRequest.status}</strong>
+                            </div>
+                            <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                              <span 
+                                className={`px-2 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${getStatusColor(order.status || 'Awaiting approval').className || ''}`}
+                                style={getStatusColor(order.status || 'Awaiting approval').style}
+                              >
+                                {order.status || 'Awaiting approval'}
+                              </span>
+                              {/* Progress indicator for split orders */}
+                              {order.isSplitOrder && (() => {
+                                const progress = getOrderProgress(order)
+                                if (!progress) return null
+                                return (
+                                  <span className="text-[10px] text-gray-500">
+                                    {progress.shipped > 0 
+                                      ? `${progress.shipped}/${progress.total} shipped`
+                                      : `${progress.total} items`}
+                                  </span>
+                                )
+                              })()}
+                            </div>
+                          </div>
+                          
+                          {/* CRITICAL SECURITY: Only show split order info to admins */}
+                          {isAdmin && order.isSplitOrder && (
+                            <div className="mt-2 text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded inline-block">
+                              Split ({order.vendorCount} vendor{order.vendorCount > 1 ? 's' : ''})
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Order Items - Compact list */}
+                        <div className="p-4 flex-1">
+                          {order.items && Array.isArray(order.items) && order.items.length > 0 ? (
+                            <div className="space-y-3">
+                              {order.items.map((item: any, idx: number) => {
+                                const productId = item.productId || item.uniformId
+                                let existing = existingFeedback[order.id]?.[productId]
+                                if (!existing && order.splitOrders && Array.isArray(order.splitOrders)) {
+                                  for (const splitOrder of order.splitOrders) {
+                                    if (existingFeedback[splitOrder.id]?.[productId]) {
+                                      existing = existingFeedback[splitOrder.id]?.[productId]
+                                      break
+                                    }
+                                  }
+                                }
+                                
+                                const isSubmitting = submittingFeedback[`${order.id}-${productId}`]
+                                const currentFeedback = existing ? { rating: existing.rating || 0, comment: existing.comment || '' } : (feedbackData[order.id]?.[productId] || { rating: 0, comment: '' })
+                                const returnRequest = getReturnRequestStatus(order.id, idx)
+                                const hasReturnRequest = !!returnRequest
+                                const itemStatus = order.isSplitOrder 
+                                  ? ((item as any)._itemStatus || 'Awaiting approval')
+                                  : (order.status || 'Awaiting approval')
+                                const canRequestReturn = itemStatus === 'Delivered' && !hasReturnRequest
+                                
+                                // Get item status color for badges
+                                const getItemStatusBadge = (status: string) => {
+                                  switch (status) {
+                                    case 'Delivered':
+                                      return { bg: 'bg-green-100', text: 'text-green-700', label: 'Delivered', icon: '✓' }
+                                    case 'Dispatched':
+                                      return { bg: 'bg-blue-100', text: 'text-blue-700', label: 'Shipped', icon: '🚚' }
+                                    case 'Awaiting fulfilment':
+                                      return { bg: 'bg-orange-100', text: 'text-orange-700', label: 'Processing', icon: '⏳' }
+                                    case 'Awaiting approval':
+                                      return { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Pending', icon: '⏳' }
+                                    default:
+                                      return { bg: 'bg-gray-100', text: 'text-gray-600', label: status || 'Unknown', icon: '' }
+                                  }
+                                }
+                                
+                                const itemStatusBadge = getItemStatusBadge(itemStatus)
+                                
+                                return (
+                                  <div key={idx} className="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                                    {/* Product Info */}
+                                    <div className="flex items-start justify-between gap-2 mb-2">
+                                      <div className="min-w-0 flex-1">
+                                        <h4 className="text-sm font-semibold text-gray-900 line-clamp-1">
+                                          {item.uniformName || 'Unknown Item'}
+                                        </h4>
+                                        <p className="text-xs text-gray-600">
+                                          Size: {item.size || 'N/A'} • Qty: {item.quantity || 0}
                                         </p>
-                                        {returnRequest.comments && (
-                                          <p className="text-xs text-gray-600 mt-1 line-clamp-2">{returnRequest.comments}</p>
+                                      </div>
+                                      {/* Item-level status badge - show for split orders or when different from order status */}
+                                      {(order.isSplitOrder || hasReturnRequest) && (
+                                        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                          {order.isSplitOrder && (
+                                            <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${itemStatusBadge.bg} ${itemStatusBadge.text}`}>
+                                              {itemStatusBadge.icon} {itemStatusBadge.label}
+                                            </span>
+                                          )}
+                                          {hasReturnRequest && getReturnStatusBadge(returnRequest.status)}
+                                        </div>
+                                      )}
+                                    </div>
+                                    
+                                    {/* Actions for Delivered items */}
+                                    {itemStatus === 'Delivered' && (
+                                      <div className="mt-2 space-y-2">
+                                        {/* Replacement Button */}
+                                        {canRequestReturn && (
+                                          <button
+                                            onClick={() => handleRequestReplacement(order.id, idx, item)}
+                                            className="w-full flex items-center justify-center space-x-1 bg-blue-600 text-white px-2 py-1.5 rounded text-xs font-medium hover:bg-blue-700 transition-colors"
+                                          >
+                                            <RefreshCw className="h-3 w-3" />
+                                            <span>Request Replacement</span>
+                                          </button>
+                                        )}
+                                        
+                                        {/* Feedback Section */}
+                                        {existing ? (
+                                          <div className="flex items-center space-x-1 bg-green-50 px-2 py-1 rounded">
+                                            <CheckCircle className="h-3 w-3 text-green-600" />
+                                            <div className="flex items-center space-x-0.5">
+                                              {[1, 2, 3, 4, 5].map((star) => (
+                                                <Star
+                                                  key={star}
+                                                  className={`h-3 w-3 ${star <= existing.rating ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}`}
+                                                />
+                                              ))}
+                                            </div>
+                                            <span className="text-xs text-green-700">Reviewed</span>
+                                          </div>
+                                        ) : (
+                                          <div className="space-y-1.5">
+                                            <div className="flex items-center justify-between">
+                                              <span className="text-xs text-gray-600">Rate:</span>
+                                              <div className="flex items-center space-x-0.5">
+                                                {[1, 2, 3, 4, 5].map((star) => (
+                                                  <button
+                                                    key={star}
+                                                    type="button"
+                                                    onClick={() => handleFeedbackChange(order.id, productId, 'rating', star)}
+                                                    className="focus:outline-none"
+                                                  >
+                                                    <Star
+                                                      className={`h-4 w-4 transition-colors ${
+                                                        star <= currentFeedback.rating
+                                                          ? 'fill-yellow-400 text-yellow-400'
+                                                          : 'text-gray-300 hover:text-yellow-300'
+                                                      }`}
+                                                    />
+                                                  </button>
+                                                ))}
+                                              </div>
+                                            </div>
+                                            <textarea
+                                              value={currentFeedback.comment || ''}
+                                              onChange={(e) => handleFeedbackChange(order.id, productId, 'comment', e.target.value)}
+                                              className="w-full px-2 py-1 text-xs border border-gray-300 rounded outline-none resize-none focus:ring-1 focus:ring-[#f76b1c] focus:border-[#f76b1c]"
+                                              rows={1}
+                                              placeholder="Comment (optional)..."
+                                            />
+                                            <button
+                                              onClick={() => handleSubmitFeedback(order.id, productId, item)}
+                                              disabled={isSubmitting || !currentFeedback.rating}
+                                              className="w-full bg-gray-700 text-white px-2 py-1 rounded text-xs font-medium hover:bg-gray-800 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                            >
+                                              {isSubmitting ? 'Submitting...' : 'Submit Feedback'}
+                                            </button>
+                                          </div>
                                         )}
                                       </div>
-                                    </div>
-                                  )}
-                                </>
-                              )}
-                              
-                              {/* Feedback Section - Only for Delivered orders */}
-                              {/* CRITICAL FIX: Use itemStatus for split orders, order.status for standalone orders */}
-                              {(order.isSplitOrder ? itemStatus === 'Delivered' : order.status === 'Delivered') ? (
-                                <div className="flex-1">
-                                  {existing ? (
-                                    <div className="feedback-submitted bg-green-100 border border-green-300 rounded-lg p-3 shadow-sm">
-                                      <div className="flex items-center space-x-1 mb-2">
-                                        <CheckCircle className="h-3.5 w-3.5 text-green-600" />
-                                        <span className="text-xs font-semibold text-green-800">Feedback Submitted</span>
-                                      </div>
-                                      <div className="flex items-center space-x-1 mb-2">
-                                        {[1, 2, 3, 4, 5].map((star) => (
-                                          <Star
-                                            key={star}
-                                            className={`h-3.5 w-3.5 ${
-                                              star <= existing.rating
-                                                ? 'fill-yellow-400 text-yellow-400'
-                                                : 'text-gray-300'
-                                            }`}
-                                          />
-                                        ))}
-                                        <span className="text-xs text-green-700 ml-1 font-medium">({existing.rating}/5)</span>
-                                      </div>
-                                      {existing.comment && (
-                                        <p className="text-xs text-green-800 mb-2 leading-relaxed">{existing.comment}</p>
-                                      )}
-                                      {(existing.createdAt || existing.updatedAt) && (
-                                        <p className="text-xs text-green-600 italic mt-1">
-                                          Submitted: {formatDate(existing.createdAt || existing.updatedAt)}
-                                        </p>
-                                      )}
-                                    </div>
-                                  ) : isSubmitting ? (
-                                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-2">
-                                      <div className="flex items-center space-x-1 mb-2">
-                                        <Clock className="h-3 w-3 text-gray-500 animate-spin" />
-                                        <span className="text-xs font-semibold text-gray-700">Submitting...</span>
-                                      </div>
-                                      <div className="flex items-center space-x-1">
-                                        {[1, 2, 3, 4, 5].map((star) => (
-                                          <Star
-                                            key={star}
-                                            className={`h-3 w-3 ${
-                                              star <= currentFeedback.rating
-                                                ? 'fill-yellow-400 text-yellow-400'
-                                                : 'text-gray-300'
-                                            }`}
-                                          />
-                                        ))}
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div>
-                                      <label className="block text-xs font-medium text-gray-700 mb-1">
-                                        Rate this product:
-                                      </label>
-                                      <div className="flex items-center space-x-1 mb-2">
-                                        {[1, 2, 3, 4, 5].map((star) => (
-                                          <button
-                                            key={star}
-                                            type="button"
-                                            onClick={() => !existing && handleFeedbackChange(order.id, productId, 'rating', star)}
-                                            disabled={!!existing}
-                                            className={`focus:outline-none ${existing ? 'cursor-not-allowed' : ''}`}
-                                          >
-                                            <Star
-                                              className={`h-4 w-4 transition-colors ${
-                                                star <= currentFeedback.rating
-                                                  ? 'fill-yellow-400 text-yellow-400'
-                                                  : 'text-gray-300 hover:text-yellow-300'
-                                              }`}
-                                            />
-                                          </button>
-                                        ))}
-                                      </div>
-                                      <div className="mb-2">
-                                        <textarea
-                                          value={currentFeedback.comment || ''}
-                                          onChange={(e) => !existing && handleFeedbackChange(order.id, productId, 'comment', e.target.value)}
-                                          disabled={!!existing}
-                                          readOnly={!!existing}
-                                          className={`w-full px-2 py-1 text-xs border border-gray-300 rounded-lg outline-none resize-none ${
-                                            existing 
-                                              ? 'bg-gray-100 text-gray-700 cursor-not-allowed' 
-                                              : 'focus:ring-1 focus:ring-[#f76b1c] focus:border-[#f76b1c]'
-                                          }`}
-                                          rows={2}
-                                          placeholder="Comment (optional)..."
-                                          maxLength={2000}
-                                        />
-                                      </div>
-                                      <button
-                                        onClick={() => handleSubmitFeedback(order.id, productId, item)}
-                                        disabled={isSubmitting || !currentFeedback.rating || !!existing}
-                                        className="w-full bg-[#f76b1c] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#dc5514] transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-                                      >
-                                        {isSubmitting ? 'Submitting...' : 'Submit Feedback'}
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              ) : (
-                                // For non-delivered orders, show status info
-                                // CRITICAL FIX: Use itemStatus for split orders, order.status for standalone orders
-                                <div className="flex-1 flex items-center justify-center">
-                                  <div className="text-center">
-                                    <p className="text-xs text-gray-500 font-medium">{order.isSplitOrder ? itemStatus : (order.status || 'Processing')}</p>
-                                    <p className="text-xs text-gray-400 mt-1">Feedback available after delivery</p>
+                                    )}
                                   </div>
-                                </div>
-                              )}
+                                )
+                              })}
                             </div>
-                          )
-                        })}
-                      </div>
-                    ) : (
-                      <p className="text-sm text-gray-500">No items found</p>
-                    )}
-                    
-                    {/* Order Details Footer */}
-                    <div className="mt-4 pt-4 border-t border-gray-200">
-                      <div className="grid md:grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <p className="text-gray-600">Order Date:</p>
-                          <p className="font-semibold text-gray-900">{formatDate(order.orderDate)}</p>
+                          ) : (
+                            <p className="text-sm text-gray-500">No items found</p>
+                          )}
                         </div>
-                        <div>
-                          <p className="text-gray-600">Dispatch Location:</p>
-                          <p className="font-semibold text-gray-900">{order.dispatchLocation || 'N/A'}</p>
+                        
+                        {/* Order Footer - Compact */}
+                        <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 mt-auto">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-gray-600">
+                              <span className="font-medium">Dispatch:</span> {order.dispatchLocation || 'direct'}
+                            </span>
+                            <span className="text-gray-600">
+                              {order.items?.length || 0} item{(order.items?.length || 0) !== 1 ? 's' : ''}
+                            </span>
+                          </div>
                         </div>
-                        {order.deliveryAddress && (
-                          <div>
-                            <p className="text-gray-600">Delivery Address:</p>
-                            <p className="font-semibold text-gray-900">{order.deliveryAddress}</p>
-                          </div>
-                        )}
-                        {order.estimatedDeliveryTime && (
-                          <div>
-                            <p className="text-gray-600">Estimated Delivery:</p>
-                            <p className="font-semibold text-gray-900">{order.estimatedDeliveryTime}</p>
-                          </div>
-                        )}
                       </div>
-                    </div>
-                  </div>
+                    )
+                  })}
                 </div>
-              )
-            })}
+              </div>
+            ))}
           </div>
         )}
       </div>

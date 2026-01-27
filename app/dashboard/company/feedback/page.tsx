@@ -49,8 +49,9 @@ export default function CompanyFeedbackPage() {
           }
 
           // Only Company Admins should reach this point - Location Admins have been redirected
-          // Company Admin: Get company colors
-          const storedCompanyId = localStorage.getItem('companyId')
+          // SECURITY FIX: Use sessionStorage only
+          const { getCompanyId: getCompanyIdAuth } = await import('@/lib/utils/auth-storage')
+          const storedCompanyId = getCompanyIdAuth()
           if (storedCompanyId) {
             const company = await getCompanyById(storedCompanyId)
             if (company) {

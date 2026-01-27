@@ -103,7 +103,7 @@ export function getIndigoUniformImage(
 
 /**
  * Ensures image path is always from /images/uniforms folder
- * If product has an image field, validates it's from /images/uniforms
+ * If product has an image field, uses it (must start with /images/)
  * Otherwise falls back to category-based mapping
  */
 export function getUniformImage(
@@ -117,10 +117,13 @@ export function getUniformImage(
   const normalizedGender = (gender || 'male').toLowerCase().trim()
   const normalizedProductName = (productName || '').toLowerCase().trim()
   
-  // ALWAYS use category-based mapping as the single source of truth
-  // This ensures images correctly match the product category and gender
-  // The database image field is ignored to prevent incorrect images
-  // All images come from /images/uniforms folder based on category/gender/name
+  // If product has a valid image path stored in database, use it
+  // This allows SuperAdmin to set custom images per product
+  if (productImage && productImage.trim() !== '' && productImage.startsWith('/images/')) {
+    return productImage.trim()
+  }
+  
+  // Fall back to category-based mapping if no image in database
   return getIndigoUniformImage(normalizedCategory, normalizedGender, normalizedProductName)
 }
 

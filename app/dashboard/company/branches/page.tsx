@@ -36,8 +36,9 @@ export default function BranchesPage() {
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const loadData = async () => {
-        const storedCompanyId = localStorage.getItem('companyId')
-        const { getUserEmail } = await import('@/lib/utils/auth-storage')
+        // SECURITY FIX: Use ONLY sessionStorage
+        const { getUserEmail, getCompanyId } = await import('@/lib/utils/auth-storage')
+        const storedCompanyId = getCompanyId()
         const storedEmail = getUserEmail('company') || ''
         
         if (storedCompanyId) {
@@ -105,8 +106,9 @@ export default function BranchesPage() {
     
     if (!currentCompanyId || !currentAdminEmail) {
       if (typeof window !== 'undefined') {
-        currentCompanyId = localStorage.getItem('companyId') || ''
-        const { getUserEmail } = await import('@/lib/utils/auth-storage')
+        // SECURITY FIX: Use ONLY sessionStorage
+        const { getUserEmail, getCompanyId: getCompanyIdAuth } = await import('@/lib/utils/auth-storage')
+        currentCompanyId = getCompanyIdAuth() || ''
         currentAdminEmail = getUserEmail('company') || ''
       }
     }
@@ -212,8 +214,9 @@ export default function BranchesPage() {
     
     if (!currentCompanyId || !currentAdminEmail) {
       if (typeof window !== 'undefined') {
-        currentCompanyId = localStorage.getItem('companyId') || ''
-        const { getUserEmail } = await import('@/lib/utils/auth-storage')
+        // SECURITY FIX: Use ONLY sessionStorage
+        const { getUserEmail, getCompanyId: getCompanyIdAuth } = await import('@/lib/utils/auth-storage')
+        currentCompanyId = getCompanyIdAuth() || ''
         currentAdminEmail = getUserEmail('company') || ''
       }
     }

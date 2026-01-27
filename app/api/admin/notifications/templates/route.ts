@@ -117,6 +117,104 @@ export async function GET(request: NextRequest) {
 }
 
 /**
+ * POST /api/admin/notifications/templates
+ * 
+ * Create a new notification template
+ */
+export async function POST(request: NextRequest) {
+  try {
+    await connectDB()
+    
+    const body = await request.json()
+    const { templateName, eventId, subjectTemplate, bodyTemplate, language, isActive } = body
+    
+    // Validation
+    if (!templateName?.trim()) {
+      return NextResponse.json(
+        { success: false, error: 'Template name is required' },
+        { status: 400 }
+      )
+    }
+    if (!eventId) {
+      return NextResponse.json(
+        { success: false, error: 'Event ID is required' },
+        { status: 400 }
+      )
+    }
+    if (!subjectTemplate?.trim()) {
+      return NextResponse.json(
+        { success: false, error: 'Subject template is required' },
+        { status: 400 }
+      )
+    }
+    if (!bodyTemplate?.trim()) {
+      return NextResponse.json(
+        { success: false, error: 'Body template is required' },
+        { status: 400 }
+      )
+    }
+    
+    // Verify event exists
+    const event = await NotificationEvent.findOne({ eventId })
+    if (!event) {
+      return NextResponse.json(
+        { success: false, error: 'Event not found' },
+        { status: 404 }
+      )
+    }
+    
+    // Generate unique templateId
+    const lastTemplate = await NotificationTemplate.findOne().sort({ templateId: -1 })
+    const lastId = lastTemplate?.templateId ? parseInt(lastTemplate.templateId) : 600000
+    const newTemplateId = String(lastId + 1)
+    
+    // Create template
+    const template = await NotificationTemplate.create({
+      templateId: newTemplateId,
+      templateName: templateName.trim(),
+      eventId,
+      subjectTemplate: subjectTemplate.trim(),
+      bodyTemplate: bodyTemplate.trim(),
+      language: language || 'en',
+      isActive: isActive !== false,
+    })
+    
+    console.log(`[POST /api/admin/notifications/templates] Created template: ${template.templateName}`)
+    
+    // Extract placeholders for response
+    const allPlaceholders = extractPlaceholders(
+      template.subjectTemplate + ' ' + template.bodyTemplate
+    )
+    
+    return NextResponse.json({
+      success: true,
+      template: {
+        templateId: template.templateId,
+        templateName: template.templateName,
+        eventId: template.eventId,
+        subjectTemplate: template.subjectTemplate,
+        bodyTemplate: template.bodyTemplate,
+        language: template.language,
+        isActive: template.isActive,
+        createdAt: template.createdAt,
+        updatedAt: template.updatedAt,
+        eventCode: event.eventCode,
+        eventDescription: event.eventDescription,
+        eventIsActive: event.isActive,
+        defaultRecipientType: event.defaultRecipientType,
+        supportedPlaceholders: allPlaceholders,
+      }
+    })
+  } catch (error: any) {
+    console.error('[POST /api/admin/notifications/templates] Error:', error)
+    return NextResponse.json(
+      { success: false, error: error.message },
+      { status: 500 }
+    )
+  }
+}
+
+/**
  * Extract all {{placeholder}} names from a template string
  */
 function extractPlaceholders(template: string): string[] {

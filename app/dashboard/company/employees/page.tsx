@@ -77,19 +77,18 @@ export default function EmployeesPage() {
       const loadData = async () => {
         try {
           setLoading(true)
-          let targetCompanyId = localStorage.getItem('companyId')
+          // SECURITY FIX: Use ONLY sessionStorage (tab-specific) - NO localStorage
+          const { getUserEmail, getCompanyId } = await import('@/lib/utils/auth-storage')
+          let targetCompanyId = getCompanyId()
           
-          // If companyId not in localStorage, try to get it from admin email
+          // If companyId not in sessionStorage, try to get it from admin email
           if (!targetCompanyId) {
-            const { getUserEmail } = await import('@/lib/utils/auth-storage')
-            // CRITICAL SECURITY FIX: Use only tab-specific auth storage
             const userEmail = getUserEmail('company')
             if (userEmail) {
               const { getCompanyByAdminEmail } = await import('@/lib/data-mongodb')
               const company = await getCompanyByAdminEmail(userEmail)
               if (company && company.id) {
                 targetCompanyId = String(company.id)
-                localStorage.setItem('companyId', targetCompanyId)
               }
             }
           }
@@ -535,7 +534,7 @@ export default function EmployeesPage() {
       }
     } else if (employee.address && typeof employee.address === 'string') {
       // Legacy address string - try to parse it
-      const { parseLegacyAddress } = await import('@/lib/utils/address-service')
+      const { parseLegacyAddress } = await import('@/lib/utils/address-utils')
       const parsed = parseLegacyAddress(employee.address)
       addressData = {
         address_line_1: parsed.address_line_1 || employee.address.substring(0, 255) || '',

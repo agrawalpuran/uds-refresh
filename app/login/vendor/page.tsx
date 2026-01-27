@@ -53,19 +53,19 @@ export default function VendorLogin() {
         return
       }
       
-      // Use tab-specific authentication storage
+      // Use tab-specific authentication storage ONLY
+      // SECURITY FIX: Do NOT write to localStorage - it's shared across tabs
       const { setAuthData } = await import('@/lib/utils/auth-storage')
       setAuthData('vendor', {
         userEmail: emailOrPhone,
         vendorId: vendor.id
       })
       
-      // CRITICAL FIX: Also update localStorage for backward compatibility
-      // This ensures pages that read from localStorage get the correct vendorId
-      // However, sessionStorage (setAuthData) takes priority in all pages
+      // Clear any stale localStorage auth data to prevent cross-contamination
       if (typeof window !== 'undefined') {
-        localStorage.setItem('vendorId', vendor.id)
-        console.log('[VendorLogin] ✅ Stored vendorId in both sessionStorage and localStorage:', vendor.id)
+        localStorage.removeItem('vendorId')
+        localStorage.removeItem('companyId')
+        console.log('[VendorLogin] ✅ Stored vendorId in sessionStorage (tab-specific):', vendor.id)
         console.log('[VendorLogin] ✅ Vendor name:', vendor.name)
       }
       

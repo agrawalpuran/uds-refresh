@@ -988,6 +988,28 @@ export async function getBranchesByCompany(companyId: string): Promise<any[]> {
   }
 }
 
+/**
+ * Get vendors associated with a company through their orders
+ * Extracts unique vendors from company's order history
+ */
+export async function getVendorsByCompany(companyId: string): Promise<any[]> {
+  if (!companyId) return []
+  try {
+    // Get orders for the company and extract unique vendors
+    const orders = await fetchAPI<any[]>(`/orders?companyId=${companyId}`)
+    const vendorMap = new Map<string, { id: string; name: string }>()
+    orders?.forEach((order: any) => {
+      if (order.vendorId && order.vendorName) {
+        vendorMap.set(order.vendorId, { id: order.vendorId, name: order.vendorName })
+      }
+    })
+    return Array.from(vendorMap.values())
+  } catch (error) {
+    console.error('Error fetching vendors by company:', error)
+    return []
+  }
+}
+
 export async function createBranch(branchData: {
   name: string
   companyId: string
@@ -1548,6 +1570,24 @@ export async function getPOsEligibleForGRN(vendorId: string): Promise<any[]> {
 }
 
 /**
+ * Get ALL orders eligible for GRN (both PR→PO and Manual orders)
+ * POST-DELIVERY WORKFLOW EXTENSION: This unified function fetches both:
+ * - PR→PO orders that are fully delivered
+ * - Manual orders that are fully delivered (no PO involved)
+ * @param vendorId Vendor ID
+ */
+export async function getAllOrdersEligibleForGRN(vendorId: string): Promise<any[]> {
+  if (!vendorId) return []
+  try {
+    const params = new URLSearchParams({ vendorId, type: 'all-eligible' })
+    return await fetchAPI<any[]>(`/vendor/grns?${params.toString()}`)
+  } catch (error) {
+    console.error('Error fetching all orders eligible for GRN:', error)
+    return []
+  }
+}
+
+/**
  * Get GRNs raised by vendor
  * @param vendorId Vendor ID
  */
@@ -1590,6 +1630,41 @@ export async function createGRNByVendor(
     })
   } catch (error: any) {
     console.error('Error creating GRN by vendor:', error)
+    throw error
+  }
+}
+
+/**
+ * Create GRN for a Manual Order (no PO involved)
+ * POST-DELIVERY WORKFLOW EXTENSION: Allows vendors to create GRN for orders
+ * that went through direct/manual workflow instead of PR→PO workflow.
+ * @param orderId Order ID (not PO number)
+ * @param grnNumber GRN number
+ * @param grnDate GRN date
+ * @param vendorId Vendor ID
+ * @param remarks Optional remarks
+ */
+export async function createGRNForManualOrder(
+  orderId: string,
+  grnNumber: string,
+  grnDate: Date,
+  vendorId: string,
+  remarks?: string
+): Promise<any> {
+  try {
+    return await fetchAPI<any>('/vendor/grns', {
+      method: 'POST',
+      body: JSON.stringify({
+        orderId,  // Use orderId instead of poNumber
+        grnNumber,
+        grnDate,
+        vendorId,
+        remarks,
+        sourceType: 'MANUAL'  // Explicitly mark as manual order GRN
+      })
+    })
+  } catch (error: any) {
+    console.error('Error creating GRN for manual order:', error)
     throw error
   }
 }
@@ -1864,6 +1939,31 @@ export async function getVendorCompanies(): Promise<any[]> {
     return await fetchAPI<any[]>(`/relationships?type=vendorCompany`)
   } catch (error) {
     console.error('Error fetching vendor-company relationships:', error)
+    return []
+  }
+}
+
+/**
+ * Get all companies that a specific vendor supplies products to.
+ * Derives this from ProductVendor + ProductCompany relationships.
+ */
+export async function getCompaniesByVendor(vendorId: string): Promise<any[]> {
+  try {
+    return await fetchAPI<any[]>(`/vendors/${vendorId}/companies`)
+  } catch (error) {
+    console.error('Error fetching companies for vendor:', error)
+    return []
+  }
+}
+
+/**
+ * Get products for a vendor filtered by a specific company.
+ */
+export async function getProductsByVendorAndCompany(vendorId: string, companyId: string): Promise<any[]> {
+  try {
+    return await fetchAPI<any[]>(`/vendors/${vendorId}/products?companyId=${companyId}`)
+  } catch (error) {
+    console.error('Error fetching products for vendor and company:', error)
     return []
   }
 }

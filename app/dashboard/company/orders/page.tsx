@@ -1,9 +1,750 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useCallback } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
-import { Search, Package, FileText, ChevronDown, Calendar, MapPin, User, CreditCard, Truck, CheckCircle, Clock, AlertCircle, X, Filter, RefreshCw, XCircle, FileCheck, Send, Building2 } from 'lucide-react'
+import { Search, Package, FileText, ChevronDown, ChevronRight, Calendar, MapPin, User, CreditCard, Truck, CheckCircle, Clock, AlertCircle, X, Filter, RefreshCw, XCircle, FileCheck, Send, Building2, Layers, MoreHorizontal } from 'lucide-react'
 import { getOrdersByCompany, getCompanyById, getLocationByAdminEmail, getOrdersByLocation } from '@/lib/data-mongodb'
+import { WorkflowActionButtons } from '@/components/workflow'
+import Link from 'next/link'
+
+// =============================================================================
+// TYPES
+// =============================================================================
+
+interface GroupedOrder {
+  id: string
+  parentOrderId: string | null
+  isGroup: boolean
+  childOrders: any[]
+  // Combined/derived fields for parent row
+  combinedTotal: number
+  combinedItems: any[]
+  combinedItemCount: number
+  overallStatus: string
+  overallPrStatus: string
+  // Original order fields (for non-grouped orders or parent display)
+  employeeName?: string
+  employeeIdNum?: string
+  dispatchLocation?: string
+  orderDate?: string
+  isPersonalPayment?: boolean
+  prNumber?: string
+  pr_number?: string
+  poNumbers?: string[]
+  vendorName?: string
+  // Pending action info
+  pendingActions: PendingAction[]
+}
+
+interface PendingAction {
+  type: 'ORDER' | 'GRN' | 'INVOICE'
+  entityId: string
+  displayId: string
+  label: string
+  priority: number // Lower = higher priority
+  grnData?: any // Full GRN object for GRN actions
+  invoiceData?: any // Full Invoice object for Invoice actions
+}
+
+// GRN/Invoice data mapped to order
+interface OrderRelatedDocs {
+  pendingGRNs: any[]
+  pendingInvoices: any[]
+}
+
+// =============================================================================
+// HELPER: Derive overall status from child orders
+// =============================================================================
+
+function deriveOverallStatus(childOrders: any[]): { status: string; prStatus: string } {
+  if (childOrders.length === 0) {
+    return { status: 'Unknown', prStatus: 'Unknown' }
+  }
+  
+  if (childOrders.length === 1) {
+    return { 
+      status: childOrders[0].status || 'Unknown',
+      prStatus: childOrders[0].unified_pr_status || childOrders[0].pr_status || 'Unknown'
+    }
+  }
+  
+  // Status priority for PR workflow (lowest to highest progression)
+  const prStatusPriority: Record<string, number> = {
+    'REJECTED': 0,
+    'REJECTED_BY_SITE_ADMIN': 1,
+    'REJECTED_BY_COMPANY_ADMIN': 2,
+    'PENDING_SITE_ADMIN_APPROVAL': 3,
+    'SITE_ADMIN_APPROVED': 4,
+    'PENDING_COMPANY_ADMIN_APPROVAL': 5,
+    'COMPANY_ADMIN_APPROVED': 6,
+    'LINKED_TO_PO': 7,
+    'PO_CREATED': 8,
+    'IN_SHIPMENT': 9,
+    'PARTIALLY_DELIVERED': 10,
+    'FULLY_DELIVERED': 11,
+  }
+  
+  // Find the minimum progress status (bottleneck)
+  let minPrStatus = 'Unknown'
+  let minPriority = Infinity
+  
+  for (const order of childOrders) {
+    const prStatus = order.unified_pr_status || order.pr_status || 'Unknown'
+    const priority = prStatusPriority[prStatus] ?? Infinity
+    if (priority < minPriority) {
+      minPriority = priority
+      minPrStatus = prStatus
+    }
+  }
+  
+  // For display status, use the most common or the "worst" status
+  const statusCounts: Record<string, number> = {}
+  for (const order of childOrders) {
+    const status = order.status || 'Unknown'
+    statusCounts[status] = (statusCounts[status] || 0) + 1
+  }
+  const mostCommonStatus = Object.entries(statusCounts)
+    .sort(([, a], [, b]) => b - a)[0]?.[0] || 'Unknown'
+  
+  return { status: mostCommonStatus, prStatus: minPrStatus }
+}
+
+// =============================================================================
+// HELPER: Determine pending actions for an order
+// =============================================================================
+
+function determinePendingActions(
+  order: any, 
+  childOrders: any[] = [],
+  relatedDocs?: OrderRelatedDocs
+): PendingAction[] {
+  const actions: PendingAction[] = []
+  const prStatus = order.unified_pr_status || order.pr_status || ''
+  
+  // Check order-level pending approvals (Priority 1 - highest)
+  if (prStatus === 'PENDING_COMPANY_ADMIN_APPROVAL') {
+    actions.push({
+      type: 'ORDER',
+      entityId: order.id,
+      displayId: order.prNumber || order.pr_number || order.id,
+      label: 'Approve Order',
+      priority: 1,
+    })
+  }
+  
+  // Check for pending GRN approvals (Priority 2)
+  if (relatedDocs?.pendingGRNs && relatedDocs.pendingGRNs.length > 0) {
+    relatedDocs.pendingGRNs.forEach((grn, idx) => {
+      actions.push({
+        type: 'GRN',
+        entityId: grn.id || grn.grnId,
+        displayId: grn.grnNumber || grn.id,
+        label: 'Approve GRN',
+        priority: 2 + idx * 0.1, // Slightly stagger multiple GRNs
+        grnData: grn,
+      })
+    })
+  }
+  
+  // Check for pending Invoice approvals (Priority 3)
+  if (relatedDocs?.pendingInvoices && relatedDocs.pendingInvoices.length > 0) {
+    relatedDocs.pendingInvoices.forEach((invoice, idx) => {
+      actions.push({
+        type: 'INVOICE',
+        entityId: invoice.id || invoice.invoiceId,
+        displayId: invoice.invoiceNumber || invoice.vendorInvoiceNumber || invoice.id,
+        label: 'Approve Invoice',
+        priority: 3 + idx * 0.1, // Slightly stagger multiple invoices
+        invoiceData: invoice,
+      })
+    })
+  }
+  
+  return actions.sort((a, b) => a.priority - b.priority)
+}
+
+// =============================================================================
+// HELPER: Group orders by parentOrderId
+// =============================================================================
+
+function groupOrdersByParent(
+  orders: any[], 
+  orderRelatedDocsMap?: Map<string, OrderRelatedDocs>
+): GroupedOrder[] {
+  const parentMap = new Map<string, any[]>()
+  const standaloneOrders: any[] = []
+  
+  // First pass: categorize orders
+  for (const order of orders) {
+    const parentId = order.parentOrderId
+    
+    if (parentId) {
+      if (!parentMap.has(parentId)) {
+        parentMap.set(parentId, [])
+      }
+      parentMap.get(parentId)!.push(order)
+    } else {
+      // Check if this order IS a parent (its id might be a parentOrderId for others)
+      const hasChildren = orders.some(o => o.parentOrderId === order.id)
+      if (!hasChildren) {
+        standaloneOrders.push(order)
+      }
+      // If it has children, the children will be grouped under this parent
+    }
+  }
+  
+  // Second pass: create grouped orders
+  const groupedOrders: GroupedOrder[] = []
+  
+  // Process parent groups
+  for (const [parentId, children] of parentMap.entries()) {
+    // Find the primary child order (first one or the one with most info)
+    const primaryChild = children.sort((a, b) => 
+      (b.items?.length || 0) - (a.items?.length || 0)
+    )[0]
+    
+    const { status, prStatus } = deriveOverallStatus(children)
+    
+    // Combine all items from child orders
+    const combinedItems: any[] = []
+    let combinedTotal = 0
+    for (const child of children) {
+      if (child.items) {
+        combinedItems.push(...child.items)
+      }
+      combinedTotal += child.total || 0
+    }
+    
+    // Collect all PO numbers
+    const allPoNumbers = new Set<string>()
+    for (const child of children) {
+      if (child.poNumbers) {
+        child.poNumbers.forEach((po: string) => allPoNumbers.add(po))
+      }
+    }
+    
+    // Aggregate related docs from all child orders
+    const aggregatedRelatedDocs: OrderRelatedDocs = { pendingGRNs: [], pendingInvoices: [] }
+    for (const child of children) {
+      const childDocs = orderRelatedDocsMap?.get(child.id)
+      if (childDocs) {
+        aggregatedRelatedDocs.pendingGRNs.push(...childDocs.pendingGRNs)
+        aggregatedRelatedDocs.pendingInvoices.push(...childDocs.pendingInvoices)
+      }
+    }
+    // Also check parent ID itself
+    const parentDocs = orderRelatedDocsMap?.get(parentId)
+    if (parentDocs) {
+      aggregatedRelatedDocs.pendingGRNs.push(...parentDocs.pendingGRNs)
+      aggregatedRelatedDocs.pendingInvoices.push(...parentDocs.pendingInvoices)
+    }
+    
+    groupedOrders.push({
+      id: parentId,
+      parentOrderId: parentId,
+      isGroup: true,
+      childOrders: children,
+      combinedTotal,
+      combinedItems,
+      combinedItemCount: combinedItems.length,
+      overallStatus: status,
+      overallPrStatus: prStatus,
+      employeeName: primaryChild.employeeName,
+      employeeIdNum: primaryChild.employeeIdNum,
+      dispatchLocation: primaryChild.dispatchLocation,
+      orderDate: primaryChild.orderDate,
+      isPersonalPayment: primaryChild.isPersonalPayment,
+      prNumber: primaryChild.prNumber || primaryChild.pr_number,
+      pr_number: primaryChild.pr_number,
+      poNumbers: Array.from(allPoNumbers),
+      vendorName: children.map(c => c.vendorName).filter(Boolean).join(', '),
+      pendingActions: determinePendingActions(primaryChild, children, aggregatedRelatedDocs),
+    })
+  }
+  
+  // Add standalone orders
+  for (const order of standaloneOrders) {
+    const { status, prStatus } = deriveOverallStatus([order])
+    const relatedDocs = orderRelatedDocsMap?.get(order.id)
+    
+    groupedOrders.push({
+      id: order.id,
+      parentOrderId: null,
+      isGroup: false,
+      childOrders: [],
+      combinedTotal: order.total || 0,
+      combinedItems: order.items || [],
+      combinedItemCount: order.items?.length || 0,
+      overallStatus: status,
+      overallPrStatus: prStatus,
+      employeeName: order.employeeName,
+      employeeIdNum: order.employeeIdNum,
+      dispatchLocation: order.dispatchLocation,
+      orderDate: order.orderDate,
+      isPersonalPayment: order.isPersonalPayment,
+      prNumber: order.prNumber || order.pr_number,
+      pr_number: order.pr_number,
+      poNumbers: order.poNumbers || [],
+      vendorName: order.vendorName,
+      pendingActions: determinePendingActions(order, [], relatedDocs),
+    })
+  }
+  
+  // Sort by orderDate descending (most recent first)
+  return groupedOrders.sort((a, b) => {
+    const dateA = a.orderDate ? new Date(a.orderDate).getTime() : 0
+    const dateB = b.orderDate ? new Date(b.orderDate).getTime() : 0
+    return dateB - dateA
+  })
+}
+
+// =============================================================================
+// COMPONENT: Order Actions Cell
+// =============================================================================
+
+interface OrderActionsCellProps {
+  groupedOrder: GroupedOrder
+  companyId: string
+  userRole: string
+  userId: string
+  primaryColor: string
+  onActionComplete: (orderId: string, action: 'approve' | 'reject', success: boolean) => Promise<void>
+}
+
+function OrderActionsCell({
+  groupedOrder,
+  companyId,
+  userRole,
+  userId,
+  primaryColor,
+  onActionComplete,
+}: OrderActionsCellProps) {
+  const [showDropdown, setShowDropdown] = useState(false)
+  const [approving, setApproving] = useState<string | null>(null) // Track which action is in progress
+  const [showRejectModal, setShowRejectModal] = useState(false)
+  const [rejecting, setRejecting] = useState(false)
+  
+  // Determine the primary action based on order status
+  const prStatus = groupedOrder.overallPrStatus
+  const pendingActions = groupedOrder.pendingActions || []
+  
+  // Get the order ID(s) to approve
+  const getOrderIdsForAction = (): string[] => {
+    if (groupedOrder.isGroup && groupedOrder.childOrders.length > 0) {
+      return groupedOrder.childOrders.map((child: any) => child.id)
+    }
+    return [groupedOrder.id]
+  }
+  
+  // =====================================================
+  // ORDER Approval Handler
+  // =====================================================
+  const handleOrderApprove = async () => {
+    if (approving) return
+    
+    const orderIds = getOrderIdsForAction()
+    const displayId = groupedOrder.prNumber || groupedOrder.pr_number || groupedOrder.id
+    const primaryOrderId = orderIds[0]
+    
+    if (!confirm(`Are you sure you want to approve order ${displayId}?`)) {
+      return
+    }
+    
+    setApproving('ORDER')
+    
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'approve',
+          orderId: primaryOrderId,
+          adminEmail: userId,
+        }),
+      })
+      
+      const result = await response.json()
+      
+      if (!response.ok) {
+        throw new Error(result.error || result.message || 'Failed to approve order')
+      }
+      
+      await onActionComplete(primaryOrderId, 'approve', true)
+    } catch (error: any) {
+      console.error('Error approving order:', error)
+      alert(`Error approving order: ${error.message || 'Unknown error'}`)
+    } finally {
+      setApproving(null)
+    }
+  }
+  
+  // =====================================================
+  // Reject Handler (for ORDER only - GRN/Invoice reject can be added)
+  // =====================================================
+  const handleDirectReject = async (reasonCode: string, remarks?: string) => {
+    const orderIds = getOrderIdsForAction()
+    
+    setRejecting(true)
+    
+    try {
+      for (const orderId of orderIds) {
+        const response = await fetch('/api/workflow/reject', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-company-id': companyId,
+            'x-user-role': userRole,
+            'x-user-id': userId,
+          },
+          body: JSON.stringify({
+            entityType: 'ORDER',
+            entityId: orderId,
+            reasonCode,
+            remarks,
+          }),
+        })
+        
+        const result = await response.json()
+        
+        if (!response.ok || !result.success) {
+          throw new Error(result.error?.message || result.message || 'Failed to reject order')
+        }
+      }
+      
+      setShowRejectModal(false)
+      await onActionComplete(orderIds[0], 'reject', true)
+    } catch (error: any) {
+      console.error('Error rejecting order:', error)
+      alert(`Error rejecting order: ${error.message || 'Unknown error'}`)
+    } finally {
+      setRejecting(false)
+    }
+  }
+  
+  // =====================================================
+  // Render Action Button for a PendingAction
+  // =====================================================
+  const renderActionButton = (action: PendingAction, isPrimary: boolean) => {
+    const isLoading = approving === action.type || approving === `${action.type}-${action.entityId}`
+    
+    // ORDER: Direct approval buttons
+    if (action.type === 'ORDER') {
+      return (
+        <button
+          key={action.entityId}
+          onClick={handleOrderApprove}
+          disabled={!!approving || rejecting}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-all hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${isPrimary ? '' : 'opacity-90'}`}
+          style={{ backgroundColor: primaryColor }}
+          title={`Approve Order ${action.displayId}`}
+        >
+          {isLoading ? (
+            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <CheckCircle className="h-3.5 w-3.5" />
+          )}
+          <span>{isLoading ? 'Approving...' : 'Approve Order'}</span>
+        </button>
+      )
+    }
+    
+    // GRN: Navigate to GRN page
+    if (action.type === 'GRN') {
+      return (
+        <Link
+          key={action.entityId}
+          href="/dashboard/company/grns"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-all hover:shadow-md active:scale-95"
+          style={{ backgroundColor: '#059669' }} // Green for GRN
+          title={`View pending GRN ${action.displayId}`}
+        >
+          <FileText className="h-3.5 w-3.5" />
+          <span>Pending GRN Approval</span>
+        </Link>
+      )
+    }
+    
+    // INVOICE: Navigate to Invoices page
+    if (action.type === 'INVOICE') {
+      return (
+        <Link
+          key={action.entityId}
+          href="/dashboard/company/invoices"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-all hover:shadow-md active:scale-95"
+          style={{ backgroundColor: '#7c3aed' }} // Purple for Invoice
+          title={`View pending Invoice ${action.displayId}`}
+        >
+          <FileCheck className="h-3.5 w-3.5" />
+          <span>Pending Invoice Approval</span>
+        </Link>
+      )
+    }
+    
+    return null
+  }
+  
+  // =====================================================
+  // RENDER: If there are pending actions
+  // =====================================================
+  if (pendingActions.length > 0 && userRole === 'COMPANY_ADMIN') {
+    const primaryAction = pendingActions[0]
+    const secondaryActions = pendingActions.slice(1)
+    const showOrderRejectButton = primaryAction.type === 'ORDER'
+    
+    return (
+      <>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Primary Action Button */}
+          {renderActionButton(primaryAction, true)}
+          
+          {/* Reject button for ORDER actions */}
+          {showOrderRejectButton && (
+            <button
+              onClick={() => setShowRejectModal(true)}
+              disabled={!!approving || rejecting}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-red-500 rounded-lg transition-all hover:bg-red-600 hover:shadow-md active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Reject this order"
+            >
+              <XCircle className="h-3.5 w-3.5" />
+              <span>Reject</span>
+            </button>
+          )}
+          
+          {/* Secondary Actions Dropdown */}
+          {secondaryActions.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setShowDropdown(!showDropdown)}
+                className="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                title={`${secondaryActions.length} more pending action(s)`}
+              >
+                <MoreHorizontal className="h-3.5 w-3.5" />
+                <span className="text-xs">+{secondaryActions.length}</span>
+              </button>
+              
+              {showDropdown && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowDropdown(false)} />
+                  <div className="absolute right-0 mt-1 w-52 bg-white rounded-lg shadow-lg border border-gray-200 z-20 py-1">
+                    {secondaryActions.map((action) => (
+                      <Link
+                        key={`${action.type}-${action.entityId}`}
+                        href={action.type === 'GRN' ? '/dashboard/company/grns' : '/dashboard/company/invoices'}
+                        onClick={() => setShowDropdown(false)}
+                        className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors w-full"
+                      >
+                        {action.type === 'GRN' && <FileText className="h-3.5 w-3.5 text-emerald-600" />}
+                        {action.type === 'INVOICE' && <FileCheck className="h-3.5 w-3.5 text-purple-600" />}
+                        <span>Pending {action.type} Approval</span>
+                      </Link>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+        
+        {/* Reject Modal */}
+        {showRejectModal && (
+          <div 
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowRejectModal(false)}
+          >
+            <div 
+              className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="p-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                    <XCircle className="h-6 w-6 text-red-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900">Reject Order</h3>
+                    <p className="text-sm text-gray-500">
+                      {groupedOrder.prNumber || groupedOrder.pr_number || groupedOrder.id}
+                    </p>
+                  </div>
+                </div>
+                
+                <form onSubmit={(e) => {
+                  e.preventDefault()
+                  const formData = new FormData(e.currentTarget)
+                  const reason = formData.get('reason') as string
+                  const remarks = formData.get('remarks') as string
+                  handleDirectReject(reason, remarks)
+                }}>
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Reason for Rejection *
+                    </label>
+                    <select 
+                      name="reason" 
+                      required
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                    >
+                      <option value="">Select a reason...</option>
+                      <option value="BUDGET_EXCEEDED">Budget Exceeded</option>
+                      <option value="INVALID_ITEMS">Invalid Items</option>
+                      <option value="DUPLICATE_ORDER">Duplicate Order</option>
+                      <option value="POLICY_VIOLATION">Policy Violation</option>
+                      <option value="INCORRECT_QUANTITIES">Incorrect Quantities</option>
+                      <option value="OTHER">Other</option>
+                    </select>
+                  </div>
+                  
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Additional Remarks
+                    </label>
+                    <textarea 
+                      name="remarks"
+                      rows={3}
+                      placeholder="Optional: Add more details about the rejection..."
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                    />
+                  </div>
+                  
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowRejectModal(false)}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={rejecting}
+                      className="px-4 py-2 text-sm font-medium text-white bg-red-500 rounded-lg hover:bg-red-600 transition-colors flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {rejecting ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          Rejecting...
+                        </>
+                      ) : (
+                        <>
+                          <XCircle className="h-4 w-4" />
+                          Confirm Rejection
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
+      </>
+    )
+  }
+  
+  // =====================================================
+  // RENDER: No pending actions - show navigation links
+  // =====================================================
+  const getSecondaryActions = () => {
+    const actions: { label: string; href: string; icon: typeof CheckCircle }[] = []
+    
+    // If order has PO created, show link to GRN page
+    if (['PO_CREATED', 'LINKED_TO_PO', 'IN_SHIPMENT', 'PARTIALLY_DELIVERED', 'FULLY_DELIVERED'].includes(prStatus)) {
+      actions.push({
+        label: 'View GRNs',
+        href: '/dashboard/company/grns',
+        icon: FileText,
+      })
+    }
+    
+    // If fully delivered, may have pending invoice
+    if (['FULLY_DELIVERED'].includes(prStatus)) {
+      actions.push({
+        label: 'View Invoices',
+        href: '/dashboard/company/invoices',
+        icon: FileCheck,
+      })
+    }
+    
+    return actions
+  }
+  
+  const navActions = getSecondaryActions()
+  
+  // Show status text with optional navigation actions
+  if (navActions.length === 0) {
+    return (
+      <div className="flex items-center gap-1.5 text-gray-400">
+        <Clock className="h-3.5 w-3.5" />
+        <span className="text-xs truncate max-w-[120px]">
+          {getStatusText(prStatus)}
+        </span>
+      </div>
+    )
+  }
+  
+  if (navActions.length === 1) {
+    const action = navActions[0]
+    return (
+      <Link
+        href={action.href}
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 transition-colors"
+      >
+        <action.icon className="h-3.5 w-3.5" />
+        {action.label}
+      </Link>
+    )
+  }
+  
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setShowDropdown(!showDropdown)}
+        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+        More
+      </button>
+      
+      {showDropdown && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setShowDropdown(false)} />
+          <div className="absolute right-0 mt-1 w-40 bg-white rounded-lg shadow-lg border border-gray-200 z-20 py-1">
+            {navActions.map((action, idx) => (
+              <Link
+                key={idx}
+                href={action.href}
+                className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                onClick={() => setShowDropdown(false)}
+              >
+                <action.icon className="h-3.5 w-3.5 text-gray-400" />
+                {action.label}
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// Helper to get human-readable status text
+function getStatusText(prStatus: string): string {
+  const statusMap: Record<string, string> = {
+    'PENDING_SITE_ADMIN_APPROVAL': 'Awaiting Site Admin',
+    'SITE_ADMIN_APPROVED': 'Site Admin Approved',
+    'PENDING_COMPANY_ADMIN_APPROVAL': 'Awaiting Approval',
+    'COMPANY_ADMIN_APPROVED': 'Approved',
+    'LINKED_TO_PO': 'PO Created',
+    'PO_CREATED': 'PO Created',
+    'IN_SHIPMENT': 'In Transit',
+    'PARTIALLY_DELIVERED': 'Partially Delivered',
+    'FULLY_DELIVERED': 'Delivered',
+    'REJECTED': 'Rejected',
+    'REJECTED_BY_SITE_ADMIN': 'Rejected',
+    'REJECTED_BY_COMPANY_ADMIN': 'Rejected',
+  }
+  return statusMap[prStatus] || 'No action required'
+}
 
 // PR Status tabs configuration
 const PR_STATUS_TABS = [
@@ -72,15 +813,38 @@ export default function CompanyOrdersPage() {
   const [activeTab, setActiveTab] = useState('all')
   const [locationFilter, setLocationFilter] = useState('all')
   const [selectedOrder, setSelectedOrder] = useState<any>(null)
+  const [userRole, setUserRole] = useState<string>('COMPANY_ADMIN')
+  const [userId, setUserId] = useState<string>('')
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [isPrPoWorkflowEnabled, setIsPrPoWorkflowEnabled] = useState<boolean>(false)
   
-  // Get company ID from localStorage (set during login)
+  // GRN and Invoice data for dynamic actions
+  const [companyGRNs, setCompanyGRNs] = useState<any[]>([])
+  const [companyInvoices, setCompanyInvoices] = useState<any[]>([])
+  const [orderRelatedDocsMap, setOrderRelatedDocsMap] = useState<Map<string, OrderRelatedDocs>>(new Map())
+
+  // Toggle expand/collapse for a group
+  const toggleGroupExpand = useCallback((groupId: string) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(groupId)) {
+        next.delete(groupId)
+      } else {
+        next.add(groupId)
+      }
+      return next
+    })
+  }, [])
+  
+  // Get company ID from tab-specific storage (set during login)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const loadData = async () => {
         try {
           setLoading(true)
-          const storedCompanyId = localStorage.getItem('companyId')
-          const { getUserEmail } = await import('@/lib/utils/auth-storage')
+          // SECURITY FIX: Use only tab-specific auth storage, not localStorage
+          const { getUserEmail, getCompanyId } = await import('@/lib/utils/auth-storage')
+          const storedCompanyId = getCompanyId()
           const userEmail = getUserEmail('company')
           
           // Check if user is Location Admin
@@ -90,6 +854,10 @@ export default function CompanyOrdersPage() {
             const isLocationAdminUser = !!locationAdminLocation
             setIsLocationAdmin(isLocationAdminUser)
             setLocationInfo(locationAdminLocation)
+            
+            // Set user role based on admin type
+            setUserRole(isLocationAdminUser ? 'LOCATION_ADMIN' : 'COMPANY_ADMIN')
+            setUserId(userEmail) // Use email as user ID for now
             
             if (isLocationAdminUser && locationAdminLocation) {
               const locationId = locationAdminLocation.id || locationAdminLocation._id?.toString()
@@ -104,6 +872,7 @@ export default function CompanyOrdersPage() {
                   if (companyDetails) {
                     setCompanyPrimaryColor(companyDetails.primaryColor || '#f76b1c')
                     setCompanySecondaryColor(companyDetails.secondaryColor || companyDetails.primaryColor || '#f76b1c')
+                    setIsPrPoWorkflowEnabled(!!companyDetails.enable_pr_po_workflow)
                   }
                 }
                 return
@@ -125,10 +894,46 @@ export default function CompanyOrdersPage() {
             }
             setCompanyOrders(filtered)
             
+            // Fetch GRNs with pending approval status
+            try {
+              const grnsResponse = await fetch(`/api/grns?companyId=${storedCompanyId}&raisedByVendors=true`)
+              if (grnsResponse.ok) {
+                const grns = await grnsResponse.json()
+                // Filter for pending GRNs (RAISED status, not yet APPROVED)
+                const pendingGRNs = grns.filter((grn: any) => 
+                  (grn.grnStatus === 'RAISED' || grn.unified_grn_status === 'RAISED' || grn.unified_grn_status === 'PENDING_APPROVAL') &&
+                  grn.grnStatus !== 'APPROVED' && grn.unified_grn_status !== 'APPROVED'
+                )
+                setCompanyGRNs(pendingGRNs)
+                console.log(`[OrderHistory] Fetched ${pendingGRNs.length} pending GRNs`)
+              }
+            } catch (err) {
+              console.error('Error fetching GRNs:', err)
+            }
+            
+            // Fetch Invoices with pending approval status
+            try {
+              const invoicesResponse = await fetch(`/api/company/invoices?companyId=${storedCompanyId}`)
+              if (invoicesResponse.ok) {
+                const invoicesData = await invoicesResponse.json()
+                const invoices = Array.isArray(invoicesData) ? invoicesData : (invoicesData.invoices || [])
+                // Filter for pending Invoices (RAISED status, not yet APPROVED)
+                const pendingInvoices = invoices.filter((inv: any) => 
+                  (inv.invoiceStatus === 'RAISED' || inv.unified_invoice_status === 'RAISED' || inv.unified_invoice_status === 'PENDING_APPROVAL') &&
+                  inv.invoiceStatus !== 'APPROVED' && inv.unified_invoice_status !== 'APPROVED'
+                )
+                setCompanyInvoices(pendingInvoices)
+                console.log(`[OrderHistory] Fetched ${pendingInvoices.length} pending Invoices`)
+              }
+            } catch (err) {
+              console.error('Error fetching Invoices:', err)
+            }
+            
             const companyDetails = await getCompanyById(storedCompanyId)
             if (companyDetails) {
               setCompanyPrimaryColor(companyDetails.primaryColor || '#f76b1c')
               setCompanySecondaryColor(companyDetails.secondaryColor || companyDetails.primaryColor || '#f76b1c')
+              setIsPrPoWorkflowEnabled(!!companyDetails.enable_pr_po_workflow)
             }
           }
         } catch (error) {
@@ -153,39 +958,137 @@ export default function CompanyOrdersPage() {
     return Array.from(locations)
   }, [companyOrders])
 
-  // Get tab counts
+  // Build order-to-related-docs mapping when orders, GRNs, or Invoices change
+  useEffect(() => {
+    const docsMap = new Map<string, OrderRelatedDocs>()
+    
+    // Map GRNs to orders (via prNumbers, poNumber, or orderId)
+    for (const grn of companyGRNs) {
+      // GRNs can be linked via prNumbers (array), poNumber, or orderId
+      const linkedOrderIds = new Set<string>()
+      
+      // Check prNumbers array
+      if (grn.prNumbers && Array.isArray(grn.prNumbers)) {
+        for (const prNumber of grn.prNumbers) {
+          // Find orders with matching prNumber
+          const matchingOrders = companyOrders.filter(o => 
+            o.prNumber === prNumber || o.pr_number === prNumber
+          )
+          matchingOrders.forEach(o => linkedOrderIds.add(o.id))
+        }
+      }
+      
+      // Check direct orderId link
+      if (grn.orderId) {
+        linkedOrderIds.add(grn.orderId)
+      }
+      
+      // Check poNumber and find orders with that PO
+      if (grn.poNumber) {
+        const matchingOrders = companyOrders.filter(o => 
+          o.poNumbers?.includes(grn.poNumber)
+        )
+        matchingOrders.forEach(o => linkedOrderIds.add(o.id))
+      }
+      
+      // Add GRN to each linked order's docs
+      for (const orderId of linkedOrderIds) {
+        if (!docsMap.has(orderId)) {
+          docsMap.set(orderId, { pendingGRNs: [], pendingInvoices: [] })
+        }
+        docsMap.get(orderId)!.pendingGRNs.push(grn)
+      }
+    }
+    
+    // Map Invoices to orders (via prNumbers, grnId, poNumber, or orderId)
+    for (const invoice of companyInvoices) {
+      const linkedOrderIds = new Set<string>()
+      
+      // Check prNumbers array
+      if (invoice.prNumbers && Array.isArray(invoice.prNumbers)) {
+        for (const prNumber of invoice.prNumbers) {
+          const matchingOrders = companyOrders.filter(o => 
+            o.prNumber === prNumber || o.pr_number === prNumber
+          )
+          matchingOrders.forEach(o => linkedOrderIds.add(o.id))
+        }
+      }
+      
+      // Check direct orderId link
+      if (invoice.orderId) {
+        linkedOrderIds.add(invoice.orderId)
+      }
+      
+      // Check poNumber
+      if (invoice.poNumber) {
+        const matchingOrders = companyOrders.filter(o => 
+          o.poNumbers?.includes(invoice.poNumber)
+        )
+        matchingOrders.forEach(o => linkedOrderIds.add(o.id))
+      }
+      
+      // Add invoice to each linked order's docs
+      for (const orderId of linkedOrderIds) {
+        if (!docsMap.has(orderId)) {
+          docsMap.set(orderId, { pendingGRNs: [], pendingInvoices: [] })
+        }
+        docsMap.get(orderId)!.pendingInvoices.push(invoice)
+      }
+    }
+    
+    setOrderRelatedDocsMap(docsMap)
+    console.log(`[OrderHistory] Built orderRelatedDocsMap with ${docsMap.size} orders having related docs`)
+  }, [companyOrders, companyGRNs, companyInvoices])
+
+  // Group orders by parentOrderId (before filtering, for accurate counts)
+  const groupedOrders = useMemo(() => {
+    const grouped = groupOrdersByParent(companyOrders, orderRelatedDocsMap)
+    // Debug: Log first few grouped orders' statuses and pending actions
+    if (grouped.length > 0) {
+      console.log(`[groupedOrders] Total: ${grouped.length}, Sample:`, 
+        grouped.slice(0, 3).map(g => ({ 
+          id: g.id, 
+          prStatus: g.overallPrStatus,
+          pendingActions: g.pendingActions.map(a => a.type)
+        })))
+    }
+    return grouped
+  }, [companyOrders, orderRelatedDocsMap])
+
+  // Get tab counts (based on grouped orders, using overall status)
   const tabCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: companyOrders.length }
+    const counts: Record<string, number> = { all: groupedOrders.length }
     PR_STATUS_TABS.forEach(tab => {
       if (tab.statuses) {
-        counts[tab.id] = companyOrders.filter(order => 
-          tab.statuses!.includes(order.unified_pr_status) || 
-          tab.statuses!.includes(order.pr_status)
+        counts[tab.id] = groupedOrders.filter(order => 
+          tab.statuses!.includes(order.overallPrStatus)
         ).length
       }
     })
     return counts
-  }, [companyOrders])
+  }, [groupedOrders])
 
-  // Filter orders based on search, tab, and location
-  const filteredOrders = useMemo(() => {
-    return companyOrders.filter(order => {
-      // Search filter
+  // Filter grouped orders based on search, tab, and location
+  const filteredGroupedOrders = useMemo(() => {
+    return groupedOrders.filter(order => {
+      // Search filter - search across parent and child orders
       const searchLower = searchQuery.toLowerCase()
       const matchesSearch = !searchQuery || 
         order.id?.toLowerCase().includes(searchLower) ||
         order.employeeName?.toLowerCase().includes(searchLower) ||
         order.prNumber?.toLowerCase().includes(searchLower) ||
         order.pr_number?.toLowerCase().includes(searchLower) ||
-        order.poNumbers?.some((po: string) => po?.toLowerCase().includes(searchLower))
+        order.poNumbers?.some((po: string) => po?.toLowerCase().includes(searchLower)) ||
+        // Also search in child orders
+        order.childOrders.some((child: any) => 
+          child.id?.toLowerCase().includes(searchLower) ||
+          child.vendorName?.toLowerCase().includes(searchLower)
+        )
 
-      // Tab filter (PR Status)
+      // Tab filter (PR Status) - use overall status for grouped orders
       const currentTab = PR_STATUS_TABS.find(t => t.id === activeTab)
       const matchesTab = activeTab === 'all' || (
-        currentTab?.statuses && (
-          currentTab.statuses.includes(order.unified_pr_status) ||
-          currentTab.statuses.includes(order.pr_status)
-        )
+        currentTab?.statuses && currentTab.statuses.includes(order.overallPrStatus)
       )
 
       // Location filter
@@ -194,7 +1097,106 @@ export default function CompanyOrdersPage() {
 
       return matchesSearch && matchesTab && matchesLocation
     })
+  }, [groupedOrders, searchQuery, activeTab, locationFilter])
+
+  // Legacy filtered orders for backward compatibility (detail modal)
+  const filteredOrders = useMemo(() => {
+    return companyOrders.filter(order => {
+      const searchLower = searchQuery.toLowerCase()
+      const matchesSearch = !searchQuery || 
+        order.id?.toLowerCase().includes(searchLower) ||
+        order.employeeName?.toLowerCase().includes(searchLower)
+      const currentTab = PR_STATUS_TABS.find(t => t.id === activeTab)
+      const matchesTab = activeTab === 'all' || (
+        currentTab?.statuses && (
+          currentTab.statuses.includes(order.unified_pr_status) ||
+          currentTab.statuses.includes(order.pr_status)
+        )
+      )
+      const matchesLocation = locationFilter === 'all' ||
+        order.dispatchLocation === locationFilter
+      return matchesSearch && matchesTab && matchesLocation
+    })
   }, [companyOrders, searchQuery, activeTab, locationFilter])
+
+  // Refresh orders, GRNs, and Invoices after workflow action
+  const refreshOrders = useCallback(async () => {
+    try {
+      setLoading(true)
+      
+      // Clear current data to ensure fresh render
+      setCompanyOrders([])
+      setCompanyGRNs([])
+      setCompanyInvoices([])
+      
+      // Small delay to ensure backend has processed the change
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      // Fetch fresh order data
+      let targetCompanyId = companyId
+      
+      if (isLocationAdmin && locationInfo) {
+        const locationId = locationInfo.id || locationInfo._id?.toString()
+        if (locationId) {
+          const locationOrders = await getOrdersByLocation(locationId)
+          setCompanyOrders(locationOrders)
+          targetCompanyId = locationInfo.companyId?.id || locationInfo.companyId || companyId
+        }
+      } else if (companyId) {
+        const filtered = await getOrdersByCompany(companyId)
+        setCompanyOrders(filtered)
+      }
+      
+      // Refresh GRNs
+      if (targetCompanyId) {
+        try {
+          const grnsResponse = await fetch(`/api/grns?companyId=${targetCompanyId}&raisedByVendors=true&_t=${Date.now()}`)
+          if (grnsResponse.ok) {
+            const grns = await grnsResponse.json()
+            const pendingGRNs = grns.filter((grn: any) => 
+              (grn.grnStatus === 'RAISED' || grn.unified_grn_status === 'RAISED' || grn.unified_grn_status === 'PENDING_APPROVAL') &&
+              grn.grnStatus !== 'APPROVED' && grn.unified_grn_status !== 'APPROVED'
+            )
+            setCompanyGRNs(pendingGRNs)
+          }
+        } catch (err) {
+          console.error('Error refreshing GRNs:', err)
+        }
+        
+        // Refresh Invoices
+        try {
+          const invoicesResponse = await fetch(`/api/company/invoices?companyId=${targetCompanyId}&_t=${Date.now()}`)
+          if (invoicesResponse.ok) {
+            const invoicesData = await invoicesResponse.json()
+            const invoices = Array.isArray(invoicesData) ? invoicesData : (invoicesData.invoices || [])
+            const pendingInvoices = invoices.filter((inv: any) => 
+              (inv.invoiceStatus === 'RAISED' || inv.unified_invoice_status === 'RAISED' || inv.unified_invoice_status === 'PENDING_APPROVAL') &&
+              inv.invoiceStatus !== 'APPROVED' && inv.unified_invoice_status !== 'APPROVED'
+            )
+            setCompanyInvoices(pendingInvoices)
+          }
+        } catch (err) {
+          console.error('Error refreshing Invoices:', err)
+        }
+      }
+    } catch (error) {
+      console.error('Error refreshing orders:', error)
+    } finally {
+      setLoading(false)
+    }
+  }, [isLocationAdmin, locationInfo, companyId])
+
+  // Handle workflow action completion
+  const handleActionComplete = useCallback(async (orderId: string, action: 'approve' | 'reject', success: boolean) => {
+    console.log(`[handleActionComplete] orderId=${orderId}, action=${action}, success=${success}`)
+    if (success) {
+      console.log(`[handleActionComplete] Refreshing data...`)
+      // Refresh orders, GRNs, and Invoices to get updated status
+      await refreshOrders()
+      console.log(`[handleActionComplete] Refresh complete`)
+      // Note: Success alerts are shown by the action handlers themselves
+    }
+  }, [refreshOrders])
 
   // Format date nicely
   const formatDate = (dateString: string) => {
@@ -346,8 +1348,12 @@ export default function CompanyOrdersPage() {
               <table className="w-full">
                 <thead>
                   <tr className="bg-gradient-to-r from-gray-50 to-gray-50/50">
-                    <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">PO Number</th>
-                    <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">PR Number</th>
+                    {isPrPoWorkflowEnabled && (
+                      <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">PO Number</th>
+                    )}
+                    {isPrPoWorkflowEnabled && (
+                      <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">PR Number</th>
+                    )}
                     <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Order ID</th>
                     <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Employee</th>
                     <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Items</th>
@@ -356,12 +1362,13 @@ export default function CompanyOrdersPage() {
                     <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Location</th>
                     <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
                     <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">PR Status</th>
+                    <th className="text-left py-4 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {filteredOrders.length === 0 ? (
+                  {filteredGroupedOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="py-16 text-center">
+                      <td colSpan={isPrPoWorkflowEnabled ? 11 : 9} className="py-16 text-center">
                         <div className="flex flex-col items-center gap-3">
                           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center">
                             <Package className="h-8 w-8 text-gray-400" />
@@ -379,132 +1386,309 @@ export default function CompanyOrdersPage() {
                       </td>
                     </tr>
                   ) : (
-                    filteredOrders.map((order) => (
-                      <tr 
-                        key={order.id} 
-                        className="hover:bg-gray-50/50 transition-colors group"
-                      >
-                        {/* PO Number */}
-                        <td className="py-4 px-5">
-                          {order.poNumbers && order.poNumbers.length > 0 ? (
-                            <div className="flex flex-col gap-1">
-                              {order.poNumbers.slice(0, 2).map((po: string, idx: number) => (
-                                <span key={idx} className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100">
-                                  <FileText className="h-3 w-3" />
-                                  {po}
-                                </span>
-                              ))}
-                              {order.poNumbers.length > 2 && (
-                                <span className="text-xs text-gray-400">+{order.poNumbers.length - 2} more</span>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-xs text-gray-400 italic">Not assigned</span>
-                          )}
-                        </td>
-
-                        {/* PR Number */}
-                        <td className="py-4 px-5">
-                          {order.prNumber || order.pr_number ? (
-                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
-                              <FileText className="h-3 w-3" />
-                              {order.prNumber || order.pr_number}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-gray-400 italic">N/A</span>
-                          )}
-                        </td>
-
-                        {/* Order ID */}
-                        <td className="py-4 px-5">
-                          <div className="max-w-[120px]">
-                            <p className="text-xs font-mono text-gray-700 truncate" title={order.id}>
-                              {order.id}
-                            </p>
-                          </div>
-                        </td>
-
-                        {/* Employee */}
-                        <td className="py-4 px-5">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center flex-shrink-0">
-                              <User className="h-4 w-4 text-gray-500" />
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-sm text-gray-900 font-medium truncate max-w-[120px]">
-                                {formatEmployeeName(order.employeeName)}
-                              </p>
-                              {order.employeeIdNum && (
-                                <p className="text-xs text-gray-400">{order.employeeIdNum}</p>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Items */}
-                        <td className="py-4 px-5">
-                          <div className="max-w-[180px]">
-                            {order.items?.slice(0, 2).map((item: any, idx: number) => (
-                              <div key={idx} className="text-xs text-gray-600 truncate leading-relaxed">
-                                <span className="font-medium text-gray-800">{item.uniformName}</span>
-                                <span className="text-gray-400"> • {item.size} × {item.quantity}</span>
-                              </div>
-                            ))}
-                            {order.items?.length > 2 && (
-                              <span className="text-xs text-gray-400">+{order.items.length - 2} more items</span>
+                    filteredGroupedOrders.map((groupedOrder) => {
+                      const isExpanded = expandedGroups.has(groupedOrder.id)
+                      const hasChildren = groupedOrder.isGroup && groupedOrder.childOrders.length > 1
+                      
+                      return (
+                        <React.Fragment key={groupedOrder.id}>
+                          {/* Parent/Main Row */}
+                          <tr 
+                            className={`hover:bg-gray-50/50 transition-colors group ${hasChildren ? 'cursor-pointer' : ''}`}
+                            onClick={hasChildren ? () => toggleGroupExpand(groupedOrder.id) : undefined}
+                          >
+                            {/* PO Number - only shown when PR/PO workflow is enabled */}
+                            {isPrPoWorkflowEnabled && (
+                              <td className="py-4 px-5">
+                                <div className="flex items-center gap-2">
+                                  {/* Expand/Collapse indicator for split orders */}
+                                  {hasChildren && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        toggleGroupExpand(groupedOrder.id)
+                                      }}
+                                      className="p-0.5 rounded hover:bg-gray-200 transition-colors"
+                                      title={isExpanded ? 'Collapse split orders' : 'Expand split orders'}
+                                    >
+                                      {isExpanded ? (
+                                        <ChevronDown className="h-4 w-4 text-gray-500" />
+                                      ) : (
+                                        <ChevronRight className="h-4 w-4 text-gray-500" />
+                                      )}
+                                    </button>
+                                  )}
+                                  <div className="flex flex-col gap-1">
+                                    {groupedOrder.poNumbers && groupedOrder.poNumbers.length > 0 ? (
+                                      <>
+                                        {groupedOrder.poNumbers.slice(0, 2).map((po: string, idx: number) => (
+                                          <span key={idx} className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100">
+                                            <FileText className="h-3 w-3" />
+                                            {po}
+                                          </span>
+                                        ))}
+                                        {groupedOrder.poNumbers.length > 2 && (
+                                          <span className="text-xs text-gray-400">+{groupedOrder.poNumbers.length - 2} more</span>
+                                        )}
+                                      </>
+                                    ) : (
+                                      <span className="text-xs text-gray-400 italic">Not assigned</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
                             )}
-                          </div>
-                        </td>
 
-                        {/* Total */}
-                        <td className="py-4 px-5">
-                          <span className="text-sm font-semibold text-gray-900">
-                            ₹{order.total?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '0.00'}
-                          </span>
-                        </td>
+                            {/* PR Number - only shown when PR/PO workflow is enabled */}
+                            {isPrPoWorkflowEnabled && (
+                              <td className="py-4 px-5">
+                                {groupedOrder.prNumber || groupedOrder.pr_number ? (
+                                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">
+                                    <FileText className="h-3 w-3" />
+                                    {groupedOrder.prNumber || groupedOrder.pr_number}
+                                  </span>
+                                ) : (
+                                  <span className="text-xs text-gray-400 italic">N/A</span>
+                                )}
+                              </td>
+                            )}
 
-                        {/* Payment Type */}
-                        <td className="py-4 px-5">
-                          {order.isPersonalPayment ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
-                              <CreditCard className="h-3 w-3" />
-                              Personal
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                              <CheckCircle className="h-3 w-3" />
-                              Company
-                            </span>
-                          )}
-                        </td>
+                            {/* Order ID with split indicator */}
+                            <td className="py-4 px-5">
+                              <div className="flex items-center gap-2">
+                                {/* Expand/Collapse indicator for split orders - shown here when PR/PO workflow is disabled */}
+                                {!isPrPoWorkflowEnabled && hasChildren && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      toggleGroupExpand(groupedOrder.id)
+                                    }}
+                                    className="p-0.5 rounded hover:bg-gray-200 transition-colors"
+                                    title={isExpanded ? 'Collapse split orders' : 'Expand split orders'}
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronDown className="h-4 w-4 text-gray-500" />
+                                    ) : (
+                                      <ChevronRight className="h-4 w-4 text-gray-500" />
+                                    )}
+                                  </button>
+                                )}
+                                <div className="max-w-[140px]">
+                                  <p className="text-xs font-mono text-gray-700 truncate" title={groupedOrder.id}>
+                                    {groupedOrder.id.length > 20 ? groupedOrder.id.substring(0, 20) + '...' : groupedOrder.id}
+                                  </p>
+                                  {hasChildren && (
+                                    <span className="inline-flex items-center gap-1 mt-1 text-xs text-indigo-600 font-medium">
+                                      <Layers className="h-3 w-3" />
+                                      Split into {groupedOrder.childOrders.length}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
 
-                        {/* Location */}
-                        <td className="py-4 px-5">
-                          <div className="flex items-center gap-1.5 text-sm text-gray-600">
-                            <MapPin className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
-                            <span className="truncate max-w-[100px]">{order.dispatchLocation || 'N/A'}</span>
-                          </div>
-                        </td>
+                            {/* Employee */}
+                            <td className="py-4 px-5">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 flex items-center justify-center flex-shrink-0">
+                                  <User className="h-4 w-4 text-gray-500" />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm text-gray-900 font-medium truncate max-w-[120px]">
+                                    {formatEmployeeName(groupedOrder.employeeName)}
+                                  </p>
+                                  {groupedOrder.employeeIdNum && (
+                                    <p className="text-xs text-gray-400">{groupedOrder.employeeIdNum}</p>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
 
-                        {/* Date */}
-                        <td className="py-4 px-5">
-                          <div className="text-xs text-gray-600">
-                            <div className="flex items-center gap-1.5">
-                              <Calendar className="h-3.5 w-3.5 text-gray-400" />
-                              {formatDate(order.orderDate)}
-                            </div>
-                          </div>
-                        </td>
+                            {/* Items */}
+                            <td className="py-4 px-5">
+                              <div className="max-w-[180px]">
+                                {groupedOrder.combinedItems?.slice(0, 2).map((item: any, idx: number) => (
+                                  <div key={idx} className="text-xs text-gray-600 truncate leading-relaxed">
+                                    <span className="font-medium text-gray-800">{item.uniformName}</span>
+                                    <span className="text-gray-400"> • {item.size} × {item.quantity}</span>
+                                  </div>
+                                ))}
+                                {groupedOrder.combinedItemCount > 2 && (
+                                  <span className="text-xs text-gray-400">+{groupedOrder.combinedItemCount - 2} more items</span>
+                                )}
+                              </div>
+                            </td>
 
-                        {/* PR Status */}
-                        <td className="py-4 px-5">
-                          <StatusBadge 
-                            status={order.status} 
-                            prStatus={order.unified_pr_status || order.pr_status} 
-                          />
-                        </td>
-                      </tr>
-                    ))
+                            {/* Total */}
+                            <td className="py-4 px-5">
+                              <span className="text-sm font-semibold text-gray-900">
+                                ₹{groupedOrder.combinedTotal?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '0.00'}
+                              </span>
+                            </td>
+
+                            {/* Payment Type */}
+                            <td className="py-4 px-5">
+                              {groupedOrder.isPersonalPayment ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                  <CreditCard className="h-3 w-3" />
+                                  Personal
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  <CheckCircle className="h-3 w-3" />
+                                  Company
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Location */}
+                            <td className="py-4 px-5">
+                              <div className="flex items-center gap-1.5 text-sm text-gray-600">
+                                <MapPin className="h-3.5 w-3.5 text-gray-400 flex-shrink-0" />
+                                <span className="truncate max-w-[100px]">{groupedOrder.dispatchLocation || 'N/A'}</span>
+                              </div>
+                            </td>
+
+                            {/* Date */}
+                            <td className="py-4 px-5">
+                              <div className="text-xs text-gray-600">
+                                <div className="flex items-center gap-1.5">
+                                  <Calendar className="h-3.5 w-3.5 text-gray-400" />
+                                  {formatDate(groupedOrder.orderDate)}
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* PR Status */}
+                            <td className="py-4 px-5">
+                              <StatusBadge 
+                                status={groupedOrder.overallStatus} 
+                                prStatus={groupedOrder.overallPrStatus} 
+                              />
+                            </td>
+
+                            {/* Actions */}
+                            <td className="py-4 px-5" onClick={(e) => e.stopPropagation()}>
+                              <OrderActionsCell
+                                groupedOrder={groupedOrder}
+                                companyId={companyId}
+                                userRole={userRole}
+                                userId={userId}
+                                primaryColor={companyPrimaryColor}
+                                onActionComplete={handleActionComplete}
+                              />
+                            </td>
+                          </tr>
+
+                          {/* Child Rows (expanded split orders) */}
+                          {hasChildren && isExpanded && groupedOrder.childOrders.map((childOrder: any, childIdx: number) => (
+                            <tr 
+                              key={`${groupedOrder.id}-child-${childIdx}`} 
+                              className="bg-gray-50/70 hover:bg-gray-100/70 transition-colors border-l-4 border-l-indigo-200"
+                            >
+                              {/* PO Number - indented - only shown when PR/PO workflow is enabled */}
+                              {isPrPoWorkflowEnabled && (
+                                <td className="py-3 px-5 pl-10">
+                                  {childOrder.poNumbers && childOrder.poNumbers.length > 0 ? (
+                                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-600 bg-purple-50/80 px-2 py-0.5 rounded border border-purple-100">
+                                      <FileText className="h-3 w-3" />
+                                      {childOrder.poNumbers[0]}
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-gray-400 italic">—</span>
+                                  )}
+                                </td>
+                              )}
+
+                              {/* PR Number - only shown when PR/PO workflow is enabled */}
+                              {isPrPoWorkflowEnabled && (
+                                <td className="py-3 px-5">
+                                  <span className="text-xs text-gray-400">—</span>
+                                </td>
+                              )}
+
+                              {/* Child Order ID */}
+                              <td className="py-3 px-5">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-400"></div>
+                                  <p className="text-xs font-mono text-gray-600 truncate max-w-[100px]" title={childOrder.id}>
+                                    {childOrder.id.length > 15 ? '...' + childOrder.id.slice(-15) : childOrder.id}
+                                  </p>
+                                </div>
+                              </td>
+
+                              {/* Vendor */}
+                              <td className="py-3 px-5">
+                                <span className="text-xs text-gray-600 font-medium">
+                                  {childOrder.vendorName || 'N/A'}
+                                </span>
+                              </td>
+
+                              {/* Items */}
+                              <td className="py-3 px-5">
+                                <div className="max-w-[180px]">
+                                  {childOrder.items?.slice(0, 2).map((item: any, idx: number) => (
+                                    <div key={idx} className="text-xs text-gray-500 truncate leading-relaxed">
+                                      <span className="font-medium text-gray-700">{item.uniformName}</span>
+                                      <span className="text-gray-400"> • {item.size} × {item.quantity}</span>
+                                    </div>
+                                  ))}
+                                  {childOrder.items?.length > 2 && (
+                                    <span className="text-xs text-gray-400">+{childOrder.items.length - 2} more</span>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* Total */}
+                              <td className="py-3 px-5">
+                                <span className="text-sm font-medium text-gray-700">
+                                  ₹{childOrder.total?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) || '0.00'}
+                                </span>
+                              </td>
+
+                              {/* Payment - empty for child */}
+                              <td className="py-3 px-5">
+                                <span className="text-xs text-gray-400">—</span>
+                              </td>
+
+                              {/* Location - empty for child */}
+                              <td className="py-3 px-5">
+                                <span className="text-xs text-gray-400">—</span>
+                              </td>
+
+                              {/* Date - empty for child */}
+                              <td className="py-3 px-5">
+                                <span className="text-xs text-gray-400">—</span>
+                              </td>
+
+                              {/* Status */}
+                              <td className="py-3 px-5">
+                                <StatusBadge 
+                                  status={childOrder.status} 
+                                  prStatus={childOrder.unified_pr_status || childOrder.pr_status} 
+                                />
+                              </td>
+
+                              {/* Child Actions */}
+                              <td className="py-3 px-5">
+                                <WorkflowActionButtons
+                                  entityType="ORDER"
+                                  entityId={childOrder.id}
+                                  entityDisplayId={childOrder.prNumber || childOrder.id}
+                                  companyId={companyId}
+                                  userRole={userRole}
+                                  userId={userId}
+                                  primaryColor={companyPrimaryColor}
+                                  size="sm"
+                                  layout="compact"
+                                  onActionComplete={(action, success) => handleActionComplete(childOrder.id, action, success)}
+                                />
+                              </td>
+                            </tr>
+                          ))}
+                        </React.Fragment>
+                      )
+                    })
                   )}
                 </tbody>
               </table>
@@ -513,15 +1697,17 @@ export default function CompanyOrdersPage() {
         </div>
 
         {/* Footer Stats */}
-        {!loading && filteredOrders.length > 0 && (
+        {!loading && filteredGroupedOrders.length > 0 && (
           <div className="mt-6 flex items-center justify-between text-sm text-gray-500">
             <p>
-              Showing <span className="font-medium text-gray-900">{filteredOrders.length}</span> of{' '}
-              <span className="font-medium text-gray-900">{companyOrders.length}</span> orders
+              Showing <span className="font-medium text-gray-900">{filteredGroupedOrders.length}</span> logical order{filteredGroupedOrders.length !== 1 ? 's' : ''}{' '}
+              <span className="text-gray-400">
+                ({companyOrders.length} total system order{companyOrders.length !== 1 ? 's' : ''})
+              </span>
             </p>
             <p>
               Total Value: <span className="font-semibold text-gray-900">
-                ₹{filteredOrders.reduce((sum, order) => sum + (order.total || 0), 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                ₹{filteredGroupedOrders.reduce((sum, order) => sum + (order.combinedTotal || 0), 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </span>
             </p>
           </div>
@@ -540,21 +1726,25 @@ export default function CompanyOrdersPage() {
               
               <div className="p-6 space-y-6">
                 {/* Order Info */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className={`grid ${isPrPoWorkflowEnabled ? 'grid-cols-2' : 'grid-cols-2'} gap-4`}>
                   <div>
                     <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Order ID</p>
                     <p className="text-sm font-mono text-gray-900">{selectedOrder.id}</p>
                   </div>
-                  <div>
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">PR Number</p>
-                    <p className="text-sm font-medium text-gray-900">{selectedOrder.prNumber || selectedOrder.pr_number || 'N/A'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">PO Number(s)</p>
-                    <p className="text-sm font-medium text-gray-900">
-                      {selectedOrder.poNumbers?.length > 0 ? selectedOrder.poNumbers.join(', ') : 'Not assigned'}
-                    </p>
-                  </div>
+                  {isPrPoWorkflowEnabled && (
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">PR Number</p>
+                      <p className="text-sm font-medium text-gray-900">{selectedOrder.prNumber || selectedOrder.pr_number || 'N/A'}</p>
+                    </div>
+                  )}
+                  {isPrPoWorkflowEnabled && (
+                    <div>
+                      <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">PO Number(s)</p>
+                      <p className="text-sm font-medium text-gray-900">
+                        {selectedOrder.poNumbers?.length > 0 ? selectedOrder.poNumbers.join(', ') : 'Not assigned'}
+                      </p>
+                    </div>
+                  )}
                   <div>
                     <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">Status</p>
                     <StatusBadge status={selectedOrder.status} prStatus={selectedOrder.unified_pr_status || selectedOrder.pr_status} />
