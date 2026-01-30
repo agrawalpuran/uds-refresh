@@ -422,6 +422,18 @@ export default function OrderDetailsPage() {
                           <span className="ml-1 text-blue-600 font-medium break-all">{shipment.providerShipmentReference}</span>
                         </div>
                       )}
+                      {pr.shipmentReferenceNumber && (
+                        <div>
+                          <span className="text-gray-500">Shipment Ref No:</span>
+                          <span className="ml-1 text-gray-900 font-medium break-all">{pr.shipmentReferenceNumber}</span>
+                        </div>
+                      )}
+                      {pr.trackingNumber && (
+                        <div>
+                          <span className="text-gray-500">Tracking No:</span>
+                          <span className="ml-1 text-blue-600 font-medium break-all">{pr.trackingNumber}</span>
+                        </div>
+                      )}
                       {shipment?.expectedDeliveryDate && (
                         <div>
                           <span className="text-gray-500">Expected Delivery:</span>

@@ -1,13 +1,17 @@
 
 import { NextResponse } from 'next/server'
 import connectDB from '@/lib/db/mongodb'
-import Branch from '@/lib/models/Branch'
 import Company from '@/lib/models/Company'
-import mongoose from 'mongoose'
+import Location from '@/lib/models/Location'
 
 /**
  * GET /api/companies/[companyId]/branches
- * Get all branches for a company
+ * Get all branches (locations) for a company
+ * 
+ * Uses the `locations` collection as the primary source since:
+ * - Employees are linked to locations (via locationId)
+ * - Order creation uses locations for shipping addresses
+ * - Test order creation works with locations
  */
 
 // Force dynamic rendering for serverless functions
@@ -31,25 +35,33 @@ export async function GET(
       )
     }
 
-    // Find branches for the company - use string ID
-    const branches: any[] = await Branch.find({
-      companyId: company.id
+    // Load from locations collection - this is where employees and orders are linked
+    const locations: any[] = await Location.find({
+      companyId: company.id,
+      status: 'active'
     }).lean()
 
-    console.log(`[branches API] Found ${branches.length} branches for company ${company.id}`)
+    console.log(`[branches API] Found ${locations.length} locations for company ${company.id}`)
 
-    // Ensure we return branches with proper structure - use string IDs
-    const formattedBranches = branches.map((branch: any) => ({
-      id: branch.id,
-      name: branch.name,
-      city: branch.city,
-      state: branch.state,
-      companyId: String(branch.companyId),
-      status: branch.status || 'active',
-      ...branch // Include all other fields
+    // Format locations as branches for the API response
+    const formattedBranches = locations.map((loc: any) => ({
+      id: loc.id,
+      name: loc.name,
+      address_line_1: loc.address_line_1,
+      address_line_2: loc.address_line_2,
+      address_line_3: loc.address_line_3,
+      city: loc.city,
+      state: loc.state,
+      pincode: loc.pincode,
+      country: loc.country,
+      phone: loc.phone,
+      email: loc.email,
+      companyId: String(loc.companyId),
+      adminId: loc.adminId,
+      status: loc.status || 'active'
     }))
 
-    console.log(`[branches API] Returning ${formattedBranches.length} formatted branch(es)`)
+    console.log(`[branches API] Returning ${formattedBranches.length} location(s) as branches`)
 
     return NextResponse.json(formattedBranches)
   } catch (error: any) {

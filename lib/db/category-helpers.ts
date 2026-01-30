@@ -113,7 +113,7 @@ export function normalizeCategoryName(categoryName: string): string {
   
   const lower = categoryName.toLowerCase().trim()
   
-  // Legacy mapping for backward compatibility
+  // Legacy mapping for backward compatibility (includes common misspellings)
   const legacyMap: Record<string, string> = {
     'shirt': 'shirt',
     'shirts': 'shirt',
@@ -128,7 +128,8 @@ export function normalizeCategoryName(categoryName: string): string {
     'blazer': 'jacket',
     'blazers': 'jacket',
     'accessory': 'accessory',
-    'accessories': 'accessory'
+    'accessories': 'accessory',
+    'accessorys': 'accessory' // common misspelling → standard key
   }
   
   return legacyMap[lower] || lower

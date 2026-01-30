@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import connectDB from '@/lib/db/mongodb'
 import mongoose from 'mongoose'
 import Company from '@/lib/models/Company'
-import Branch from '@/lib/models/Branch'
 import Employee from '@/lib/models/Employee'
 import Uniform from '@/lib/models/Uniform'
 import Order from '@/lib/models/Order'
@@ -72,8 +71,8 @@ export async function POST(request: Request) {
       )
     }
 
-    // Find branch - use string ID only
-    const branch = await Branch.findOne({ id: branchId })
+    // Find location (branch) - use string ID only
+    const branch = await Location.findOne({ id: branchId })
     if (!branch) {
       return NextResponse.json(
         { error: `Branch not found: ${branchId}` },
@@ -367,52 +366,76 @@ export async function POST(request: Request) {
         throw new Error(`Branch "${branch.name}" is missing required address fields (address_line_1, city, state, pincode). Please update the branch address before creating orders.`)
       }
 
-      // Select 2-3 products for this order (round-robin)
-      const productIndex = i % products.length
-      const orderProducts = [
-        products[productIndex],
-        products[(productIndex + 1) % products.length]
-      ]
-
-      // Find vendor for products (check ProductVendor relationships)
-      let selectedVendorId = null
-      let selectedVendorName = null
-
-      for (const product of orderProducts) {
-        const productVendor = await ProductVendor.findOne({
-          productId: product.id,
-          vendorId: { $in: validVendorIdsFiltered }
+      // MULTI-VENDOR SUPPORT: Pick at least one product from EACH selected vendor
+      // This ensures orders are split across all selected vendors
+      console.log(`[create-test-orders] 🔄 Selecting products from ${validVendorIdsFiltered.length} vendor(s) for employee ${employeeId}`)
+      
+      const orderProducts: any[] = []
+      const vendorsWithProducts: { vendorId: string, vendorName: string }[] = []
+      
+      for (const vendorId of validVendorIdsFiltered) {
+        // Find products linked to this specific vendor
+        const productVendorLinks = await ProductVendor.find({
+          vendorId: vendorId,
+          productId: { $in: productIds }
         }).lean()
-
-        if (productVendor) {
-          if (!mongoose.connection.db) {
-            throw new Error('Database connection not available')
-          }
-          const vendor = await mongoose.connection.db.collection('vendors').findOne({
-            id: productVendor.vendorId
-          })
-          if (vendor) {
-            selectedVendorId = vendor.id
-            selectedVendorName = vendor.name
-            break
-          }
+        
+        if (productVendorLinks.length === 0) {
+          console.log(`[create-test-orders] ⚠️ No products found for vendor ${vendorId}, skipping this vendor`)
+          continue
         }
-      }
-
-      // If no vendor found, use first valid vendor - use string IDs
-      if (!selectedVendorId && validVendorIdsFiltered.length > 0) {
+        
+        // Get vendor info
         if (!mongoose.connection.db) {
           throw new Error('Database connection not available')
         }
-        const vendor = await mongoose.connection.db.collection('vendors').findOne({
-          id: validVendorIdsFiltered[0]
-        })
-        if (vendor) {
-          selectedVendorId = vendor.id
-          selectedVendorName = vendor.name
+        const vendor = await mongoose.connection.db.collection('vendors').findOne({ id: vendorId })
+        if (!vendor) {
+          console.log(`[create-test-orders] ⚠️ Vendor ${vendorId} not found in database, skipping`)
+          continue
+        }
+        
+        // Find the actual product documents for this vendor
+        const vendorProductIds = productVendorLinks.map(pv => pv.productId)
+        const vendorProducts = products.filter(p => vendorProductIds.includes(p.id))
+        
+        if (vendorProducts.length === 0) {
+          console.log(`[create-test-orders] ⚠️ No matching product documents for vendor ${vendor.name}, skipping`)
+          continue
+        }
+        
+        // Select 1-2 products from this vendor (round-robin based on employee index)
+        const productIndex = i % vendorProducts.length
+        const selectedProduct = vendorProducts[productIndex]
+        
+        orderProducts.push(selectedProduct)
+        vendorsWithProducts.push({ vendorId: vendor.id, vendorName: vendor.name })
+        
+        console.log(`[create-test-orders] ✅ Added product "${selectedProduct.name}" (${selectedProduct.id}) from vendor "${vendor.name}" (${vendor.id})`)
+        
+        // Optionally add a second product from this vendor if available
+        if (vendorProducts.length > 1 && validVendorIdsFiltered.length === 1) {
+          // Only add extra products if single vendor selected (to keep order size reasonable)
+          const secondProduct = vendorProducts[(productIndex + 1) % vendorProducts.length]
+          if (secondProduct.id !== selectedProduct.id) {
+            orderProducts.push(secondProduct)
+            console.log(`[create-test-orders] ✅ Added second product "${secondProduct.name}" (${secondProduct.id}) from vendor "${vendor.name}"`)
+          }
         }
       }
-
+      
+      if (orderProducts.length === 0) {
+        console.warn(`[create-test-orders] ⚠️ No products found for any selected vendor for employee ${employeeId}, skipping order`)
+        continue
+      }
+      
+      console.log(`[create-test-orders] 📦 Order will include ${orderProducts.length} product(s) from ${vendorsWithProducts.length} vendor(s):`)
+      vendorsWithProducts.forEach(v => console.log(`[create-test-orders]    - ${v.vendorName} (${v.vendorId})`))
+      
+      // Track the first vendor for backward compatibility (used in order metadata)
+      const selectedVendorId = vendorsWithProducts[0]?.vendorId || null
+      const selectedVendorName = vendorsWithProducts[0]?.vendorName || null
+      
       if (!selectedVendorId) {
         console.warn(`No vendor found for employee ${employeeId}, skipping order`)
         continue

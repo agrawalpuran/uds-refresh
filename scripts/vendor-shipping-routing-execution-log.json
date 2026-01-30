@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-01-29T05:39:22.276Z",
+  "status": "SUCCESS",
+  "changes": {
+    "iciciBank": {
+      "disabledRoutings": [
+        {
+          "routingId": "VSR_MJY72QEHSDA",
+          "vendorId": "100001",
+          "companyId": "100004",
+          "providerRefId": 100003
+        },
+        {
+          "routingId": "VSR_MJY73SV9V2V",
+          "vendorId": "100002",
+          "companyId": "100004",
+          "providerRefId": 100003
+        },
+        {
+          "routingId": "VSR_MJY74KGH4HS",
+          "vendorId": "100003",
+          "companyId": "100004",
+          "providerRefId": 100003
+        }
+      ]
+    },
+    "akasaAir": {
+      "insertedRoutings": [
+        {
+          "routingId": "VSR_MKZ0Y2A8JBF",
+          "vendorId": "100001",
+          "_id": "697af28ac86b61e4dd559853",
+          "reactivated": false
+        },
+        {
+          "routingId": "VSR_MKZ0Y2ADQ9D",
+          "vendorId": "100002",
+          "_id": "697af28ac86b61e4dd559854",
+          "reactivated": false
+        },
+        {
+          "routingId": "VSR_MKZ0Y2AFGYQ",
+          "vendorId": "100003",
+          "_id": "697af28ac86b61e4dd559855",
+          "reactivated": false
+        }
+      ],
+      "insertedProviders": [
+        {
+          "companyShippingProviderId": "CSP_MKZ0Y2AI4G0",
+          "_id": "697af28ac86b61e4dd559856"
+        }
+      ]
+    }
+  }
+}

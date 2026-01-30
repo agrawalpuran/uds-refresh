@@ -319,13 +319,13 @@ export default function CompanyInvoicesPage() {
           </div>
         )}
 
-        {/* View Invoice Details Modal */}
+        {/* View Invoice Details Modal - Compact Layout */}
         {showViewModal && selectedInvoice && (
           <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-            <div className="relative top-20 mx-auto p-5 border w-full max-w-4xl shadow-lg rounded-md bg-white">
-              <div className="mt-3">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-medium text-gray-900">Invoice Details</h3>
+            <div className="relative top-10 mx-auto p-4 border w-full max-w-3xl shadow-lg rounded-md bg-white">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-lg font-semibold text-gray-900">Invoice Details</h3>
                   <button
                     onClick={() => {
                       setShowViewModal(false)
@@ -338,225 +338,177 @@ export default function CompanyInvoicesPage() {
                   </button>
                 </div>
                 
-                <div className="space-y-6">
-                  {/* Vendor Company Details - Displayed at top of invoice */}
-                  <div className="bg-indigo-50 p-4 rounded-md border border-indigo-200">
-                    <h4 className="text-sm font-semibold text-indigo-900 mb-3">Vendor Details</h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="col-span-2">
-                        <label className="block text-sm font-medium text-gray-700">Vendor Name</label>
-                        <p className="mt-1 text-base text-gray-900 font-semibold">
-                          {selectedVendorDetails?.name || 'N/A'}
-                        </p>
-                      </div>
-                      <div className="col-span-2">
-                        <label className="block text-sm font-medium text-gray-700">Address</label>
-                        <p className="mt-1 text-sm text-gray-900">
-                          {selectedVendorDetails?.address_line_1 && (
-                            <>{selectedVendorDetails.address_line_1}<br /></>
-                          )}
-                          {selectedVendorDetails?.address_line_2 && (
-                            <>{selectedVendorDetails.address_line_2}<br /></>
-                          )}
-                          {selectedVendorDetails?.address_line_3 && (
-                            <>{selectedVendorDetails.address_line_3}<br /></>
-                          )}
+                <div className="space-y-3">
+                  {/* Vendor Company Details - Compact Layout */}
+                  <div className="bg-indigo-50 px-3 py-2 rounded border border-indigo-200">
+                    <h4 className="text-xs font-semibold text-indigo-700 mb-2">Vendor Details</h4>
+                    <div className="flex gap-4">
+                      {/* Left: Name & Address */}
+                      <div className="flex-1">
+                        <p className="text-sm font-semibold text-gray-900">{selectedVendorDetails?.name || 'N/A'}</p>
+                        <p className="text-xs text-gray-600 mt-0.5">
                           {[
-                            selectedVendorDetails?.city,
-                            selectedVendorDetails?.state,
-                            selectedVendorDetails?.pincode
-                          ].filter(Boolean).join(', ') || ''}
-                          {selectedVendorDetails?.country && (
-                            <><br />{selectedVendorDetails.country}</>
-                          )}
-                          {!selectedVendorDetails?.address_line_1 && !selectedVendorDetails?.city && 'N/A'}
+                            selectedVendorDetails?.address_line_1,
+                            selectedVendorDetails?.address_line_2,
+                            [selectedVendorDetails?.city, selectedVendorDetails?.state, selectedVendorDetails?.pincode].filter(Boolean).join(', '),
+                            selectedVendorDetails?.country
+                          ].filter(Boolean).join(' • ') || 'N/A'}
                         </p>
                       </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Registration Number</label>
-                        <p className="mt-1 text-sm text-gray-900">{selectedVendorDetails?.registration_number || 'N/A'}</p>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">GST Number</label>
-                        <p className="mt-1 text-sm text-gray-900">{selectedVendorDetails?.gst_number || 'N/A'}</p>
+                      {/* Right: Registration & GST */}
+                      <div className="text-right text-xs">
+                        <p><span className="text-gray-500">Reg:</span> <span className="font-medium">{selectedVendorDetails?.registration_number || 'N/A'}</span></p>
+                        <p><span className="text-gray-500">GST:</span> <span className="font-medium">{selectedVendorDetails?.gst_number || 'N/A'}</span></p>
                       </div>
                     </div>
                   </div>
 
-                  {/* Vendor Invoice Details */}
-                  <div className="bg-gray-50 p-4 rounded-md">
-                    <h4 className="text-sm font-medium text-gray-900 mb-3">Vendor Invoice Details</h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Vendor Invoice Number</label>
-                        <p className="mt-1 text-sm text-gray-900 font-medium">{selectedInvoice.vendorInvoiceNumber || 'N/A'}</p>
-                        <p className="mt-1 text-xs text-gray-500">Provided by vendor</p>
+                  {/* Vendor Invoice Details + Procurement References - Combined Row */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-gray-50 px-3 py-2 rounded">
+                      <h4 className="text-xs font-semibold text-gray-700 mb-1">Vendor Invoice</h4>
+                      <div className="flex justify-between text-xs">
+                        <div>
+                          <span className="text-gray-500">Number:</span>
+                          <span className="ml-1 font-semibold text-gray-900">{selectedInvoice.vendorInvoiceNumber || 'N/A'}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Date:</span>
+                          <span className="ml-1 font-medium">{selectedInvoice.vendorInvoiceDate ? new Date(selectedInvoice.vendorInvoiceDate).toLocaleDateString() : 'N/A'}</span>
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Vendor Invoice Date</label>
-                        <p className="mt-1 text-sm text-gray-900 font-medium">
-                          {selectedInvoice.vendorInvoiceDate ? new Date(selectedInvoice.vendorInvoiceDate).toLocaleDateString() : 'N/A'}
-                        </p>
-                        <p className="mt-1 text-xs text-gray-500">Provided by vendor</p>
+                    </div>
+
+                    <div className="bg-gray-50 px-3 py-2 rounded">
+                      <h4 className="text-xs font-semibold text-gray-700 mb-1">Procurement References</h4>
+                      <div className="grid grid-cols-2 gap-x-3 text-xs">
+                        <p><span className="text-gray-500">PO:</span> <span className="font-medium text-orange-600">{selectedInvoice.poNumber || 'N/A'}</span></p>
+                        <p><span className="text-gray-500">GRN:</span> <span className="font-medium">{selectedInvoice.grnNumber}</span></p>
+                        <p><span className="text-gray-500">PR:</span> <span className="font-medium">{selectedInvoice.prNumbers?.length > 0 ? selectedInvoice.prNumbers.join(', ') : 'N/A'}</span></p>
+                        <p><span className="text-gray-500">Approved:</span> <span className="font-medium">{selectedInvoice.grnApprovedDate ? new Date(selectedInvoice.grnApprovedDate).toLocaleDateString() : 'N/A'}</span></p>
                       </div>
                     </div>
                   </div>
 
-                  {/* Status and Amount */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Status</label>
-                      <p className="mt-1">{getStatusBadge(selectedInvoice.invoiceStatus, selectedInvoice.unified_invoice_status)}</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Invoice Amount</label>
-                      <p className="mt-1 text-sm text-gray-900 font-medium">₹{selectedInvoice.invoiceAmount?.toFixed(2) || '0.00'}</p>
-                    </div>
-                  </div>
-
-                  {/* Procurement References */}
-                  <div className="bg-gray-50 p-4 rounded-md">
-                    <h4 className="text-sm font-medium text-gray-900 mb-3">Procurement References</h4>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <label className="block text-gray-600">PO Number</label>
-                        <p className="mt-1 text-gray-900 font-medium">{selectedInvoice.poNumber}</p>
-                      </div>
-                      <div>
-                        <label className="block text-gray-600">GRN Number</label>
-                        <p className="mt-1 text-gray-900 font-medium">{selectedInvoice.grnNumber}</p>
-                      </div>
-                      <div>
-                        <label className="block text-gray-600">PR Number(s)</label>
-                        <p className="mt-1 text-gray-900 font-medium">
-                          {selectedInvoice.prNumbers && selectedInvoice.prNumbers.length > 0 
-                            ? selectedInvoice.prNumbers.join(', ') 
-                            : 'N/A'}
-                        </p>
-                      </div>
-                      <div>
-                        <label className="block text-gray-600">GRN Approved Date</label>
-                        <p className="mt-1 text-gray-900 font-medium">
-                          {selectedInvoice.grnApprovedDate ? new Date(selectedInvoice.grnApprovedDate).toLocaleDateString() : 'N/A'}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Invoice Items */}
+                  {/* Invoice Items - Compact Table */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Invoice Items</label>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
+                    <h4 className="text-xs font-semibold text-gray-700 mb-1">Invoice Items</h4>
+                    <div className="overflow-x-auto border rounded">
+                      <table className="min-w-full divide-y divide-gray-200 text-xs">
+                        <thead className="bg-gray-100">
                           <tr>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product Code</th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product Name</th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Size</th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Quantity</th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Unit Price</th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Line Total</th>
+                            <th className="px-2 py-1.5 text-left font-medium text-gray-600 uppercase">Code</th>
+                            <th className="px-2 py-1.5 text-left font-medium text-gray-600 uppercase">Product</th>
+                            <th className="px-2 py-1.5 text-center font-medium text-gray-600 uppercase">Size</th>
+                            <th className="px-2 py-1.5 text-center font-medium text-gray-600 uppercase">Qty</th>
+                            <th className="px-2 py-1.5 text-right font-medium text-gray-600 uppercase">Price</th>
+                            <th className="px-2 py-1.5 text-right font-medium text-gray-600 uppercase">Total</th>
                           </tr>
                         </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
+                        <tbody className="bg-white divide-y divide-gray-100">
                           {selectedInvoice.invoiceItems && selectedInvoice.invoiceItems.length > 0 ? (
                             selectedInvoice.invoiceItems.map((item: any, index: number) => (
                               <tr key={index}>
-                                <td className="px-4 py-2 text-sm text-gray-900">{item.productCode}</td>
-                                <td className="px-4 py-2 text-sm text-gray-500">{item.productName || 'N/A'}</td>
-                                <td className="px-4 py-2 text-sm text-gray-500">{item.size || '-'}</td>
-                                <td className="px-4 py-2 text-sm text-gray-500">{item.quantity}</td>
-                                <td className="px-4 py-2 text-sm text-gray-500">₹{item.unitPrice?.toFixed(2) || '0.00'}</td>
-                                <td className="px-4 py-2 text-sm text-gray-900 font-medium">₹{item.lineTotal?.toFixed(2) || '0.00'}</td>
+                                <td className="px-2 py-1.5 text-gray-900">{item.productCode}</td>
+                                <td className="px-2 py-1.5 text-gray-600">{item.productName || 'N/A'}</td>
+                                <td className="px-2 py-1.5 text-center text-gray-600">{item.size || '-'}</td>
+                                <td className="px-2 py-1.5 text-center text-gray-600">{item.quantity || 0}</td>
+                                <td className="px-2 py-1.5 text-right text-gray-600">₹{item.unitPrice?.toFixed(2) || '0.00'}</td>
+                                <td className="px-2 py-1.5 text-right font-medium text-gray-900">₹{item.lineTotal?.toFixed(2) || '0.00'}</td>
                               </tr>
                             ))
                           ) : (
                             <tr>
-                              <td colSpan={6} className="px-4 py-4 text-sm text-gray-500 text-center">No items found</td>
+                              <td colSpan={6} className="px-2 py-3 text-gray-500 text-center">No items found</td>
                             </tr>
                           )}
                         </tbody>
-                        {selectedInvoice.taxAmount > 0 ? (
-                          <tfoot className="bg-gray-50">
-                            <tr>
-                              <td colSpan={5} className="px-4 py-2 text-sm text-right font-medium text-gray-700">Tax / Additional Charges:</td>
-                              <td className="px-4 py-2 text-sm text-gray-900 font-medium">₹{selectedInvoice.taxAmount.toFixed(2)}</td>
-                            </tr>
-                          </tfoot>
-                        ) : null}
                       </table>
                     </div>
                   </div>
 
-                  {selectedInvoice.remarks && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Remarks</label>
-                      <p className="mt-1 text-sm text-gray-900">{selectedInvoice.remarks}</p>
-                    </div>
-                  )}
+                  {/* Total Amount - Compact */}
+                  <div className="flex justify-end items-center pt-2 border-t border-gray-200">
+                    <span className="text-sm text-gray-600 mr-3">Total Invoice Amount:</span>
+                    <span className="text-lg font-bold text-gray-900">₹{selectedInvoice.invoiceAmount?.toFixed(2) || '0.00'}</span>
+                  </div>
 
-                  {/* Vendor Bank Details Section - Only displayed if bank data exists */}
+                  {/* Vendor Bank Details - Single Row Layout */}
                   {selectedVendorDetails && (selectedVendorDetails.bank_name || selectedVendorDetails.account_number || selectedVendorDetails.ifsc_code) && (
-                    <div className="bg-green-50 p-4 rounded-md border border-green-200">
-                      <h4 className="text-sm font-semibold text-green-900 mb-3">Bank Details for Payment</h4>
-                      <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="bg-green-50 px-3 py-2 rounded border border-green-200">
+                      <h4 className="text-xs font-semibold text-green-800 mb-1">Bank Details for Payment</h4>
+                      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
                         {selectedVendorDetails.bank_name && (
-                          <div>
-                            <label className="block text-gray-600">Bank Name</label>
-                            <p className="mt-1 text-gray-900 font-medium">{selectedVendorDetails.bank_name}</p>
-                          </div>
-                        )}
-                        {selectedVendorDetails.branch_address && (
-                          <div>
-                            <label className="block text-gray-600">Branch Address</label>
-                            <p className="mt-1 text-gray-900 font-medium">{selectedVendorDetails.branch_address}</p>
-                          </div>
+                          <span><span className="text-gray-500">Bank:</span> <span className="font-medium">{selectedVendorDetails.bank_name}</span></span>
                         )}
                         {selectedVendorDetails.ifsc_code && (
-                          <div>
-                            <label className="block text-gray-600">IFSC Code</label>
-                            <p className="mt-1 text-gray-900 font-medium">{selectedVendorDetails.ifsc_code}</p>
-                          </div>
+                          <span><span className="text-gray-500">IFSC:</span> <span className="font-medium">{selectedVendorDetails.ifsc_code}</span></span>
                         )}
                         {selectedVendorDetails.account_number && (
-                          <div>
-                            <label className="block text-gray-600">Account Number</label>
-                            <p className="mt-1 text-gray-900 font-medium">{selectedVendorDetails.account_number}</p>
-                          </div>
+                          <span><span className="text-gray-500">A/C:</span> <span className="font-medium">{selectedVendorDetails.account_number}</span></span>
+                        )}
+                        {selectedVendorDetails.branch_address && (
+                          <span><span className="text-gray-500">Branch:</span> <span className="font-medium">{selectedVendorDetails.branch_address}</span></span>
                         )}
                       </div>
                     </div>
                   )}
 
-                  {selectedInvoice.approvedAt && (
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Approved Date</label>
-                        <p className="mt-1 text-sm text-gray-900">
-                          {new Date(selectedInvoice.approvedAt).toLocaleDateString()}
-                        </p>
+                  {/* Status - Compact */}
+                  <div className="flex items-center justify-between text-xs pt-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500">Status:</span>
+                      {getStatusBadge(selectedInvoice.invoiceStatus, selectedInvoice.unified_invoice_status)}
+                      {selectedInvoice.approvedAt && (selectedInvoice.invoiceStatus === 'APPROVED' || selectedInvoice.unified_invoice_status === 'APPROVED') && (
+                        <span className="text-gray-500 ml-2">
+                          by {selectedInvoice.approvedBy || 'N/A'} on {new Date(selectedInvoice.approvedAt).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                    {selectedInvoice.remarks && (
+                      <span className="text-gray-500"><span className="font-medium">Remarks:</span> {selectedInvoice.remarks}</span>
+                    )}
+                  </div>
+
+                  {/* Rejection Details - Compact */}
+                  {(selectedInvoice.unified_invoice_status === 'REJECTED' || selectedInvoice.invoiceStatus === 'REJECTED') && (
+                    <div className="bg-red-50 px-3 py-2 rounded border border-red-200 text-xs">
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
+                        {selectedInvoice.rejectionReasonCode && (
+                          <span><span className="text-gray-500">Reason:</span> <span className="font-medium text-red-800">{selectedInvoice.rejectionReasonLabel || selectedInvoice.rejectionReasonCode}</span></span>
+                        )}
+                        {selectedInvoice.rejectedAt && (
+                          <span><span className="text-gray-500">Date:</span> <span className="font-medium">{new Date(selectedInvoice.rejectedAt).toLocaleDateString()}</span></span>
+                        )}
+                        {selectedInvoice.rejectedBy && (
+                          <span><span className="text-gray-500">By:</span> <span className="font-medium">{selectedInvoice.rejectedBy}</span></span>
+                        )}
                       </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700">Approved By</label>
-                        <p className="mt-1 text-sm text-gray-900">{selectedInvoice.approvedBy || 'N/A'}</p>
-                      </div>
+                      {selectedInvoice.rejectionRemarks && (
+                        <p className="mt-1 text-gray-700">{selectedInvoice.rejectionRemarks}</p>
+                      )}
                     </div>
                   )}
                 </div>
                 
-                <div className="mt-6 flex justify-end space-x-3">
+                {/* Computer-generated notice */}
+                <p className="text-center text-xs text-gray-400 mt-4 pt-3 border-t border-gray-100">
+                  This is a computer-generated invoice and does not require a signature.
+                </p>
+                
+                <div className="mt-3 flex justify-end space-x-3">
                   {canTakeAction(selectedInvoice) && (
                     <>
                       <button
                         onClick={() => handleApprove(selectedInvoice)}
                         disabled={approving === selectedInvoice.id}
-                        className="px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400"
+                        className="px-4 py-1.5 border border-transparent rounded text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:bg-gray-400"
                       >
                         {approving === selectedInvoice.id ? 'Approving...' : 'Approve Invoice'}
                       </button>
                       <button
                         onClick={() => handleReject(selectedInvoice)}
-                        className="px-4 py-2 border border-transparent rounded-md text-sm font-medium text-white bg-red-600 hover:bg-red-700"
+                        className="px-4 py-1.5 border border-transparent rounded text-sm font-medium text-white bg-red-600 hover:bg-red-700"
                       >
                         Reject Invoice
                       </button>
@@ -568,7 +520,7 @@ export default function CompanyInvoicesPage() {
                       setSelectedInvoice(null)
                       setSelectedVendorDetails(null)
                     }}
-                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    className="px-4 py-1.5 border border-gray-300 rounded text-sm font-medium text-gray-700 hover:bg-gray-50"
                   >
                     Close
                   </button>

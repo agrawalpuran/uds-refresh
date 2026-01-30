@@ -904,15 +904,22 @@ export default function ConsumerCatalogPage() {
                   
                   // Only show categories that have at least one product visible after gender filter
                   const normalizedCat = cat.toLowerCase().trim()
-                  // Handle belt/accessory variations
+                  // Handle singular/plural and belt/accessory variations
                   const categoryMatches = visibleCategories.has(normalizedCat) ||
-                    (normalizedCat === 'accessory' && visibleCategories.has('belt')) ||
-                    (normalizedCat === 'belt' && visibleCategories.has('accessory'))
+                    // Handle accessory/accessories/belt variations
+                    (normalizedCat === 'accessory' && (visibleCategories.has('belt') || visibleCategories.has('accessories'))) ||
+                    (normalizedCat === 'accessories' && (visibleCategories.has('accessory') || visibleCategories.has('belt'))) ||
+                    (normalizedCat === 'belt' && (visibleCategories.has('accessory') || visibleCategories.has('accessories'))) ||
+                    // Handle other common singular/plural variations
+                    (normalizedCat === 'shirts' && visibleCategories.has('shirt')) ||
+                    (normalizedCat === 'pants' && visibleCategories.has('pant')) ||
+                    (normalizedCat === 'shoes' && visibleCategories.has('shoe')) ||
+                    (normalizedCat === 'jackets' && visibleCategories.has('jacket'))
                   return categoryMatches
                 })
                 
-                // Sort: legacy categories first (shirt, pant, shoe, jacket), then others alphabetically
-                const legacyOrder = ['shirt', 'pant', 'shoe', 'jacket']
+                // Sort: legacy categories first (shirt, pant, shoe, jacket, accessory), then others alphabetically
+                const legacyOrder = ['shirt', 'pant', 'shoe', 'jacket', 'accessory']
                 eligibleCategories.sort((a, b) => {
                   const aIndex = legacyOrder.indexOf(a)
                   const bIndex = legacyOrder.indexOf(b)
@@ -922,9 +929,10 @@ export default function ConsumerCatalogPage() {
                   return a.localeCompare(b)
                 })
                 
-                // Capitalize category name for display
+                // Capitalize category name for display (fix common misspellings)
                 const capitalizeCategory = (cat: string) => {
                   if (cat === 'pant') return 'Pants'
+                  if (cat === 'accessory' || cat === 'accessorys') return 'Accessories'
                   return cat.charAt(0).toUpperCase() + cat.slice(1) + (cat.endsWith('s') ? '' : 's')
                 }
                 

@@ -1,0 +1,60 @@
+{
+  "timestamp": "2026-01-29T05:30:12.092Z",
+  "iciciCompany": {
+    "id": "100004",
+    "name": "ICICI Bank"
+  },
+  "akasaCompany": {
+    "id": "100002",
+    "name": "Akasa Air"
+  },
+  "iciciRoutings": [
+    {
+      "routingId": "VSR_MJY72QEHSDA",
+      "vendorId": "100001",
+      "companyId": "100004",
+      "shipmentServiceProviderRefId": 100003,
+      "primaryCourierCode": "6",
+      "secondaryCourierCode": "225",
+      "isActive": true
+    },
+    {
+      "routingId": "VSR_MJY73SV9V2V",
+      "vendorId": "100002",
+      "companyId": "100004",
+      "shipmentServiceProviderRefId": 100003,
+      "primaryCourierCode": "6",
+      "secondaryCourierCode": "225",
+      "isActive": true
+    },
+    {
+      "routingId": "VSR_MJY74KGH4HS",
+      "vendorId": "100003",
+      "companyId": "100004",
+      "shipmentServiceProviderRefId": 100003,
+      "primaryCourierCode": "6",
+      "secondaryCourierCode": "225",
+      "isActive": true
+    }
+  ],
+  "iciciProviders": [
+    {
+      "companyShippingProviderId": "CSP_MK0OZ565XTK",
+      "companyId": "100004",
+      "providerId": "PROV_MJXY0QMESF",
+      "isEnabled": true,
+      "isDefault": false
+    }
+  ],
+  "routingsToCreate": 3,
+  "providersToCreate": 1,
+  "conflicts": [],
+  "vendors": [
+    "100001",
+    "100002",
+    "100003"
+  ],
+  "providers": [
+    100003
+  ]
+}

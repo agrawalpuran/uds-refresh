@@ -22,11 +22,6 @@ export default function CompanySettingsPage() {
   const [enableEmployeeOrder, setEnableEmployeeOrder] = useState<boolean>(false)
   const [allowLocationAdminViewFeedback, setAllowLocationAdminViewFeedback] = useState<boolean>(false)
   const [allowEligibilityConsumptionReset, setAllowEligibilityConsumptionReset] = useState<boolean>(false)
-  // PR → PO Workflow Configuration
-  const [enable_pr_po_workflow, setEnable_pr_po_workflow] = useState<boolean>(false)
-  const [enable_site_admin_pr_approval, setEnable_site_admin_pr_approval] = useState<boolean>(true)
-  const [require_company_admin_po_approval, setRequire_company_admin_po_approval] = useState<boolean>(true)
-  const [allow_multi_pr_po, setAllow_multi_pr_po] = useState<boolean>(true)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [accessDenied, setAccessDenied] = useState(false)
@@ -87,11 +82,6 @@ export default function CompanySettingsPage() {
             setEnableEmployeeOrder(companyDetails.enableEmployeeOrder === true)
             setAllowLocationAdminViewFeedback(companyDetails.allowLocationAdminViewFeedback === true)
             setAllowEligibilityConsumptionReset(companyDetails.allowEligibilityConsumptionReset === true)
-            // PR → PO Workflow Configuration
-            setEnable_pr_po_workflow(companyDetails.enable_pr_po_workflow === true)
-            setEnable_site_admin_pr_approval(companyDetails.enable_site_admin_pr_approval !== undefined ? companyDetails.enable_site_admin_pr_approval === true : (companyDetails.enable_site_admin_approval !== undefined ? companyDetails.enable_site_admin_approval === true : true))
-            setRequire_company_admin_po_approval(companyDetails.require_company_admin_po_approval !== undefined ? companyDetails.require_company_admin_po_approval === true : (companyDetails.require_company_admin_approval !== undefined ? companyDetails.require_company_admin_approval === true : true))
-            setAllow_multi_pr_po(companyDetails.allow_multi_pr_po !== undefined ? companyDetails.allow_multi_pr_po === true : true)
             console.log('[Settings] Set allowLocationAdminViewFeedback to:', companyDetails.allowLocationAdminViewFeedback === true)
           }
         } catch (error) {
@@ -129,11 +119,6 @@ export default function CompanySettingsPage() {
         enableEmployeeOrder,
         allowLocationAdminViewFeedback,
         allowEligibilityConsumptionReset,
-        // PR → PO Workflow Configuration
-        enable_pr_po_workflow,
-        enable_site_admin_pr_approval,
-        require_company_admin_po_approval,
-        allow_multi_pr_po,
       })
       
       // Log the result
@@ -205,24 +190,6 @@ export default function CompanySettingsPage() {
           const reloadedResetValue = companyDetails.allowEligibilityConsumptionReset === true
           console.log('[Settings] Setting allowEligibilityConsumptionReset from reloaded company to:', reloadedResetValue)
           setAllowEligibilityConsumptionReset(reloadedResetValue)
-        }
-        
-        // Update PR → PO Workflow Configuration from reloaded company
-        if (companyDetails.enable_pr_po_workflow !== undefined) {
-          setEnable_pr_po_workflow(companyDetails.enable_pr_po_workflow === true)
-        }
-        if (companyDetails.enable_site_admin_pr_approval !== undefined) {
-          setEnable_site_admin_pr_approval(companyDetails.enable_site_admin_pr_approval === true)
-        } else if (companyDetails.enable_site_admin_approval !== undefined) {
-          setEnable_site_admin_pr_approval(companyDetails.enable_site_admin_approval === true)
-        }
-        if (companyDetails.require_company_admin_po_approval !== undefined) {
-          setRequire_company_admin_po_approval(companyDetails.require_company_admin_po_approval === true)
-        } else if (companyDetails.require_company_admin_approval !== undefined) {
-          setRequire_company_admin_po_approval(companyDetails.require_company_admin_approval === true)
-        }
-        if (companyDetails.allow_multi_pr_po !== undefined) {
-          setAllow_multi_pr_po(companyDetails.allow_multi_pr_po === true)
         }
       }
       
@@ -560,143 +527,6 @@ export default function CompanySettingsPage() {
                         {allowEligibilityConsumptionReset ? 'Reset Enabled' : 'Reset Disabled'}
                       </span>
                     </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* PR → PO Workflow Configuration Section */}
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">Procurement & Approval Workflow Settings</h2>
-              
-              {/* Enable PR → PO Workflow */}
-              <div className="mb-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                      Enable PR → Approval → PO Workflow
-                    </h3>
-                    <p className="text-sm text-gray-600 mb-4">
-                      Enables the Purchase Requisition (PR) to Purchase Order (PO) workflow with approval steps.
-                      When enabled, orders act as Purchase Requisitions that require approval before being converted to Purchase Orders.
-                    </p>
-                    <div className="flex items-center space-x-3">
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={enable_pr_po_workflow}
-                          onChange={(e) => {
-                            setEnable_pr_po_workflow(e.target.checked)
-                            // Disable other toggles if workflow is disabled
-                            if (!e.target.checked) {
-                              setEnable_site_admin_pr_approval(false)
-                              setRequire_company_admin_po_approval(false)
-                              setAllow_multi_pr_po(false)
-                            } else {
-                              // Enable with defaults when workflow is enabled
-                              setEnable_site_admin_pr_approval(true)
-                              setRequire_company_admin_po_approval(true)
-                              setAllow_multi_pr_po(true)
-                            }
-                          }}
-                          className="sr-only peer"
-                        />
-                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
-                        <span className="ml-3 text-sm font-medium text-gray-700">
-                          {enable_pr_po_workflow ? 'Workflow Enabled' : 'Workflow Disabled'}
-                        </span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Require Site Admin PR Approval */}
-              <div className="mb-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                      Require Site Admin PR Approval
-                    </h3>
-                    <p className="text-sm text-gray-600 mb-4">
-                      Site Admin must approve Purchase Requisitions (Orders) before they proceed to Company Admin.
-                      The Site Admin is determined by the employee's location.
-                    </p>
-                    <div className="flex items-center space-x-3">
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={enable_site_admin_pr_approval}
-                          onChange={(e) => setEnable_site_admin_pr_approval(e.target.checked)}
-                          disabled={!enable_pr_po_workflow}
-                          className="sr-only peer"
-                        />
-                        <div className={`w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600 ${!enable_pr_po_workflow ? 'opacity-50 cursor-not-allowed' : ''}`}></div>
-                        <span className={`ml-3 text-sm font-medium ${!enable_pr_po_workflow ? 'text-gray-400' : 'text-gray-700'}`}>
-                          {enable_site_admin_pr_approval ? 'Site Admin Approval Required' : 'Site Admin Approval Not Required'}
-                        </span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Require Company Admin PO Approval */}
-              <div className="mb-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                      Require Company Admin PO Approval
-                    </h3>
-                    <p className="text-sm text-gray-600 mb-4">
-                      Company Admin must approve Purchase Orders before they are sent to vendors.
-                      This approval happens at the PO creation stage, after Site Admin approval (if enabled).
-                    </p>
-                    <div className="flex items-center space-x-3">
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={require_company_admin_po_approval}
-                          onChange={(e) => setRequire_company_admin_po_approval(e.target.checked)}
-                          disabled={!enable_pr_po_workflow}
-                          className="sr-only peer"
-                        />
-                        <div className={`w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600 ${!enable_pr_po_workflow ? 'opacity-50 cursor-not-allowed' : ''}`}></div>
-                        <span className={`ml-3 text-sm font-medium ${!enable_pr_po_workflow ? 'text-gray-400' : 'text-gray-700'}`}>
-                          {require_company_admin_po_approval ? 'Company Admin Approval Required' : 'Company Admin Approval Not Required'}
-                        </span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Allow Multiple PRs in One PO */}
-              <div>
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                      Allow Grouping Multiple PRs into One PO
-                    </h3>
-                    <p className="text-sm text-gray-600 mb-4">
-                      Company Admin can group multiple approved Purchase Requisitions into a single Purchase Order.
-                      This allows for bulk ordering and better vendor management.
-                    </p>
-                    <div className="flex items-center space-x-3">
-                      <label className="relative inline-flex items-center cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={allow_multi_pr_po}
-                          onChange={(e) => setAllow_multi_pr_po(e.target.checked)}
-                          disabled={!enable_pr_po_workflow}
-                          className="sr-only peer"
-                        />
-                        <div className={`w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600 ${!enable_pr_po_workflow ? 'opacity-50 cursor-not-allowed' : ''}`}></div>
-                        <span className={`ml-3 text-sm font-medium ${!enable_pr_po_workflow ? 'text-gray-400' : 'text-gray-700'}`}>
-                          {allow_multi_pr_po ? 'Multiple PRs Allowed' : 'Single PR per PO'}
-                        </span>
-                      </label>
-                    </div>
                   </div>
                 </div>
               </div>

@@ -66,8 +66,41 @@ function encryptAuthConfig(authConfig: any): any {
 }
 
 /**
+ * Check if a string still looks like encrypted format (iv:data) after decrypt attempt.
+ * Used to avoid passing invalid credentials to providers when decryption fails.
+ */
+function looksEncrypted(value: string): boolean {
+  if (!value || typeof value !== 'string') return false
+  const parts = value.split(':')
+  if (parts.length !== 2) return false
+  // Base64 IV is typically 24 chars; encrypted payload is longer
+  return parts[0].length >= 16 && parts[1].length >= 16
+}
+
+/**
+ * Safely decrypt a single credential field; on failure return undefined so caller can detect missing creds.
+ */
+function safeDecryptCredential(encrypted: string): string | undefined {
+  if (!encrypted || typeof encrypted !== 'string') return undefined
+  try {
+    const result = decrypt(encrypted)
+    if (!result) return undefined
+    // If decryption failed, decrypt() returns original; avoid passing encrypted value as credential
+    if (looksEncrypted(result)) {
+      console.warn('[decryptAuthConfig] Credential still looks encrypted after decrypt - possible wrong key or format')
+      return undefined
+    }
+    return result
+  } catch (e) {
+    console.warn('[decryptAuthConfig] Decryption error for credential field:', e instanceof Error ? e.message : e)
+    return undefined
+  }
+}
+
+/**
  * Decrypt credentials in authConfig
  * SECURITY: Only for internal use - never expose in APIs or UI
+ * Uses per-field safe decryption so one bad/mis-encrypted field does not break the whole config.
  */
 export function decryptAuthConfig(authConfig: any): any {
   if (!authConfig || !authConfig.credentials) {
@@ -77,26 +110,33 @@ export function decryptAuthConfig(authConfig: any): any {
   const decrypted = { ...authConfig }
   const creds = { ...authConfig.credentials }
 
-  // Decrypt credential fields
+  // Decrypt credential fields (per-field safe so one failure doesn't break others).
+  // When decryption fails, clear the field so providers get missing creds and throw a clear error.
   if (creds.apiKey) {
-    creds.apiKey = decrypt(creds.apiKey)
+    const v = safeDecryptCredential(creds.apiKey)
+    creds.apiKey = v !== undefined ? v : undefined
   }
   if (creds.token) {
-    creds.token = decrypt(creds.token)
+    const v = safeDecryptCredential(creds.token)
+    creds.token = v !== undefined ? v : undefined
   }
   if (creds.username) {
-    creds.username = decrypt(creds.username)
+    const v = safeDecryptCredential(creds.username)
+    creds.username = v !== undefined ? v : undefined
   }
   if (creds.password) {
-    creds.password = decrypt(creds.password)
+    const v = safeDecryptCredential(creds.password)
+    creds.password = v !== undefined ? v : undefined
   }
   if (creds.oauth) {
     const oauth = { ...creds.oauth }
     if (oauth.clientId) {
-      oauth.clientId = decrypt(oauth.clientId)
+      const v = safeDecryptCredential(oauth.clientId)
+      oauth.clientId = v !== undefined ? v : undefined
     }
     if (oauth.clientSecret) {
-      oauth.clientSecret = decrypt(oauth.clientSecret)
+      const v = safeDecryptCredential(oauth.clientSecret)
+      oauth.clientSecret = v !== undefined ? v : undefined
     }
     creds.oauth = oauth
   }

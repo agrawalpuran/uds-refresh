@@ -807,6 +807,12 @@ export default function VendorGRNPage() {
                     id="grnNumber"
                     value={grnNumber}
                     onChange={(e) => setGrnNumber(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && grnNumber.trim() && grnDate && !creating) {
+                        e.preventDefault()
+                        handleSubmitGRN()
+                      }
+                    }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="Enter GRN number"
                     required

@@ -170,6 +170,7 @@ export default function LocationsPage() {
           phone: formData.phone || undefined,
           email: formData.email || undefined,
           status: formData.status,
+          adminEmail: currentAdminEmail, // Pass email for authorization
         })
       }
       

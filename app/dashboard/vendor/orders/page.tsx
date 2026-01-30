@@ -2,7 +2,7 @@
 
 import DashboardLayout from '@/components/DashboardLayout'
 import { Search, CheckCircle, XCircle, Package, Truck, Warehouse, MapPin, Building2 } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { getAllOrders, getOrdersByVendor, updateOrderStatus, getCompaniesByVendor } from '@/lib/data-mongodb'
 // Employee names are now pre-masked by the backend
@@ -49,6 +49,13 @@ export default function VendorOrdersPage() {
     isActive: boolean
   }>>([])
   const [loadingPackages, setLoadingPackages] = useState(false)
+  // Map courier code (e.g. "6") to display name (e.g. "BLUEDART") for automatic shipments
+  const courierNamesMap = useMemo(() => {
+    const m = new Map<string, string>()
+    manualCouriers.forEach(c => { m.set(c.courierCode, c.courierName); m.set(String(c.courierCode), c.courierName) })
+    providerCouriers.forEach(c => { m.set(c.courierCode, c.courierName); m.set(String(c.courierCode), c.courierName) })
+    return m
+  }, [manualCouriers, providerCouriers])
   const [confirmDialog, setConfirmDialog] = useState<{
     show: boolean
     orderId: string | null
@@ -146,6 +153,82 @@ export default function VendorOrdersPage() {
     warehouse: null,
   })
   const [submittingManualShipment, setSubmittingManualShipment] = useState(false)
+
+  const handleSubmitManualShipment = async () => {
+    // Validate all PRs have valid addresses
+    const prsWithoutAddress = manualShipmentForm.prs.filter(pr => !pr.hasValidAddress || !pr.deliveryAddress)
+    if (prsWithoutAddress.length > 0) {
+      alert(`Cannot create shipment: ${prsWithoutAddress.length} PR(s) have missing or invalid delivery addresses. Please contact support.`)
+      return
+    }
+    
+    // Validate all PRs have required fields
+    const invalidPRs = manualShipmentForm.prs.filter(pr => 
+      !pr.dispatchedDate || 
+      (pr.modeOfTransport === 'COURIER' && !pr.courierServiceProvider)
+    )
+    
+    if (invalidPRs.length > 0) {
+      alert('Please fill all required fields for all PRs')
+      return
+    }
+
+    try {
+      setSubmittingManualShipment(true)
+      const { getVendorId } = typeof window !== 'undefined'
+        ? await import('@/lib/utils/auth-storage')
+        : { getVendorId: () => null }
+
+      // SECURITY FIX: No localStorage fallback
+      const storedVendorId = getVendorId?.() || null
+
+      if (!storedVendorId) {
+        throw new Error('Vendor ID not found. Please log in again.')
+      }
+
+      const response = await fetch('/api/prs/manual-shipment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vendorId: storedVendorId,
+          poNumber: manualShipmentForm.poNumber,
+          warehouseRefId: manualShipmentForm.warehouse ? warehouses.find(w => 
+            w.warehouseName === manualShipmentForm.warehouse?.warehouseName
+          )?.warehouseRefId : null,
+          prs: manualShipmentForm.prs.map(pr => ({
+            prId: pr.prId,
+            prNumber: pr.prNumber,
+            modeOfTransport: pr.modeOfTransport,
+            courierServiceProvider: pr.courierServiceProvider || undefined,
+            dispatchedDate: pr.dispatchedDate,
+            shipmentNumber: pr.shipmentNumber || undefined,
+          })),
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to create manual shipment')
+      }
+
+      const result = await response.json()
+      alert(`Successfully created ${result.createdCount} shipment(s)!`)
+      
+      // Reset form and reload orders
+      setManualShipmentForm({
+        show: false,
+        poNumber: null,
+        prs: [],
+        warehouse: null,
+      })
+      await loadOrders()
+    } catch (error: any) {
+      console.error('Error creating manual shipment:', error)
+      alert(`Failed to create manual shipment: ${error?.message || 'Unknown error'}`)
+    } finally {
+      setSubmittingManualShipment(false)
+    }
+  }
   
   const [shippingEstimation, setShippingEstimation] = useState<{
     primary: { courier: string; courierName?: string; serviceable: boolean; estimatedDays?: string; estimatedCost?: number; message?: string } | null
@@ -212,6 +295,36 @@ export default function VendorOrdersPage() {
     loadManualCouriers()
     loadPackages()
   }, [])
+
+  // Load provider couriers when we have dispatched/delivered orders so courier code (e.g. "6") resolves to name on the list
+  useEffect(() => {
+    if (allOrders.length === 0 || providerCouriers.length > 0) return
+    const hasDispatchedWithNumericCourier = allOrders.some(
+      (o: any) => (o.status === 'Dispatched' || o.status === 'Delivered') && o.carrierName && /^\d+$/.test(String(o.carrierName))
+    )
+    if (!hasDispatchedWithNumericCourier) return
+
+    let cancelled = false
+    const run = async () => {
+      const { getVendorId, getAuthData } = await import('@/lib/utils/auth-storage')
+      const vendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
+      if (!vendorId) return
+      const firstDispatched = allOrders.find((o: any) => o.status === 'Dispatched' || o.status === 'Delivered')
+      const companyId = filterCompany !== 'all' ? filterCompany : (firstDispatched?.companyId?.id || firstDispatched?.companyId || companies[0]?.id)
+      if (!companyId) return
+      try {
+        const res = await fetch(`/api/shipment/shipping-context?companyId=${companyId}&vendorId=${vendorId}`)
+        if (!res.ok || cancelled) return
+        const context = await res.json()
+        const providerCode = context?.vendorRouting?.providerCode
+        if (providerCode && !cancelled) await loadProviderCouriers(providerCode)
+      } catch {
+        // ignore
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, [allOrders.length, filterCompany, companies, providerCouriers.length])
 
   // Effect to filter orders when company filter changes
   useEffect(() => {
@@ -437,16 +550,14 @@ export default function VendorOrdersPage() {
           console.warn('[loadProviderCouriers] ⚠️ API response missing couriers:', data)
         }
       } else {
-        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }))
-        console.error('[loadProviderCouriers] ❌ API Error:', {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorData.error || errorData.message,
-        })
+        const errorData = await response.json().catch(() => ({}))
+        const errorMsg = (errorData && (errorData.error ?? errorData.message)) || response.statusText || `HTTP ${response.status}`
+        console.warn('[loadProviderCouriers] Could not load provider couriers:', errorMsg, { status: response.status, body: errorData })
       }
       return []
-    } catch (error) {
-      console.error('[loadProviderCouriers] ❌ Exception loading provider couriers:', error)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn('[loadProviderCouriers] Could not load provider couriers:', message || 'Unknown error')
       return []
     } finally {
       setLoadingCouriers(false)
@@ -1041,12 +1152,18 @@ export default function VendorOrdersPage() {
       
       const selectedCourierCode = selectedEstimation?.courier || shipmentForm.carrierName.trim()
       const shippingCost = selectedEstimation?.estimatedCost
+      // Display name for automatic shipments so order card shows courier company name, not code (e.g. "BLUEDART" not "6")
+      const carrierDisplayName = selectedEstimation?.courierName
+        || providerCouriers.find(c => c.courierCode === selectedCourierCode || c.courierCode === String(selectedCourierCode))?.courierName
+        || manualCouriers.find(c => c.courierCode === selectedCourierCode || c.courierCode === String(selectedCourierCode))?.courierName
+        || undefined
 
       // Build shipment data
       // Note: shipperName is removed from UI but API may still expect it, so we provide a default
       const shipmentData = {
         shipperName: 'Vendor', // Default value since field is removed from UI
         carrierName: selectedCourierCode || undefined,
+        carrierDisplayName: carrierDisplayName || undefined,
         selectedCourierType: shipmentForm.selectedCourierType || undefined, // PRIMARY or SECONDARY
         trackingNumber: shipmentForm.trackingNumber.trim() || undefined,
         modeOfTransport: shipmentForm.modeOfTransport === 'DIRECT' ? 'OTHER' : 'COURIER', // Map DIRECT to OTHER for API compatibility
@@ -1317,6 +1434,19 @@ export default function VendorOrdersPage() {
                               <p className="text-xs text-gray-500">PR Date: {new Date(pr.prDate).toLocaleDateString()}</p>
                             )}
                             <p className="text-xs text-gray-600 truncate">Employee: {pr.employeeName || 'N/A'}</p>
+                            {/* Shipment Info for PR - courier name from mapping, tracking from order or shipment.courierAwbNumber */}
+                            {(pr.status === 'Dispatched' || pr.status === 'Delivered') && (pr.carrierName || pr.trackingNumber || pr.displayTracking) && (
+                              <div className="mt-1.5 bg-blue-50 rounded px-2 py-1 border border-blue-100">
+                                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+                                  {pr.carrierName && (
+                                    <span><span className="text-gray-500">Courier:</span> <span className="font-medium text-gray-800">{courierNamesMap.get(pr.carrierName) || pr.carrierName}</span></span>
+                                  )}
+                                  {(pr.displayTracking || pr.trackingNumber) && (
+                                    <span><span className="text-gray-500">Tracking:</span> <span className="font-medium text-blue-600">{pr.displayTracking || pr.trackingNumber}</span></span>
+                                  )}
+                                </div>
+                              </div>
+                            )}
                           </div>
 
                           {/* Products under this PR */}
@@ -1421,6 +1551,26 @@ export default function VendorOrdersPage() {
                         <span className="text-sm font-bold text-gray-900 whitespace-nowrap shrink-0">Total: ₹{order.total.toFixed(2)}</span>
                       </div>
                     </div>
+
+                    {/* Shipment Info - Show when dispatched; courier name from mapping, tracking from order or shipment.courierAwbNumber */}
+                    {(order.status === 'Dispatched' || order.status === 'Delivered') && (order.carrierName || order.trackingNumber || order.displayTracking) && (
+                      <div className="bg-blue-50 rounded-lg px-3 py-2 mb-3 border border-blue-100">
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                          {order.carrierName && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-gray-500">Courier:</span>
+                              <span className="font-medium text-gray-800">{courierNamesMap.get(order.carrierName) || order.carrierName}</span>
+                            </div>
+                          )}
+                          {(order.displayTracking || order.trackingNumber) && (
+                            <div className="flex items-center gap-1">
+                              <span className="text-gray-500">Tracking:</span>
+                              <span className="font-medium text-blue-600">{order.displayTracking || order.trackingNumber}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
 
                     <div className="flex items-center gap-1.5 mt-auto pt-3">
                       {(order.status === 'Awaiting approval' || order.status === 'Awaiting fulfilment') && (
@@ -1785,6 +1935,22 @@ export default function VendorOrdersPage() {
                             throw new Error(`Missing pincodes: source=${sourcePincodeStr}, destination=${destinationPincodeStr}`)
                           }
 
+                          // Resolve companyId: shipping context, then order (handle populated object or primitive)
+                          const orderCompanyId = selectedOrder?.companyId
+                            ? (typeof selectedOrder.companyId === 'object' ? (selectedOrder.companyId as { id?: string })?.id : selectedOrder.companyId)
+                            : selectedOrder?.companyIdNum?.toString() ?? ''
+                          const companyId = (shippingContext?.company?.id || orderCompanyId || '').toString().trim()
+
+                          // Resolve vendorId from auth storage (same as rest of page)
+                          const { getVendorId, getAuthData } = typeof window !== 'undefined'
+                            ? await import('@/lib/utils/auth-storage')
+                            : { getVendorId: () => null as string | null, getAuthData: () => null }
+                          const vendorId = (getVendorId?.() || getAuthData?.('vendor')?.vendorId || '').toString().trim()
+
+                          if (!companyId || !vendorId) {
+                            throw new Error('Company and vendor context are required for estimation. Please ensure an order is selected and you are logged in as a vendor.')
+                          }
+
                           const requestBody = {
                             sourcePincode: sourcePincodeStr,
                             destinationPincode: destinationPincodeStr,
@@ -1792,12 +1958,8 @@ export default function VendorOrdersPage() {
                             weightDetails: {
                               volumetricWeight,
                             },
-                            companyId: shippingContext?.company?.id || selectedOrder?.companyId || '',
-                            vendorId: (() => {
-                              // SECURITY FIX: Use ONLY sessionStorage (tab-specific)
-                              const vendorIdFromSession = typeof window !== 'undefined' ? sessionStorage.getItem('vendorId') : null
-                              return vendorIdFromSession || ''
-                            })(),
+                            companyId,
+                            vendorId,
                           }
 
                           console.log('[Estimation] Request payload:', requestBody)
@@ -1808,11 +1970,11 @@ export default function VendorOrdersPage() {
                             body: JSON.stringify(requestBody),
                           })
 
+                          const data = await response.json().catch(() => ({}))
                           if (!response.ok) {
-                            throw new Error('Failed to get shipping estimation')
+                            const apiError = data?.error || response.statusText || 'Failed to get shipping estimation'
+                            throw new Error(apiError)
                           }
-
-                          const data = await response.json()
                           setShippingEstimation({
                             primary: data.primary || null,
                             secondary: data.secondary || null,
@@ -2378,6 +2540,12 @@ export default function VendorOrdersPage() {
                                   updatedPRs[index].shipmentNumber = e.target.value
                                   setManualShipmentForm(prev => ({ ...prev, prs: updatedPRs }))
                                 }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !submittingManualShipment) {
+                                    e.preventDefault()
+                                    handleSubmitManualShipment()
+                                  }
+                                }}
                                 placeholder="AWB / Docket Number"
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                               />
@@ -2408,81 +2576,7 @@ export default function VendorOrdersPage() {
                   Cancel
                 </button>
                 <button
-                  onClick={async () => {
-                    // Validate all PRs have valid addresses
-                    const prsWithoutAddress = manualShipmentForm.prs.filter(pr => !pr.hasValidAddress || !pr.deliveryAddress)
-                    if (prsWithoutAddress.length > 0) {
-                      alert(`Cannot create shipment: ${prsWithoutAddress.length} PR(s) have missing or invalid delivery addresses. Please contact support.`)
-                      return
-                    }
-                    
-                    // Validate all PRs have required fields
-                    const invalidPRs = manualShipmentForm.prs.filter(pr => 
-                      !pr.dispatchedDate || 
-                      (pr.modeOfTransport === 'COURIER' && !pr.courierServiceProvider)
-                    )
-                    
-                    if (invalidPRs.length > 0) {
-                      alert('Please fill all required fields for all PRs')
-                      return
-                    }
-
-                    try {
-                      setSubmittingManualShipment(true)
-                      const { getVendorId } = typeof window !== 'undefined'
-                        ? await import('@/lib/utils/auth-storage')
-                        : { getVendorId: () => null }
-
-                      // SECURITY FIX: No localStorage fallback
-                      const storedVendorId = getVendorId?.() || null
-
-                      if (!storedVendorId) {
-                        throw new Error('Vendor ID not found. Please log in again.')
-                      }
-
-                      const response = await fetch('/api/prs/manual-shipment', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          vendorId: storedVendorId,
-                          poNumber: manualShipmentForm.poNumber,
-                          warehouseRefId: manualShipmentForm.warehouse ? warehouses.find(w => 
-                            w.warehouseName === manualShipmentForm.warehouse?.warehouseName
-                          )?.warehouseRefId : null,
-                          prs: manualShipmentForm.prs.map(pr => ({
-                            prId: pr.prId,
-                            prNumber: pr.prNumber,
-                            modeOfTransport: pr.modeOfTransport,
-                            courierServiceProvider: pr.courierServiceProvider || undefined,
-                            dispatchedDate: pr.dispatchedDate,
-                            shipmentNumber: pr.shipmentNumber || undefined,
-                          })),
-                        }),
-                      })
-
-                      if (!response.ok) {
-                        const error = await response.json()
-                        throw new Error(error.error || 'Failed to create manual shipment')
-                      }
-
-                      const result = await response.json()
-                      alert(`Successfully created ${result.createdCount} shipment(s)!`)
-                      
-                      // Reset form and reload orders
-                      setManualShipmentForm({
-                        show: false,
-                        poNumber: null,
-                        prs: [],
-                        warehouse: null,
-                      })
-                      await loadOrders()
-                    } catch (error: any) {
-                      console.error('Error creating manual shipment:', error)
-                      alert(`Failed to create manual shipment: ${error?.message || 'Unknown error'}`)
-                    } finally {
-                      setSubmittingManualShipment(false)
-                    }
-                  }}
+                  onClick={handleSubmitManualShipment}
                   disabled={submittingManualShipment}
                   className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
                 >

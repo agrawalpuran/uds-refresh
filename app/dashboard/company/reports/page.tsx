@@ -1,14 +1,62 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import DashboardLayout from '@/components/DashboardLayout'
 import { 
   BarChart3, Download, Calendar, DollarSign, Users, Package, IndianRupee, 
   TrendingUp, TrendingDown, Clock, Repeat, Building2, UserCheck, AlertTriangle,
   ChevronDown, ChevronUp, Filter, Search, Lightbulb, Zap, Target, ArrowRight,
-  CheckCircle2, XCircle, Truck, Timer, Activity, Award, ShieldCheck, ArrowDown
+  CheckCircle2, XCircle, Truck, Timer, Activity, Award, ShieldCheck, ArrowDown,
+  CalendarDays, Star, RefreshCw, MessageSquare, ExternalLink
 } from 'lucide-react'
-import { getOrdersByCompany, getEmployeesByCompany, getCompanyById, getVendorsByCompany, getBranchesByCompany } from '@/lib/data-mongodb'
+
+// Time range presets (same as Vendor Reports)
+type TimeRangePreset = '7d' | '30d' | 'quarter' | 'ytd' | '12m' | 'all'
+
+interface TimeRange {
+  startDate: Date | null
+  endDate: Date | null
+  label: string
+}
+
+// Calculate date range based on preset
+function getDateRangeFromPreset(preset: TimeRangePreset): TimeRange {
+  const now = new Date()
+  const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59)
+  
+  switch (preset) {
+    case '7d': {
+      const startDate = new Date(now)
+      startDate.setDate(now.getDate() - 7)
+      startDate.setHours(0, 0, 0, 0)
+      return { startDate, endDate, label: 'Last 7 Days' }
+    }
+    case '30d': {
+      const startDate = new Date(now)
+      startDate.setDate(now.getDate() - 30)
+      startDate.setHours(0, 0, 0, 0)
+      return { startDate, endDate, label: 'Last 30 Days' }
+    }
+    case 'quarter': {
+      const quarterMonth = Math.floor(now.getMonth() / 3) * 3
+      const startDate = new Date(now.getFullYear(), quarterMonth, 1, 0, 0, 0)
+      return { startDate, endDate, label: 'This Quarter' }
+    }
+    case 'ytd': {
+      const startDate = new Date(now.getFullYear(), 0, 1, 0, 0, 0)
+      return { startDate, endDate, label: 'Year to Date' }
+    }
+    case '12m': {
+      const startDate = new Date(now)
+      startDate.setFullYear(now.getFullYear() - 1)
+      startDate.setHours(0, 0, 0, 0)
+      return { startDate, endDate, label: 'Last 12 Months' }
+    }
+    case 'all':
+    default:
+      return { startDate: null, endDate: null, label: 'All Time' }
+  }
+}
+import { getOrdersByCompany, getEmployeesByCompany, getCompanyById, getVendorsByCompany, getLocationsByCompany, getProductFeedback } from '@/lib/data-mongodb'
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, 
   LineChart, Line, PieChart, Pie, Cell, AreaChart, Area
@@ -66,6 +114,775 @@ interface InsightItem {
   title: string
   description: string
   priority: number // 1 = highest priority
+}
+
+// ============================================================================
+// FEEDBACK & RETURNS INTELLIGENCE TYPES (for Reports Summary)
+// ============================================================================
+interface FeedbackSummaryIntelligence {
+  avgRating: number
+  totalFeedback: number
+  ratingTrend30Days: number
+  negativeRatingPercentage: number
+  healthTag: 'Healthy' | 'Watchlist' | 'At Risk'
+  topInsight: string | null
+  bestVendorName: string | null
+  bestVendorRating: number | null
+  worstVendorName: string | null
+  worstVendorRating: number | null
+}
+
+interface ReturnsSummaryIntelligence {
+  totalReturns: number
+  pendingReturns: number
+  weekOverWeekChange: number
+  avgResolutionDays: number | null
+  resolutionSpeed: 'fast' | 'normal' | 'slow'
+  healthTag: 'Healthy' | 'Watchlist' | 'High Risk'
+  topInsight: string | null
+  topReason: string | null
+  topReasonPercentage: number
+}
+
+// ============================================================================
+// BRANCH INTELLIGENCE TYPES (Company Admin Only)
+// ============================================================================
+interface BranchPendingData {
+  branchId: string
+  branchName: string
+  pendingCount: number
+  avgPendingAgeDays: number
+  percentOfTotalPending: number
+}
+
+interface BranchPendingIntelligence {
+  branches: BranchPendingData[]
+  totalCompanyPending: number
+  insight: string | null
+  criticalBranchCount: number
+}
+
+interface VendorSLAData {
+  vendorId: string
+  vendorName: string
+  avgDeliveryDays: number
+  slaBreachPercent: number
+  riskLevel: 'Healthy' | 'Watchlist' | 'High Risk'
+  orderCount: number
+  deliveredCount: number
+  pendingCount: number
+}
+
+interface VendorSLAIntelligence {
+  vendors: VendorSLAData[]
+  slaThresholdDays: number
+  insight: string | null
+  healthyCount: number
+  atRiskCount: number
+  avgCompanyDeliveryDays: number
+}
+
+interface BranchSpendActivityData {
+  branchId: string
+  branchName: string
+  totalSpend: number
+  requestCount: number
+  spendPerRequest: number
+  anomalyType: 'high-spend-low-volume' | 'low-spend-high-volume' | 'normal' | null
+}
+
+interface BranchSpendActivityIntelligence {
+  branches: BranchSpendActivityData[]
+  companyAvgSpendPerRequest: number
+  insight: string | null
+  anomalyBranches: BranchSpendActivityData[]
+}
+
+interface BranchReturnReworkData {
+  branchId: string
+  branchName: string
+  returnReworkPercent: number
+  topReturnReason: string | null
+  trend: 'up' | 'down' | 'stable'
+  completedOrders: number
+  returnOrders: number
+}
+
+interface BranchReturnReworkIntelligence {
+  branches: BranchReturnReworkData[]
+  companyAvgReturnRate: number
+  insight: string | null
+  problemBranches: BranchReturnReworkData[]
+}
+
+// ============================================================================
+// FEEDBACK & RETURNS INTELLIGENCE COMPUTATION
+// ============================================================================
+function computeFeedbackSummary(feedbackData: any[]): FeedbackSummaryIntelligence {
+  if (feedbackData.length === 0) {
+    return {
+      avgRating: 0,
+      totalFeedback: 0,
+      ratingTrend30Days: 0,
+      negativeRatingPercentage: 0,
+      healthTag: 'Healthy',
+      topInsight: null,
+      bestVendorName: null,
+      bestVendorRating: null,
+      worstVendorName: null,
+      worstVendorRating: null
+    }
+  }
+
+  const now = new Date()
+  const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000))
+  const previousThirtyDaysStart = new Date(thirtyDaysAgo.getTime() - (30 * 24 * 60 * 60 * 1000))
+
+  // Average rating
+  const avgRating = feedbackData.reduce((sum, fb) => sum + (fb.rating || 0), 0) / feedbackData.length
+
+  // Negative rating percentage
+  const negativeCount = feedbackData.filter(fb => fb.rating <= 2).length
+  const negativeRatingPercentage = (negativeCount / feedbackData.length) * 100
+
+  // Trend calculation
+  const last30DaysFeedback = feedbackData.filter(fb => {
+    const date = fb.createdAt ? new Date(fb.createdAt) : null
+    return date && date >= thirtyDaysAgo
+  })
+  const previous30DaysFeedback = feedbackData.filter(fb => {
+    const date = fb.createdAt ? new Date(fb.createdAt) : null
+    return date && date >= previousThirtyDaysStart && date < thirtyDaysAgo
+  })
+
+  const avgRatingLast30 = last30DaysFeedback.length > 0
+    ? last30DaysFeedback.reduce((sum, fb) => sum + (fb.rating || 0), 0) / last30DaysFeedback.length
+    : avgRating
+  const avgRatingPrev30 = previous30DaysFeedback.length > 0
+    ? previous30DaysFeedback.reduce((sum, fb) => sum + (fb.rating || 0), 0) / previous30DaysFeedback.length
+    : avgRatingLast30
+
+  const ratingTrend30Days = avgRatingPrev30 > 0
+    ? ((avgRatingLast30 - avgRatingPrev30) / avgRatingPrev30) * 100
+    : 0
+
+  // Vendor comparison
+  const vendorMap = new Map<string, { name: string; ratings: number[] }>()
+  feedbackData.forEach(fb => {
+    const vendorName = fb.vendorId?.name || 'Unknown Vendor'
+    if (!vendorMap.has(vendorName)) {
+      vendorMap.set(vendorName, { name: vendorName, ratings: [] })
+    }
+    if (fb.rating) {
+      vendorMap.get(vendorName)!.ratings.push(fb.rating)
+    }
+  })
+
+  const vendorRatings = Array.from(vendorMap.entries())
+    .filter(([_, data]) => data.ratings.length >= 2)
+    .map(([_, data]) => ({
+      name: data.name,
+      avgRating: data.ratings.reduce((a, b) => a + b, 0) / data.ratings.length
+    }))
+    .sort((a, b) => b.avgRating - a.avgRating)
+
+  const bestVendor = vendorRatings.length > 0 ? vendorRatings[0] : null
+  const worstVendor = vendorRatings.length > 1 ? vendorRatings[vendorRatings.length - 1] : null
+
+  // Health tag
+  let healthTag: 'Healthy' | 'Watchlist' | 'At Risk' = 'Healthy'
+  if (negativeRatingPercentage >= 30 || avgRating < 2.5) {
+    healthTag = 'At Risk'
+  } else if (negativeRatingPercentage >= 20 || avgRating < 3.0 || ratingTrend30Days < -10) {
+    healthTag = 'Watchlist'
+  }
+
+  // Top insight
+  let topInsight: string | null = null
+  if (healthTag === 'At Risk') {
+    topInsight = `${negativeRatingPercentage.toFixed(0)}% negative ratings – review needed`
+  } else if (ratingTrend30Days < -10) {
+    topInsight = `Rating dropped ${Math.abs(ratingTrend30Days).toFixed(0)}% vs last month`
+  } else if (bestVendor && bestVendor.avgRating >= 4.5) {
+    topInsight = `${bestVendor.name} is top performer`
+  }
+
+  return {
+    avgRating,
+    totalFeedback: feedbackData.length,
+    ratingTrend30Days,
+    negativeRatingPercentage,
+    healthTag,
+    topInsight,
+    bestVendorName: bestVendor?.name || null,
+    bestVendorRating: bestVendor?.avgRating || null,
+    worstVendorName: worstVendor?.name || null,
+    worstVendorRating: worstVendor?.avgRating || null
+  }
+}
+
+function computeReturnsSummary(returnRequests: any[]): ReturnsSummaryIntelligence {
+  if (returnRequests.length === 0) {
+    return {
+      totalReturns: 0,
+      pendingReturns: 0,
+      weekOverWeekChange: 0,
+      avgResolutionDays: null,
+      resolutionSpeed: 'normal',
+      healthTag: 'Healthy',
+      topInsight: null,
+      topReason: null,
+      topReasonPercentage: 0
+    }
+  }
+
+  const now = new Date()
+  const oneWeekAgo = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000))
+  const twoWeeksAgo = new Date(now.getTime() - (14 * 24 * 60 * 60 * 1000))
+
+  // Status counts
+  const pendingReturns = returnRequests.filter(r => r.status === 'REQUESTED').length
+
+  // Week-over-week
+  const returnsThisWeek = returnRequests.filter(r => {
+    const date = r.createdAt ? new Date(r.createdAt) : null
+    return date && date >= oneWeekAgo
+  }).length
+
+  const returnsLastWeek = returnRequests.filter(r => {
+    const date = r.createdAt ? new Date(r.createdAt) : null
+    return date && date >= twoWeeksAgo && date < oneWeekAgo
+  }).length
+
+  const weekOverWeekChange = returnsLastWeek > 0
+    ? ((returnsThisWeek - returnsLastWeek) / returnsLastWeek) * 100
+    : (returnsThisWeek > 0 ? 100 : 0)
+
+  // Resolution time
+  const resolvedReturns = returnRequests.filter(r =>
+    ['APPROVED', 'COMPLETED', 'REJECTED'].includes(r.status) && r.createdAt && r.approvedAt
+  )
+
+  let avgResolutionDays: number | null = null
+  if (resolvedReturns.length > 0) {
+    const totalDays = resolvedReturns.reduce((sum, r) => {
+      const created = new Date(r.createdAt)
+      const resolved = new Date(r.approvedAt)
+      return sum + Math.max(0, (resolved.getTime() - created.getTime()) / (24 * 60 * 60 * 1000))
+    }, 0)
+    avgResolutionDays = totalDays / resolvedReturns.length
+  }
+
+  const resolutionSpeed: 'fast' | 'normal' | 'slow' =
+    avgResolutionDays === null ? 'normal' :
+    avgResolutionDays <= 2 ? 'fast' :
+    avgResolutionDays <= 5 ? 'normal' : 'slow'
+
+  // Top reason
+  const reasonCounts = new Map<string, number>()
+  returnRequests.forEach(r => {
+    const reason = r.reason || 'Size Issue'
+    reasonCounts.set(reason, (reasonCounts.get(reason) || 0) + 1)
+  })
+
+  const sortedReasons = Array.from(reasonCounts.entries()).sort((a, b) => b[1] - a[1])
+  const topReason = sortedReasons.length > 0 ? sortedReasons[0][0] : null
+  const topReasonPercentage = topReason && returnRequests.length > 0
+    ? (sortedReasons[0][1] / returnRequests.length) * 100
+    : 0
+
+  // Health tag
+  const hasSpikeDetected = weekOverWeekChange >= 50 && returnsThisWeek >= 3
+  let healthTag: 'Healthy' | 'Watchlist' | 'High Risk' = 'Healthy'
+  if (hasSpikeDetected || pendingReturns >= 10 || resolutionSpeed === 'slow') {
+    healthTag = 'High Risk'
+  } else if (pendingReturns >= 5 || weekOverWeekChange > 30) {
+    healthTag = 'Watchlist'
+  }
+
+  // Top insight
+  let topInsight: string | null = null
+  if (hasSpikeDetected) {
+    topInsight = `Volume spiked ${weekOverWeekChange.toFixed(0)}% this week`
+  } else if (pendingReturns >= 5) {
+    topInsight = `${pendingReturns} returns awaiting approval`
+  } else if (resolutionSpeed === 'slow') {
+    topInsight = `Resolution time exceeds target`
+  } else if (resolutionSpeed === 'fast' && resolvedReturns.length >= 3) {
+    topInsight = `Fast resolution time achieved`
+  }
+
+  return {
+    totalReturns: returnRequests.length,
+    pendingReturns,
+    weekOverWeekChange,
+    avgResolutionDays,
+    resolutionSpeed,
+    healthTag,
+    topInsight,
+    topReason,
+    topReasonPercentage
+  }
+}
+
+// ============================================================================
+// BRANCH INTELLIGENCE COMPUTATION FUNCTIONS (Company Admin Only)
+// ============================================================================
+
+// Vendor SLA threshold in days (configurable) - Days from approval to delivery
+const VENDOR_SLA_THRESHOLD_DAYS = 7
+
+/**
+ * Compute Top 5 Branches with Pending Requests
+ */
+function computeBranchPendingIntelligence(
+  orders: OrderData[],
+  parseDate: (date: Date | string | undefined) => Date | null,
+  getBranchName: (locationId: string) => string
+): BranchPendingIntelligence {
+  const now = new Date()
+  const pendingStatuses = ['Awaiting approval', 'Awaiting fulfilment', 'Processing']
+  
+  const pendingOrders = orders.filter(o => pendingStatuses.includes(o.status))
+  const totalCompanyPending = pendingOrders.length
+  
+  if (totalCompanyPending === 0) {
+    return {
+      branches: [],
+      totalCompanyPending: 0,
+      insight: null,
+      criticalBranchCount: 0
+    }
+  }
+  
+  // Group by branch
+  const branchMap = new Map<string, { orders: OrderData[]; totalAge: number; displayName: string }>()
+  
+  pendingOrders.forEach(order => {
+    const locationId = order.locationId || order.dispatchLocation || 'Unknown'
+    const existing = branchMap.get(locationId) || { orders: [], totalAge: 0, displayName: getBranchName(locationId) }
+    existing.orders.push(order)
+    
+    // Calculate age in days
+    const orderDate = parseDate(order.orderDate)
+    if (orderDate) {
+      const ageDays = (now.getTime() - orderDate.getTime()) / (1000 * 60 * 60 * 24)
+      existing.totalAge += ageDays
+    }
+    
+    branchMap.set(locationId, existing)
+  })
+  
+  // Convert to array and calculate metrics
+  const branches: BranchPendingData[] = Array.from(branchMap.entries())
+    .map(([id, data]) => ({
+      branchId: id,
+      branchName: data.displayName.length > 18 ? data.displayName.substring(0, 18) + '...' : data.displayName,
+      pendingCount: data.orders.length,
+      avgPendingAgeDays: data.orders.length > 0 ? data.totalAge / data.orders.length : 0,
+      percentOfTotalPending: (data.orders.length / totalCompanyPending) * 100
+    }))
+    .sort((a, b) => b.pendingCount - a.pendingCount)
+    .slice(0, 5)
+  
+  // Calculate company average pending age
+  const totalPendingAge = Array.from(branchMap.values()).reduce((sum, d) => sum + d.totalAge, 0)
+  const companyAvgAge = totalPendingAge / totalCompanyPending
+  
+  // Count critical branches (>30% of pending or age > company avg * 1.5)
+  const criticalBranchCount = branches.filter(
+    b => b.percentOfTotalPending > 30 || b.avgPendingAgeDays > companyAvgAge * 1.5
+  ).length
+  
+  // Generate insight
+  let insight: string | null = null
+  const topBranches = branches.slice(0, 2)
+  const topBranchesShare = topBranches.reduce((sum, b) => sum + b.percentOfTotalPending, 0)
+  
+  if (topBranches.length >= 2 && topBranchesShare >= 40) {
+    insight = `These ${topBranches.length} branches contribute to ${topBranchesShare.toFixed(0)}% of all pending requests`
+  } else if (branches[0] && branches[0].avgPendingAgeDays > companyAvgAge * 1.3) {
+    insight = `Pending age in ${branches[0].branchName} exceeds company average`
+  } else if (criticalBranchCount > 0) {
+    insight = `${criticalBranchCount} branch${criticalBranchCount > 1 ? 'es' : ''} need${criticalBranchCount === 1 ? 's' : ''} attention for pending backlog`
+  }
+  
+  return { branches, totalCompanyPending, insight, criticalBranchCount }
+}
+
+/**
+ * Compute Vendor SLA & Delivery Risk
+ * Measures: Time from Company Admin approval → Delivery/Dispatch
+ * This is the vendor's responsibility window
+ */
+function computeVendorSLAIntelligence(
+  orders: OrderData[],
+  vendors: VendorData[],
+  parseDate: (date: Date | string | undefined) => Date | null
+): VendorSLAIntelligence {
+  // Only consider approved orders (company_admin_approved or dispatched/delivered)
+  const approvedOrders = orders.filter(o => 
+    o.company_admin_approved_at || o.dispatchedDate || o.deliveredDate
+  )
+  
+  if (approvedOrders.length === 0) {
+    return {
+      vendors: [],
+      slaThresholdDays: VENDOR_SLA_THRESHOLD_DAYS,
+      insight: null,
+      healthyCount: 0,
+      atRiskCount: 0,
+      avgCompanyDeliveryDays: 0
+    }
+  }
+  
+  // Create vendor name lookup
+  const vendorNameMap = new Map<string, string>()
+  vendors.forEach(v => vendorNameMap.set(v.id, v.name))
+  
+  // Group by vendor
+  const vendorMap = new Map<string, { 
+    deliveryDays: number[]
+    breachCount: number
+    deliveredCount: number
+    pendingCount: number
+    totalOrders: number
+  }>()
+  
+  approvedOrders.forEach(order => {
+    const vendorId = order.vendorId || 'Unknown'
+    const existing = vendorMap.get(vendorId) || { 
+      deliveryDays: [], 
+      breachCount: 0, 
+      deliveredCount: 0, 
+      pendingCount: 0,
+      totalOrders: 0 
+    }
+    existing.totalOrders++
+    
+    // Get approval date (when vendor responsibility starts)
+    const approvalDate = parseDate(order.company_admin_approved_at) || 
+                         parseDate(order.site_admin_approved_at)
+    
+    // Get delivery/dispatch date (when vendor fulfilled)
+    const fulfillmentDate = parseDate(order.deliveredDate) || parseDate(order.dispatchedDate)
+    
+    if (approvalDate && fulfillmentDate) {
+      // Calculate vendor delivery time (approval → delivery)
+      const deliveryDays = (fulfillmentDate.getTime() - approvalDate.getTime()) / (1000 * 60 * 60 * 24)
+      existing.deliveryDays.push(Math.max(0, deliveryDays))
+      existing.deliveredCount++
+      
+      if (deliveryDays > VENDOR_SLA_THRESHOLD_DAYS) {
+        existing.breachCount++
+      }
+    } else if (approvalDate && !fulfillmentDate) {
+      // Order approved but not yet fulfilled - check if overdue
+      const now = new Date()
+      const daysSinceApproval = (now.getTime() - approvalDate.getTime()) / (1000 * 60 * 60 * 24)
+      if (daysSinceApproval > VENDOR_SLA_THRESHOLD_DAYS) {
+        existing.pendingCount++ // Overdue pending
+      }
+    }
+    
+    vendorMap.set(vendorId, existing)
+  })
+  
+  // Calculate company-wide average delivery time
+  let allDeliveryDays: number[] = []
+  vendorMap.forEach(data => {
+    allDeliveryDays = allDeliveryDays.concat(data.deliveryDays)
+  })
+  const avgCompanyDeliveryDays = allDeliveryDays.length > 0
+    ? allDeliveryDays.reduce((a, b) => a + b, 0) / allDeliveryDays.length
+    : 0
+  
+  // Convert to array and calculate metrics
+  const vendorResults: VendorSLAData[] = Array.from(vendorMap.entries())
+    .map(([vendorId, data]) => {
+      const avgDelivery = data.deliveryDays.length > 0 
+        ? data.deliveryDays.reduce((a, b) => a + b, 0) / data.deliveryDays.length 
+        : 0
+      
+      // Breach % considers both delivered breaches and overdue pending
+      const totalMeasured = data.deliveredCount + data.pendingCount
+      const totalBreaches = data.breachCount + data.pendingCount
+      const breachPercent = totalMeasured > 0 
+        ? (totalBreaches / totalMeasured) * 100 
+        : 0
+      
+      // Risk level determination
+      let riskLevel: 'Healthy' | 'Watchlist' | 'High Risk' = 'Healthy'
+      if (breachPercent > 30 || avgDelivery > VENDOR_SLA_THRESHOLD_DAYS * 1.5 || data.pendingCount >= 3) {
+        riskLevel = 'High Risk'
+      } else if (breachPercent > 15 || avgDelivery > VENDOR_SLA_THRESHOLD_DAYS || data.pendingCount >= 1) {
+        riskLevel = 'Watchlist'
+      }
+      
+      return {
+        vendorId,
+        vendorName: (vendorNameMap.get(vendorId) || vendorId).length > 18 
+          ? (vendorNameMap.get(vendorId) || vendorId).substring(0, 18) + '...' 
+          : (vendorNameMap.get(vendorId) || vendorId),
+        avgDeliveryDays: avgDelivery,
+        slaBreachPercent: breachPercent,
+        riskLevel,
+        orderCount: data.totalOrders,
+        deliveredCount: data.deliveredCount,
+        pendingCount: data.pendingCount
+      }
+    })
+    .filter(v => v.orderCount > 0)
+    .sort((a, b) => b.slaBreachPercent - a.slaBreachPercent)
+  
+  const healthyCount = vendorResults.filter(v => v.riskLevel === 'Healthy').length
+  const atRiskCount = vendorResults.filter(v => v.riskLevel === 'High Risk').length
+  
+  // Generate insight
+  let insight: string | null = null
+  const highRiskVendors = vendorResults.filter(v => v.riskLevel === 'High Risk')
+  const overdueVendors = vendorResults.filter(v => v.pendingCount > 0)
+  
+  if (overdueVendors.length > 0) {
+    const totalOverdue = overdueVendors.reduce((sum, v) => sum + v.pendingCount, 0)
+    insight = `${totalOverdue} order${totalOverdue > 1 ? 's' : ''} overdue from ${overdueVendors.length} vendor${overdueVendors.length > 1 ? 's' : ''}`
+  } else if (highRiskVendors.length > 0) {
+    insight = `${highRiskVendors[0].vendorName} is consistently breaching delivery SLA`
+  } else if (healthyCount === vendorResults.length && vendorResults.length > 0) {
+    insight = `All ${healthyCount} vendor${healthyCount > 1 ? 's are' : ' is'} delivering within SLA`
+  } else {
+    const watchlistVendors = vendorResults.filter(v => v.riskLevel === 'Watchlist')
+    if (watchlistVendors.length > 0) {
+      insight = `${watchlistVendors.length} vendor${watchlistVendors.length > 1 ? 's' : ''} on watchlist for delivery delays`
+    }
+  }
+  
+  return { 
+    vendors: vendorResults, 
+    slaThresholdDays: VENDOR_SLA_THRESHOLD_DAYS, 
+    insight, 
+    healthyCount, 
+    atRiskCount,
+    avgCompanyDeliveryDays
+  }
+}
+
+/**
+ * Compute Spend vs Activity by Branch
+ */
+function computeBranchSpendActivityIntelligence(
+  orders: OrderData[],
+  calculateOrderTotal: (order: OrderData) => number,
+  getBranchName: (locationId: string) => string
+): BranchSpendActivityIntelligence {
+  if (orders.length === 0) {
+    return {
+      branches: [],
+      companyAvgSpendPerRequest: 0,
+      insight: null,
+      anomalyBranches: []
+    }
+  }
+  
+  // Group by branch
+  const branchMap = new Map<string, { spend: number; count: number; displayName: string }>()
+  
+  orders.forEach(order => {
+    const locationId = order.locationId || order.dispatchLocation || 'Unknown'
+    const existing = branchMap.get(locationId) || { spend: 0, count: 0, displayName: getBranchName(locationId) }
+    existing.spend += calculateOrderTotal(order)
+    existing.count += 1
+    branchMap.set(locationId, existing)
+  })
+  
+  // Calculate company average
+  const totalSpend = orders.reduce((sum, o) => sum + calculateOrderTotal(o), 0)
+  const companyAvgSpendPerRequest = orders.length > 0 ? totalSpend / orders.length : 0
+  
+  // Calculate branch-level metrics
+  const branches: BranchSpendActivityData[] = Array.from(branchMap.entries())
+    .map(([id, data]) => {
+      const spendPerRequest = data.count > 0 ? data.spend / data.count : 0
+      
+      // Determine anomaly type
+      let anomalyType: 'high-spend-low-volume' | 'low-spend-high-volume' | 'normal' | null = null
+      
+      // High spend per request + low volume (relative to company average)
+      const avgCountPerBranch = orders.length / branchMap.size
+      if (spendPerRequest > companyAvgSpendPerRequest * 1.5 && data.count < avgCountPerBranch * 0.5) {
+        anomalyType = 'high-spend-low-volume'
+      }
+      // Low spend per request + high volume
+      else if (spendPerRequest < companyAvgSpendPerRequest * 0.6 && data.count > avgCountPerBranch * 1.5) {
+        anomalyType = 'low-spend-high-volume'
+      }
+      
+      return {
+        branchId: id,
+        branchName: data.displayName.length > 18 ? data.displayName.substring(0, 18) + '...' : data.displayName,
+        totalSpend: data.spend,
+        requestCount: data.count,
+        spendPerRequest,
+        anomalyType
+      }
+    })
+    .sort((a, b) => b.totalSpend - a.totalSpend)
+  
+  // Identify anomaly branches
+  const anomalyBranches = branches.filter(b => b.anomalyType !== null)
+  
+  // Generate insight
+  let insight: string | null = null
+  const highLoadLowSpend = anomalyBranches.find(b => b.anomalyType === 'low-spend-high-volume')
+  const lowLoadHighSpend = anomalyBranches.find(b => b.anomalyType === 'high-spend-low-volume')
+  
+  if (highLoadLowSpend) {
+    insight = `${highLoadLowSpend.branchName} shows high operational load with low spend`
+  } else if (lowLoadHighSpend) {
+    insight = `${lowLoadHighSpend.branchName} handles fewer but higher-value requests`
+  } else if (branches.length > 1) {
+    const topBranch = branches[0]
+    const percentOfTotal = (topBranch.totalSpend / totalSpend) * 100
+    if (percentOfTotal > 50) {
+      insight = `${topBranch.branchName} accounts for ${percentOfTotal.toFixed(0)}% of total spend`
+    }
+  }
+  
+  return { branches, companyAvgSpendPerRequest, insight, anomalyBranches }
+}
+
+/**
+ * Compute Branch Return & Rework Rate
+ */
+function computeBranchReturnReworkIntelligence(
+  orders: OrderData[],
+  returns: any[],
+  parseDate: (date: Date | string | undefined) => Date | null,
+  getBranchName: (locationId: string) => string
+): BranchReturnReworkIntelligence {
+  // Get completed orders
+  const completedOrders = orders.filter(o => ['Delivered', 'Dispatched'].includes(o.status))
+  
+  if (completedOrders.length === 0) {
+    return {
+      branches: [],
+      companyAvgReturnRate: 0,
+      insight: null,
+      problemBranches: []
+    }
+  }
+  
+  // Group completed orders by branch
+  const branchOrderMap = new Map<string, { count: number; displayName: string }>()
+  completedOrders.forEach(order => {
+    const locationId = order.locationId || order.dispatchLocation || 'Unknown'
+    const existing = branchOrderMap.get(locationId) || { count: 0, displayName: getBranchName(locationId) }
+    existing.count++
+    branchOrderMap.set(locationId, existing)
+  })
+  
+  // Group returns by branch (using order's branch)
+  const branchReturnMap = new Map<string, { count: number; reasons: Map<string, number>; recentCount: number; previousCount: number }>()
+  
+  const now = new Date()
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+  const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000)
+  
+  returns.forEach(r => {
+    // Find the original order to get branch info
+    const originalOrder = orders.find(o => o.id === r.orderId)
+    const branch = originalOrder?.dispatchLocation || originalOrder?.locationId || r.location || 'Unknown'
+    
+    const existing = branchReturnMap.get(branch) || { count: 0, reasons: new Map(), recentCount: 0, previousCount: 0 }
+    existing.count++
+    
+    // Track reasons
+    const reason = r.reason || 'Size Issue'
+    existing.reasons.set(reason, (existing.reasons.get(reason) || 0) + 1)
+    
+    // Track trend
+    const returnDate = parseDate(r.createdAt)
+    if (returnDate) {
+      if (returnDate >= thirtyDaysAgo) {
+        existing.recentCount++
+      } else if (returnDate >= sixtyDaysAgo) {
+        existing.previousCount++
+      }
+    }
+    
+    branchReturnMap.set(branch, existing)
+  })
+  
+  // Calculate company average return rate
+  const totalReturns = returns.length
+  const companyAvgReturnRate = completedOrders.length > 0 ? (totalReturns / completedOrders.length) * 100 : 0
+  
+  // Build branch data
+  const branches: BranchReturnReworkData[] = Array.from(branchOrderMap.entries())
+    .map(([locationId, branchData]) => {
+      const returnData = branchReturnMap.get(locationId) || { count: 0, reasons: new Map(), recentCount: 0, previousCount: 0 }
+      const returnRate = branchData.count > 0 ? (returnData.count / branchData.count) * 100 : 0
+      
+      // Get top reason
+      let topReason: string | null = null
+      let maxCount = 0
+      returnData.reasons.forEach((count, reason) => {
+        if (count > maxCount) {
+          maxCount = count
+          topReason = reason
+        }
+      })
+      
+      // Calculate trend
+      let trend: 'up' | 'down' | 'stable' = 'stable'
+      if (returnData.recentCount > returnData.previousCount * 1.3) {
+        trend = 'up'
+      } else if (returnData.recentCount < returnData.previousCount * 0.7 && returnData.previousCount > 0) {
+        trend = 'down'
+      }
+      
+      return {
+        branchId: locationId,
+        branchName: branchData.displayName.length > 18 ? branchData.displayName.substring(0, 18) + '...' : branchData.displayName,
+        returnReworkPercent: returnRate,
+        topReturnReason: topReason,
+        trend,
+        completedOrders: branchData.count,
+        returnOrders: returnData.count
+      }
+    })
+    .sort((a, b) => b.returnReworkPercent - a.returnReworkPercent)
+  
+  // Identify problem branches (above company average)
+  const problemBranches = branches.filter(b => b.returnReworkPercent > companyAvgReturnRate * 1.2 && b.returnOrders > 0)
+  
+  // Generate insight
+  let insight: string | null = null
+  const risingBranch = branches.find(b => b.trend === 'up' && b.returnReworkPercent > companyAvgReturnRate)
+  
+  if (problemBranches.length > 0) {
+    insight = `Return rate in ${problemBranches[0].branchName} exceeds company average`
+  } else if (risingBranch) {
+    insight = `Rising return trend detected in ${risingBranch.branchName}`
+  }
+  
+  // Check for repeated reasons
+  const allReasons = new Map<string, number>()
+  branchReturnMap.forEach(data => {
+    data.reasons.forEach((count, reason) => {
+      allReasons.set(reason, (allReasons.get(reason) || 0) + count)
+    })
+  })
+  
+  const topGlobalReason = Array.from(allReasons.entries()).sort((a, b) => b[1] - a[1])[0]
+  if (!insight && topGlobalReason && topGlobalReason[1] >= 3) {
+    const reasonPercent = (topGlobalReason[1] / totalReturns) * 100
+    if (reasonPercent > 40) {
+      insight = `Repeated ${topGlobalReason[0].toLowerCase()}-related issues detected`
+    }
+  }
+  
+  return { branches, companyAvgReturnRate, insight, problemBranches }
 }
 
 // ============================================================================
@@ -266,7 +1083,7 @@ const FunnelStage = ({ stage, value, conversionToNext, nextStage, color, widthPe
 // ============================================================================
 export default function ReportsPage() {
   // State Management
-  const [period, setPeriod] = useState<'weekly' | 'monthly' | 'quarterly'>('monthly')
+  const [timeRangePreset, setTimeRangePreset] = useState<TimeRangePreset>('30d')
   const [spendChartPeriod, setSpendChartPeriod] = useState<'weekly' | 'monthly'>('monthly')
   const [branchMetricType, setBranchMetricType] = useState<'total' | 'perEmployee'>('total')
   const [companyId, setCompanyId] = useState<string>('')
@@ -277,6 +1094,27 @@ export default function ReportsPage() {
   const [loading, setLoading] = useState(true)
   const [companyPrimaryColor, setCompanyPrimaryColor] = useState<string>('#032D42')
   const [companySecondaryColor, setCompanySecondaryColor] = useState<string>('#032D42')
+  
+  // Feedback & Returns data for intelligence summary
+  const [feedbackData, setFeedbackData] = useState<any[]>([])
+  const [returnsData, setReturnsData] = useState<any[]>([])
+
+  // Filter orders by selected time range
+  const filteredOrdersByTimeRange = useMemo(() => {
+    const { startDate, endDate } = getDateRangeFromPreset(timeRangePreset)
+    
+    if (!startDate && !endDate) {
+      return companyOrders // All time
+    }
+    
+    return companyOrders.filter(order => {
+      const orderDate = parseDate(order.orderDate)
+      if (!orderDate) return false
+      if (startDate && orderDate < startDate) return false
+      if (endDate && orderDate > endDate) return false
+      return true
+    })
+  }, [companyOrders, timeRangePreset])
   
   // Table state
   const [tableExpanded, setTableExpanded] = useState(false)
@@ -332,15 +1170,55 @@ export default function ReportsPage() {
             }
             
             try {
-              const branches = await getBranchesByCompany(storedCompanyId)
-              setCompanyBranches(branches || [])
-            } catch {
-              // Extract locations from orders
+              const locations = await getLocationsByCompany(storedCompanyId)
+              console.log('📍 Loaded locations for company ' + storedCompanyId + ':', locations)
+              // Map location data to branch format for compatibility
+              const branchData = (locations || []).map((loc: any) => ({
+                id: loc.id,
+                name: loc.name,
+                city: loc.city
+              }))
+              setCompanyBranches(branchData)
+              
+              // Debug: Show what location values exist in orders
+              const orderLocationIds = new Set<string>()
+              const orderDispatchLocations = new Set<string>()
+              orders?.forEach((order: OrderData) => {
+                if (order.locationId) orderLocationIds.add(order.locationId)
+                if (order.dispatchLocation) orderDispatchLocations.add(order.dispatchLocation)
+              })
+              console.log('📦 Order locationId values:', Array.from(orderLocationIds))
+              console.log('📦 Order dispatchLocation values:', Array.from(orderDispatchLocations))
+            } catch (locationError) {
+              console.log('⚠️ Could not load locations:', locationError)
+              // Extract locations from orders as fallback
               const locationSet = new Set<string>()
               orders?.forEach((order: OrderData) => {
                 if (order.dispatchLocation) locationSet.add(order.dispatchLocation)
               })
-              setCompanyBranches(Array.from(locationSet).map((loc, idx) => ({ id: String(idx), name: loc })))
+              console.log('📍 Unique dispatchLocation values in orders:', Array.from(locationSet))
+              setCompanyBranches(Array.from(locationSet).map((loc) => ({ id: loc, name: loc })))
+            }
+            
+            // Load feedback data for intelligence summary
+            try {
+              const feedback = await getProductFeedback()
+              setFeedbackData(feedback || [])
+            } catch (feedbackError) {
+              console.log('Feedback data not available:', feedbackError)
+              setFeedbackData([])
+            }
+            
+            // Load returns data for intelligence summary
+            try {
+              const returnsResponse = await fetch(`/api/returns/company?companyId=${encodeURIComponent(storedCompanyId)}`)
+              if (returnsResponse.ok) {
+                const returns = await returnsResponse.json()
+                setReturnsData(Array.isArray(returns) ? returns : [])
+              }
+            } catch (returnsError) {
+              console.log('Returns data not available:', returnsError)
+              setReturnsData([])
             }
           }
         } catch (error) {
@@ -358,7 +1236,7 @@ export default function ReportsPage() {
   // SECTION 1: EXECUTIVE SNAPSHOT KPIs
   // ============================================================================
   const executiveKPIs = useMemo(() => {
-    if (companyOrders.length === 0) {
+    if (filteredOrdersByTimeRange.length === 0) {
       return {
         totalSpend: { current: 0, previous: 0, trend: 0 },
         totalOrders: { current: 0, previous: 0, trend: 0 },
@@ -374,11 +1252,11 @@ export default function ReportsPage() {
     const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0)
 
     // Filter orders by period
-    const currentOrders = companyOrders.filter(o => {
+    const currentOrders = filteredOrdersByTimeRange.filter(o => {
       const date = parseDate(o.orderDate)
       return date && date >= currentMonthStart
     })
-    const previousOrders = companyOrders.filter(o => {
+    const previousOrders = filteredOrdersByTimeRange.filter(o => {
       const date = parseDate(o.orderDate)
       return date && date >= previousMonthStart && date <= previousMonthEnd
     })
@@ -399,7 +1277,7 @@ export default function ReportsPage() {
     const aovTrend = previousAOV > 0 ? ((currentAOV - previousAOV) / previousAOV) * 100 : 0
 
     // Average Delivery Time (created → delivered)
-    const deliveredOrders = companyOrders.filter(o => o.status === 'Delivered' && o.deliveredDate && o.orderDate)
+    const deliveredOrders = filteredOrdersByTimeRange.filter(o => o.status === 'Delivered' && o.deliveredDate && o.orderDate)
     const currentDeliveredOrders = deliveredOrders.filter(o => {
       const date = parseDate(o.orderDate)
       return date && date >= currentMonthStart
@@ -429,7 +1307,7 @@ export default function ReportsPage() {
 
     // Repeat Order Percentage
     const employeeOrderCounts = new Map<string, number>()
-    companyOrders.forEach(o => {
+    filteredOrdersByTimeRange.forEach(o => {
       const count = employeeOrderCounts.get(o.employeeId) || 0
       employeeOrderCounts.set(o.employeeId, count + 1)
     })
@@ -455,7 +1333,7 @@ export default function ReportsPage() {
       avgDeliveryTime: { current: currentAvgDelivery || calcAvgDeliveryTime(deliveredOrders), previous: previousAvgDelivery, trend: deliveryTrend },
       repeatOrderPct: { current: repeatPct, previous: prevRepeatPct, trend: repeatTrend }
     }
-  }, [companyOrders])
+  }, [filteredOrdersByTimeRange])
 
   // ============================================================================
   // SECTION 2: SPEND & VENDOR INTELLIGENCE
@@ -463,7 +1341,7 @@ export default function ReportsPage() {
   
   // Spend Trend Chart Data WITH PREVIOUS PERIOD COMPARISON
   const spendTrendData = useMemo(() => {
-    if (companyOrders.length === 0) return []
+    if (filteredOrdersByTimeRange.length === 0) return []
 
     const now = new Date()
     const data: { period: string; spend: number; previousSpend: number; orders: number; changePct: number }[] = []
@@ -478,12 +1356,12 @@ export default function ReportsPage() {
         const prevMonthStart = new Date(now.getFullYear() - 1, now.getMonth() - i, 1)
         const prevMonthEnd = new Date(now.getFullYear() - 1, now.getMonth() - i + 1, 0)
         
-        const monthOrders = companyOrders.filter(o => {
+        const monthOrders = filteredOrdersByTimeRange.filter(o => {
           const date = parseDate(o.orderDate)
           return date && date >= monthStart && date <= monthEnd
         })
         
-        const prevMonthOrders = companyOrders.filter(o => {
+        const prevMonthOrders = filteredOrdersByTimeRange.filter(o => {
           const date = parseDate(o.orderDate)
           return date && date >= prevMonthStart && date <= prevMonthEnd
         })
@@ -514,12 +1392,12 @@ export default function ReportsPage() {
         const prevWeekEnd = new Date(prevWeekStart)
         prevWeekEnd.setDate(prevWeekStart.getDate() + 6)
         
-        const weekOrders = companyOrders.filter(o => {
+        const weekOrders = filteredOrdersByTimeRange.filter(o => {
           const date = parseDate(o.orderDate)
           return date && date >= weekStart && date <= weekEnd
         })
         
-        const prevWeekOrders = companyOrders.filter(o => {
+        const prevWeekOrders = filteredOrdersByTimeRange.filter(o => {
           const date = parseDate(o.orderDate)
           return date && date >= prevWeekStart && date <= prevWeekEnd
         })
@@ -539,15 +1417,15 @@ export default function ReportsPage() {
     }
 
     return data
-  }, [companyOrders, spendChartPeriod])
+  }, [filteredOrdersByTimeRange, spendChartPeriod])
 
   // Vendor Spend Share Data for DONUT CHART (with stable colors)
   const vendorSpendDonutData = useMemo(() => {
-    if (companyOrders.length === 0) return { data: [], totalSpend: 0 }
+    if (filteredOrdersByTimeRange.length === 0) return { data: [], totalSpend: 0 }
 
     const vendorSpend = new Map<string, { name: string; spend: number; orders: number }>()
     
-    companyOrders.forEach(order => {
+    filteredOrdersByTimeRange.forEach(order => {
       const vendorId = order.vendorId || 'unknown'
       const vendorName = order.vendorName || 'Unknown Vendor'
       const existing = vendorSpend.get(vendorId) || { name: vendorName, spend: 0, orders: 0 }
@@ -572,11 +1450,11 @@ export default function ReportsPage() {
       .slice(0, 6) // Top 6 vendors for donut
 
     return { data, totalSpend }
-  }, [companyOrders])
+  }, [filteredOrdersByTimeRange])
 
   // Vendor Delivery Performance with TRUST SIGNALS
   const vendorDeliveryData = useMemo(() => {
-    const deliveredOrders = companyOrders.filter(o => 
+    const deliveredOrders = filteredOrdersByTimeRange.filter(o => 
       o.status === 'Delivered' && o.deliveredDate && o.orderDate
     )
     
@@ -621,13 +1499,13 @@ export default function ReportsPage() {
     const worstVendor = significantVendors.length > 1 ? significantVendors[significantVendors.length - 1] : null
 
     return { vendors, companyAvg, totalDeliveries: totalDeliveryCount, bestVendor, worstVendor }
-  }, [companyOrders])
+  }, [filteredOrdersByTimeRange])
 
   // ============================================================================
   // ORDER VALUE SEGMENTATION (Donut Chart)
   // ============================================================================
   const orderValueSegmentation = useMemo(() => {
-    if (companyOrders.length === 0) return { data: [], totalOrders: 0 }
+    if (filteredOrdersByTimeRange.length === 0) return { data: [], totalOrders: 0 }
 
     const buckets = {
       '₹0-1K': { min: 0, max: 1000, count: 0, color: '#10b981' },
@@ -636,7 +1514,7 @@ export default function ReportsPage() {
       '₹10K+': { min: 10000, max: Infinity, count: 0, color: '#f59e0b' }
     }
 
-    companyOrders.forEach(order => {
+    filteredOrdersByTimeRange.forEach(order => {
       const total = calculateOrderTotal(order)
       if (total < 1000) buckets['₹0-1K'].count++
       else if (total < 5000) buckets['₹1K-5K'].count++
@@ -644,7 +1522,7 @@ export default function ReportsPage() {
       else buckets['₹10K+'].count++
     })
 
-    const totalOrders = companyOrders.length
+    const totalOrders = filteredOrdersByTimeRange.length
     const data = Object.entries(buckets).map(([name, bucket]) => ({
       name,
       value: bucket.count,
@@ -653,33 +1531,14 @@ export default function ReportsPage() {
     }))
 
     return { data, totalOrders }
-  }, [companyOrders])
+  }, [filteredOrdersByTimeRange])
 
   // ============================================================================
   // TOP PRODUCTS BY CONSUMPTION
   // ============================================================================
   const topProductsConsumptionData = useMemo(() => {
-    // Filter orders by selected period
-    const now = new Date()
-    let periodStart: Date
-    let periodEnd: Date = now
-
-    if (period === 'weekly') {
-      periodStart = new Date(now)
-      periodStart.setDate(now.getDate() - 7)
-    } else if (period === 'monthly') {
-      periodStart = new Date(now.getFullYear(), now.getMonth(), 1)
-    } else {
-      // quarterly
-      const quarterMonth = Math.floor(now.getMonth() / 3) * 3
-      periodStart = new Date(now.getFullYear(), quarterMonth, 1)
-    }
-
-    // Filter orders within the period
-    const periodOrders = companyOrders.filter(order => {
-      const date = parseDate(order.orderDate)
-      return date && date >= periodStart && date <= periodEnd
-    })
+    // Use filtered orders based on time range
+    const periodOrders = filteredOrdersByTimeRange
 
     if (periodOrders.length === 0) {
       return { products: [], totalOrdersInPeriod: 0, totalQuantityInPeriod: 0 }
@@ -762,7 +1621,7 @@ export default function ReportsPage() {
       totalQuantityInPeriod,
       totalSpendInPeriod
     }
-  }, [companyOrders, period])
+  }, [filteredOrdersByTimeRange])
 
   // ============================================================================
   // SECTION 3: OPERATIONAL HEALTH
@@ -771,14 +1630,14 @@ export default function ReportsPage() {
   // Order Funnel Data WITH CONVERSION PERCENTAGES
   const orderFunnelData = useMemo(() => {
     const statusCounts = {
-      created: companyOrders.length,
-      approved: companyOrders.filter(o => 
+      created: filteredOrdersByTimeRange.length,
+      approved: filteredOrdersByTimeRange.filter(o => 
         ['Awaiting fulfilment', 'Dispatched', 'Delivered'].includes(o.status)
       ).length,
-      dispatched: companyOrders.filter(o => 
+      dispatched: filteredOrdersByTimeRange.filter(o => 
         ['Dispatched', 'Delivered'].includes(o.status)
       ).length,
-      delivered: companyOrders.filter(o => o.status === 'Delivered').length
+      delivered: filteredOrdersByTimeRange.filter(o => o.status === 'Delivered').length
     }
 
     // Calculate conversion rates between stages
@@ -828,11 +1687,11 @@ export default function ReportsPage() {
     ]
 
     return { stages: funnelData, noLeakage }
-  }, [companyOrders])
+  }, [filteredOrdersByTimeRange])
 
   // Cycle Time Breakdown (with fractional days for precision)
   const cycleTimeData = useMemo(() => {
-    const ordersWithTimes = companyOrders.filter(o => o.status === 'Delivered')
+    const ordersWithTimes = filteredOrdersByTimeRange.filter(o => o.status === 'Delivered')
 
     if (ordersWithTimes.length === 0) {
       return {
@@ -890,26 +1749,50 @@ export default function ReportsPage() {
     })
 
     return result
-  }, [companyOrders])
+  }, [filteredOrdersByTimeRange])
 
   // ============================================================================
   // SECTION 4: PEOPLE & BRANCH INSIGHTS
   // ============================================================================
 
+  // Helper: Look up location name from companyBranches (which now contains Location data)
+  const getBranchName = useCallback((locationIdOrName: string): string => {
+    if (!locationIdOrName || locationIdOrName === 'Unknown') return 'Unknown'
+    
+    // Try to find location by id match first
+    let location = companyBranches.find(b => b.id === locationIdOrName)
+    
+    // Then try name match (case-insensitive)
+    if (!location) {
+      location = companyBranches.find(b => 
+        b.name?.toLowerCase() === locationIdOrName.toLowerCase()
+      )
+    }
+    
+    // If found, return just the name
+    if (location?.name) {
+      return location.name
+    }
+    
+    // If not found, capitalize the locationId as fallback
+    return locationIdOrName.charAt(0).toUpperCase() + locationIdOrName.slice(1)
+  }, [companyBranches])
+
   // Branch Spend Comparison with CONDITIONAL RENDERING
   const branchSpendData = useMemo(() => {
     const branchSpend = new Map<string, { name: string; spend: number; orders: number; employees: Set<string> }>()
     
-    companyOrders.forEach(order => {
-      const location = order.dispatchLocation || order.locationId || 'Unknown'
-      const existing = branchSpend.get(location) || { name: location, spend: 0, orders: 0, employees: new Set<string>() }
+    filteredOrdersByTimeRange.forEach(order => {
+      const locationId = order.locationId || order.dispatchLocation || 'Unknown'
+      const branchName = getBranchName(locationId)
+      const existing = branchSpend.get(locationId) || { name: branchName, spend: 0, orders: 0, employees: new Set<string>() }
       existing.spend += calculateOrderTotal(order)
       existing.orders += 1
       existing.employees.add(order.employeeId)
-      branchSpend.set(location, existing)
+      branchSpend.set(locationId, existing)
     })
 
-    const totalCompanySpend = companyOrders.reduce((sum, o) => sum + calculateOrderTotal(o), 0)
+    const totalCompanySpend = filteredOrdersByTimeRange.reduce((sum, o) => sum + calculateOrderTotal(o), 0)
 
     return Array.from(branchSpend.entries())
       .map(([id, data]) => ({
@@ -924,14 +1807,14 @@ export default function ReportsPage() {
       }))
       .sort((a, b) => b.spend - a.spend)
       .slice(0, 8)
-  }, [companyOrders])
+  }, [filteredOrdersByTimeRange, getBranchName])
 
   // Employee Consumption (Outliers)
   const employeeOutliers = useMemo(() => {
     // Aggregate by employee NAME to avoid duplicates when same employee has different IDs
     const employeeSpend = new Map<string, { name: string; spend: number; orders: number; ids: Set<string> }>()
     
-    companyOrders.forEach(order => {
+    filteredOrdersByTimeRange.forEach(order => {
       const employeeName = (order.employeeName || 'Unknown').trim()
       const existing = employeeSpend.get(employeeName) || { name: employeeName, spend: 0, orders: 0, ids: new Set<string>() }
       existing.spend += calculateOrderTotal(order)
@@ -952,7 +1835,7 @@ export default function ReportsPage() {
     // BUGFIX: Build a comprehensive Set of ALL employee identifiers from orders
     // Orders may store employeeId OR employeeIdNum, and these may match Employee.id OR Employee.employeeId
     const employeesWithOrders = new Set<string>()
-    companyOrders.forEach(o => {
+    filteredOrdersByTimeRange.forEach(o => {
       if (o.employeeId) employeesWithOrders.add(String(o.employeeId))
       if (o.employeeIdNum) employeesWithOrders.add(String(o.employeeIdNum))
     })
@@ -975,7 +1858,7 @@ export default function ReportsPage() {
       }))
 
     return { topSpenders, inactiveSpenders }
-  }, [companyOrders, companyEmployees])
+  }, [filteredOrdersByTimeRange, companyEmployees])
 
   // ============================================================================
   // SECTION 5: SMART INSIGHTS (MAX 3, PRIORITIZED)
@@ -1055,6 +1938,36 @@ export default function ReportsPage() {
   }, [vendorSpendDonutData, vendorDeliveryData, orderFunnelData])
 
   // ============================================================================
+  // FEEDBACK & RETURNS INTELLIGENCE SUMMARIES (for Reports Page)
+  // ============================================================================
+  const feedbackIntelligence = useMemo(() => {
+    return computeFeedbackSummary(feedbackData)
+  }, [feedbackData])
+
+  const returnsIntelligence = useMemo(() => {
+    return computeReturnsSummary(returnsData)
+  }, [returnsData])
+
+  // ============================================================================
+  // BRANCH INTELLIGENCE (Company Admin Only)
+  // ============================================================================
+  const branchPendingIntelligence = useMemo(() => {
+    return computeBranchPendingIntelligence(filteredOrdersByTimeRange, parseDate, getBranchName)
+  }, [filteredOrdersByTimeRange, getBranchName])
+
+  const vendorSLAIntelligence = useMemo(() => {
+    return computeVendorSLAIntelligence(filteredOrdersByTimeRange, companyVendors, parseDate)
+  }, [filteredOrdersByTimeRange, companyVendors])
+
+  const branchSpendActivityIntelligence = useMemo(() => {
+    return computeBranchSpendActivityIntelligence(filteredOrdersByTimeRange, calculateOrderTotal, getBranchName)
+  }, [filteredOrdersByTimeRange, getBranchName])
+
+  const branchReturnReworkIntelligence = useMemo(() => {
+    return computeBranchReturnReworkIntelligence(filteredOrdersByTimeRange, returnsData, parseDate, getBranchName)
+  }, [filteredOrdersByTimeRange, returnsData, getBranchName])
+
+  // ============================================================================
   // SECTION 6: FILTERED TABLE DATA
   // ============================================================================
   const filteredOrders = useMemo(() => {
@@ -1114,21 +2027,18 @@ export default function ReportsPage() {
   // RENDER
   // ============================================================================
   if (loading) {
-  return (
-    <DashboardLayout actorType="company">
-        <div className="flex items-center justify-center h-[60vh]">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
-            <p className="text-gray-600">Loading analytics...</p>
-          </div>
+    return (
+      <div className="flex items-center justify-center h-[60vh]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading analytics...</p>
         </div>
-      </DashboardLayout>
+      </div>
     )
   }
 
   return (
-    <DashboardLayout actorType="company">
-      <div className="space-y-6">
+    <div className="space-y-6">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
       <div>
@@ -1136,16 +2046,22 @@ export default function ReportsPage() {
             <p className="text-gray-500 text-sm mt-1">Executive dashboard for business intelligence</p>
           </div>
           <div className="flex items-center gap-3">
-            <select
-              value={period}
-              onChange={(e) => setPeriod(e.target.value as any)}
-              className="px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 bg-white focus:ring-2 focus:ring-offset-0 outline-none transition-all"
-              style={{ '--tw-ring-color': `${companyPrimaryColor}40` } as React.CSSProperties}
-            >
-              <option value="weekly">This Week</option>
-              <option value="monthly">This Month</option>
-              <option value="quarterly">This Quarter</option>
-            </select>
+            <div className="relative">
+              <CalendarDays className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <select
+                value={timeRangePreset}
+                onChange={(e) => setTimeRangePreset(e.target.value as TimeRangePreset)}
+                className="pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 bg-white focus:ring-2 focus:ring-offset-0 outline-none transition-all appearance-none cursor-pointer"
+                style={{ '--tw-ring-color': `${companyPrimaryColor}40` } as React.CSSProperties}
+              >
+                <option value="7d">Last 7 Days</option>
+                <option value="30d">Last 30 Days</option>
+                <option value="quarter">This Quarter</option>
+                <option value="ytd">Year to Date</option>
+                <option value="12m">Last 12 Months</option>
+                <option value="all">All Time</option>
+              </select>
+            </div>
             <button 
               className="text-white px-4 py-2 rounded-lg font-medium text-sm transition-all flex items-center gap-2 shadow-sm hover:shadow-md"
               style={{ backgroundColor: companyPrimaryColor }}
@@ -1163,7 +2079,7 @@ export default function ReportsPage() {
           {[
             {
               title: 'Total Spend',
-              value: formatCurrency(companyOrders.reduce((sum, o) => sum + calculateOrderTotal(o), 0)),
+              value: formatCurrency(filteredOrdersByTimeRange.reduce((sum, o) => sum + calculateOrderTotal(o), 0)),
               trend: executiveKPIs.totalSpend.trend,
               trendLabel: 'vs last month',
               icon: IndianRupee,
@@ -1172,7 +2088,7 @@ export default function ReportsPage() {
             },
             {
               title: 'Total Orders',
-              value: companyOrders.length.toLocaleString(),
+              value: filteredOrdersByTimeRange.length.toLocaleString(),
               trend: executiveKPIs.totalOrders.trend,
               trendLabel: 'vs last month',
               icon: Package,
@@ -1181,7 +2097,7 @@ export default function ReportsPage() {
             },
             {
               title: 'Avg Order Value',
-              value: formatCurrency(companyOrders.length > 0 ? companyOrders.reduce((sum, o) => sum + calculateOrderTotal(o), 0) / companyOrders.length : 0),
+              value: formatCurrency(filteredOrdersByTimeRange.length > 0 ? filteredOrdersByTimeRange.reduce((sum, o) => sum + calculateOrderTotal(o), 0) / filteredOrdersByTimeRange.length : 0),
               trend: executiveKPIs.avgOrderValue.trend,
               trendLabel: 'vs last month',
               icon: BarChart3,
@@ -1691,6 +2607,538 @@ export default function ReportsPage() {
         </div>
 
         {/* ============================================================ */}
+        {/* QUALITY & OPERATIONS HEALTH - FEEDBACK & RETURNS */}
+        {/* ============================================================ */}
+        {(feedbackData.length > 0 || returnsData.length > 0) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Feedback Health Summary */}
+            {feedbackData.length > 0 && (
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 bg-yellow-50 rounded-lg">
+                      <MessageSquare className="h-4 w-4 text-yellow-600" />
+                    </div>
+                    <div>
+                      <h2 className="text-sm font-semibold text-gray-900">Product Feedback Health</h2>
+                      <p className="text-[10px] text-gray-500">{feedbackIntelligence.totalFeedback} reviews</p>
+                    </div>
+                  </div>
+                  <Link 
+                    href="/dashboard/company/feedback"
+                    className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    View All <ExternalLink className="h-3 w-3" />
+                  </Link>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  {/* Average Rating */}
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <div className="flex items-center justify-center gap-1 mb-1">
+                      <span className="text-xl font-bold text-gray-900">{feedbackIntelligence.avgRating.toFixed(1)}</span>
+                      <Star className="h-4 w-4 fill-yellow-400 text-yellow-400" />
+                    </div>
+                    <div className={`flex items-center justify-center gap-0.5 text-[10px] font-medium ${
+                      feedbackIntelligence.ratingTrend30Days > 5 ? 'text-green-600' :
+                      feedbackIntelligence.ratingTrend30Days < -5 ? 'text-red-600' : 'text-gray-500'
+                    }`}>
+                      {feedbackIntelligence.ratingTrend30Days > 5 ? <TrendingUp className="h-3 w-3" /> :
+                       feedbackIntelligence.ratingTrend30Days < -5 ? <TrendingDown className="h-3 w-3" /> : null}
+                      {feedbackIntelligence.ratingTrend30Days !== 0 && `${Math.abs(feedbackIntelligence.ratingTrend30Days).toFixed(0)}%`}
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-1">Avg Rating</p>
+                  </div>
+
+                  {/* Negative % */}
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <span className={`text-xl font-bold ${
+                      feedbackIntelligence.negativeRatingPercentage >= 20 ? 'text-red-600' :
+                      feedbackIntelligence.negativeRatingPercentage >= 10 ? 'text-yellow-600' : 'text-green-600'
+                    }`}>{feedbackIntelligence.negativeRatingPercentage.toFixed(0)}%</span>
+                    <p className="text-[10px] text-gray-500 mt-1">Negative (1-2★)</p>
+                  </div>
+
+                  {/* Health Status */}
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <span className={`inline-flex px-2 py-1 rounded-full text-xs font-semibold ${
+                      feedbackIntelligence.healthTag === 'Healthy' ? 'bg-green-100 text-green-700' :
+                      feedbackIntelligence.healthTag === 'Watchlist' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                    }`}>
+                      {feedbackIntelligence.healthTag}
+                    </span>
+                    <p className="text-[10px] text-gray-500 mt-1">Status</p>
+                  </div>
+                </div>
+
+                {/* Vendor highlights */}
+                {(feedbackIntelligence.bestVendorName || feedbackIntelligence.worstVendorName) && (
+                  <div className="border-t border-gray-100 pt-3 space-y-2">
+                    {feedbackIntelligence.bestVendorName && feedbackIntelligence.bestVendorRating && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-600 flex items-center gap-1">
+                          <Award className="h-3 w-3 text-green-500" /> Top Vendor
+                        </span>
+                        <span className="font-medium text-gray-900 flex items-center gap-1">
+                          {feedbackIntelligence.bestVendorName}
+                          <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                          {feedbackIntelligence.bestVendorRating.toFixed(1)}
+                        </span>
+                      </div>
+                    )}
+                    {feedbackIntelligence.worstVendorName && feedbackIntelligence.worstVendorRating && 
+                     feedbackIntelligence.worstVendorName !== feedbackIntelligence.bestVendorName && (
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-600 flex items-center gap-1">
+                          <AlertTriangle className="h-3 w-3 text-amber-500" /> Needs Attention
+                        </span>
+                        <span className="font-medium text-gray-900 flex items-center gap-1">
+                          {feedbackIntelligence.worstVendorName}
+                          <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                          {feedbackIntelligence.worstVendorRating.toFixed(1)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Top insight */}
+                {feedbackIntelligence.topInsight && (
+                  <div className={`mt-3 p-2 rounded-lg text-xs flex items-start gap-2 ${
+                    feedbackIntelligence.healthTag === 'At Risk' ? 'bg-red-50 text-red-700' :
+                    feedbackIntelligence.healthTag === 'Watchlist' ? 'bg-yellow-50 text-yellow-700' : 'bg-green-50 text-green-700'
+                  }`}>
+                    <Lightbulb className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                    <span>{feedbackIntelligence.topInsight}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Returns & Replacements Summary */}
+            {returnsData.length > 0 && (
+              <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 bg-blue-50 rounded-lg">
+                      <RefreshCw className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <div>
+                      <h2 className="text-sm font-semibold text-gray-900">Returns & Replacements</h2>
+                      <p className="text-[10px] text-gray-500">{returnsIntelligence.totalReturns} total requests</p>
+                    </div>
+                  </div>
+                  <Link 
+                    href="/dashboard/company/returns"
+                    className="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700 transition-colors"
+                  >
+                    View All <ExternalLink className="h-3 w-3" />
+                  </Link>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  {/* Pending */}
+                  <div className={`rounded-lg p-3 text-center ${
+                    returnsIntelligence.pendingReturns >= 5 ? 'bg-red-50' :
+                    returnsIntelligence.pendingReturns >= 2 ? 'bg-yellow-50' : 'bg-gray-50'
+                  }`}>
+                    <span className={`text-xl font-bold ${
+                      returnsIntelligence.pendingReturns >= 5 ? 'text-red-600' :
+                      returnsIntelligence.pendingReturns >= 2 ? 'text-yellow-600' : 'text-gray-900'
+                    }`}>{returnsIntelligence.pendingReturns}</span>
+                    <p className="text-[10px] text-gray-500 mt-1">Pending</p>
+                  </div>
+
+                  {/* Avg Resolution */}
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <span className={`text-lg font-bold ${
+                      returnsIntelligence.resolutionSpeed === 'fast' ? 'text-green-600' :
+                      returnsIntelligence.resolutionSpeed === 'slow' ? 'text-red-600' : 'text-gray-900'
+                    }`}>
+                      {returnsIntelligence.avgResolutionDays !== null 
+                        ? formatDurationCompact(returnsIntelligence.avgResolutionDays)
+                        : 'N/A'}
+                    </span>
+                    <p className={`text-[10px] mt-1 ${
+                      returnsIntelligence.resolutionSpeed === 'fast' ? 'text-green-600' :
+                      returnsIntelligence.resolutionSpeed === 'slow' ? 'text-red-600' : 'text-gray-500'
+                    }`}>
+                      {returnsIntelligence.resolutionSpeed === 'fast' ? '✓ Fast' :
+                       returnsIntelligence.resolutionSpeed === 'slow' ? '⚠ Slow' : 'Resolution'}
+                    </p>
+                  </div>
+
+                  {/* Health Status */}
+                  <div className="bg-gray-50 rounded-lg p-3 text-center">
+                    <span className={`inline-flex px-2 py-1 rounded-full text-xs font-semibold ${
+                      returnsIntelligence.healthTag === 'Healthy' ? 'bg-green-100 text-green-700' :
+                      returnsIntelligence.healthTag === 'Watchlist' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                    }`}>
+                      {returnsIntelligence.healthTag}
+                    </span>
+                    <p className="text-[10px] text-gray-500 mt-1">Status</p>
+                  </div>
+                </div>
+
+                {/* Week over week trend */}
+                <div className="flex items-center justify-between text-xs border-t border-gray-100 pt-3 mb-3">
+                  <span className="text-gray-600">This Week vs Last</span>
+                  <span className={`font-medium flex items-center gap-1 ${
+                    returnsIntelligence.weekOverWeekChange > 20 ? 'text-red-600' :
+                    returnsIntelligence.weekOverWeekChange < -20 ? 'text-green-600' : 'text-gray-700'
+                  }`}>
+                    {returnsIntelligence.weekOverWeekChange > 20 ? <TrendingUp className="h-3 w-3" /> :
+                     returnsIntelligence.weekOverWeekChange < -20 ? <TrendingDown className="h-3 w-3" /> : null}
+                    {returnsIntelligence.weekOverWeekChange > 0 ? '+' : ''}{returnsIntelligence.weekOverWeekChange.toFixed(0)}%
+                  </span>
+                </div>
+
+                {/* Top reason */}
+                {returnsIntelligence.topReason && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-600">Top Reason</span>
+                    <span className="font-medium text-gray-900">
+                      {returnsIntelligence.topReason} ({returnsIntelligence.topReasonPercentage.toFixed(0)}%)
+                    </span>
+                  </div>
+                )}
+
+                {/* Top insight */}
+                {returnsIntelligence.topInsight && (
+                  <div className={`mt-3 p-2 rounded-lg text-xs flex items-start gap-2 ${
+                    returnsIntelligence.healthTag === 'High Risk' ? 'bg-red-50 text-red-700' :
+                    returnsIntelligence.healthTag === 'Watchlist' ? 'bg-yellow-50 text-yellow-700' : 'bg-green-50 text-green-700'
+                  }`}>
+                    <Lightbulb className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                    <span>{returnsIntelligence.topInsight}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ============================================================ */}
+        {/* BRANCH & VENDOR INTELLIGENCE WIDGETS (Company Admin Only) */}
+        {/* ============================================================ */}
+        {(branchPendingIntelligence.branches.length > 0 || vendorSLAIntelligence.vendors.length > 0 || 
+          branchSpendActivityIntelligence.branches.length > 1 || branchReturnReworkIntelligence.branches.length > 0) && (
+          <>
+            {/* Section Header */}
+            <div className="flex items-center gap-3 mt-2">
+              <div className="p-2 bg-indigo-50 rounded-lg">
+                <Building2 className="h-5 w-5 text-indigo-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Branch Intelligence</h2>
+                <p className="text-xs text-gray-500">Operational bottlenecks and risk analysis by location</p>
+              </div>
+            </div>
+
+            {/* Row 1: Pending Requests + SLA Risk */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Widget 1: Top 5 Branches with Pending Requests */}
+              {branchPendingIntelligence.branches.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-amber-50 rounded-lg">
+                        <Clock className="h-4 w-4 text-amber-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900">Pending Requests by Branch</h3>
+                        <p className="text-[10px] text-gray-500">{branchPendingIntelligence.totalCompanyPending} total pending</p>
+                      </div>
+                    </div>
+                    {branchPendingIntelligence.criticalBranchCount > 0 && (
+                      <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-medium rounded-full">
+                        {branchPendingIntelligence.criticalBranchCount} critical
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    {branchPendingIntelligence.branches.slice(0, 5).map((branch, idx) => (
+                      <div 
+                        key={branch.branchId} 
+                        className={`flex items-center justify-between p-2 rounded-lg ${
+                          idx === 0 ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-bold ${
+                            idx === 0 ? 'bg-amber-500 text-white' : 'bg-gray-300 text-gray-700'
+                          }`}>
+                            {idx + 1}
+                          </span>
+                          <div>
+                            <p className="text-xs font-medium text-gray-900" title={branch.branchId}>{branch.branchName}</p>
+                            <p className="text-[10px] text-gray-500">{formatDurationCompact(branch.avgPendingAgeDays)} avg age</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-sm font-bold ${idx === 0 ? 'text-amber-700' : 'text-gray-900'}`}>
+                            {branch.pendingCount}
+                          </p>
+                          <p className="text-[10px] text-gray-500">{branch.percentOfTotalPending.toFixed(0)}% of total</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Insight */}
+                  {branchPendingIntelligence.insight && (
+                    <div className="mt-3 p-2 bg-amber-50 rounded-lg text-xs flex items-start gap-2 text-amber-700">
+                      <Lightbulb className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                      <span>{branchPendingIntelligence.insight}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Widget 2: Vendor SLA & Delivery Risk */}
+              {vendorSLAIntelligence.vendors.length > 0 && (
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-purple-50 rounded-lg">
+                        <Truck className="h-4 w-4 text-purple-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900">Vendor Delivery SLA</h3>
+                        <p className="text-[10px] text-gray-500">
+                          Target: {vendorSLAIntelligence.slaThresholdDays}d
+                          {vendorSLAIntelligence.avgCompanyDeliveryDays > 0 && (
+                            <span className="ml-1">• Avg: {formatDurationCompact(vendorSLAIntelligence.avgCompanyDeliveryDays)}</span>
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {vendorSLAIntelligence.atRiskCount > 0 && (
+                        <span className="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-medium rounded-full">
+                          {vendorSLAIntelligence.atRiskCount} at risk
+                        </span>
+                      )}
+                      {vendorSLAIntelligence.healthyCount > 0 && (
+                        <span className="px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-medium rounded-full">
+                          {vendorSLAIntelligence.healthyCount} healthy
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    {vendorSLAIntelligence.vendors.slice(0, 5).map((vendor) => (
+                      <div 
+                        key={vendor.vendorId} 
+                        className={`flex items-center justify-between p-2 rounded-lg ${
+                          vendor.riskLevel === 'High Risk' ? 'bg-red-50 border border-red-200' :
+                          vendor.riskLevel === 'Watchlist' ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-semibold ${
+                            vendor.riskLevel === 'High Risk' ? 'bg-red-100 text-red-700' :
+                            vendor.riskLevel === 'Watchlist' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'
+                          }`}>
+                            {vendor.riskLevel === 'High Risk' ? '⚠️' : vendor.riskLevel === 'Watchlist' ? '👀' : '✓'}
+                          </span>
+                          <div>
+                            <p className="text-xs font-medium text-gray-900" title={vendor.vendorId}>{vendor.vendorName}</p>
+                            <p className="text-[10px] text-gray-500">
+                              {vendor.deliveredCount} delivered
+                              {vendor.pendingCount > 0 && (
+                                <span className="text-amber-600 ml-1">• {vendor.pendingCount} overdue</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-sm font-bold ${
+                            vendor.riskLevel === 'High Risk' ? 'text-red-600' :
+                            vendor.riskLevel === 'Watchlist' ? 'text-yellow-600' : 'text-gray-900'
+                          }`}>
+                            {formatDurationCompact(vendor.avgDeliveryDays)}
+                          </p>
+                          <p className={`text-[10px] ${vendor.slaBreachPercent > 20 ? 'text-red-500' : 'text-gray-500'}`}>
+                            {vendor.slaBreachPercent.toFixed(0)}% breach
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Insight */}
+                  {vendorSLAIntelligence.insight && (
+                    <div className={`mt-3 p-2 rounded-lg text-xs flex items-start gap-2 ${
+                      vendorSLAIntelligence.atRiskCount > 0 ? 'bg-red-50 text-red-700' :
+                      vendorSLAIntelligence.healthyCount === vendorSLAIntelligence.vendors.length ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'
+                    }`}>
+                      <Lightbulb className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                      <span>{vendorSLAIntelligence.insight}</span>
+                    </div>
+                  )}
+
+                  {/* Footnote */}
+                  <p className="mt-3 text-[10px] text-gray-400 text-center border-t border-gray-100 pt-2">
+                    Based on time from Company Admin approval to delivery
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Row 2: Spend vs Activity + Return/Rework */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Widget 3: Spend vs Activity by Branch */}
+              {branchSpendActivityIntelligence.branches.length > 1 && (
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-teal-50 rounded-lg">
+                        <Activity className="h-4 w-4 text-teal-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900">Spend vs Activity by Branch</h3>
+                        <p className="text-[10px] text-gray-500">Avg {formatCurrency(branchSpendActivityIntelligence.companyAvgSpendPerRequest)}/request</p>
+                      </div>
+                    </div>
+                    {branchSpendActivityIntelligence.anomalyBranches.length > 0 && (
+                      <span className="px-2 py-0.5 bg-teal-100 text-teal-700 text-[10px] font-medium rounded-full">
+                        {branchSpendActivityIntelligence.anomalyBranches.length} anomaly
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    {branchSpendActivityIntelligence.branches.slice(0, 5).map((branch, idx) => (
+                      <div 
+                        key={branch.branchId} 
+                        className={`flex items-center justify-between p-2 rounded-lg ${
+                          branch.anomalyType ? 'bg-teal-50 border border-teal-200' : 'bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-bold flex-shrink-0 ${
+                            idx === 0 ? 'bg-teal-500 text-white' : 'bg-gray-300 text-gray-700'
+                          }`}>
+                            {idx + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-gray-900 truncate" title={branch.branchId}>{branch.branchName}</p>
+                            {branch.anomalyType && (
+                              <p className="text-[10px] text-teal-600 font-medium">
+                                {branch.anomalyType === 'high-spend-low-volume' ? '💎 High value' : '📦 High volume'}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4 text-right">
+                          <div>
+                            <p className="text-xs font-bold text-gray-900">{formatCurrency(branch.totalSpend)}</p>
+                            <p className="text-[10px] text-gray-500">{branch.requestCount} orders</p>
+                          </div>
+                          <div className="w-16 text-right">
+                            <p className={`text-xs font-semibold ${
+                              branch.spendPerRequest > branchSpendActivityIntelligence.companyAvgSpendPerRequest * 1.3 ? 'text-teal-600' :
+                              branch.spendPerRequest < branchSpendActivityIntelligence.companyAvgSpendPerRequest * 0.7 ? 'text-amber-600' : 'text-gray-700'
+                            }`}>
+                              {formatCurrency(branch.spendPerRequest)}
+                            </p>
+                            <p className="text-[10px] text-gray-400">per order</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Insight */}
+                  {branchSpendActivityIntelligence.insight && (
+                    <div className="mt-3 p-2 bg-teal-50 rounded-lg text-xs flex items-start gap-2 text-teal-700">
+                      <Lightbulb className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                      <span>{branchSpendActivityIntelligence.insight}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Widget 4: Branch Return & Rework Rate */}
+              {branchReturnReworkIntelligence.branches.length > 0 && branchReturnReworkIntelligence.branches.some(b => b.returnOrders > 0) && (
+                <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-rose-50 rounded-lg">
+                        <RefreshCw className="h-4 w-4 text-rose-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-900">Branch Return & Rework Rate</h3>
+                        <p className="text-[10px] text-gray-500">Company avg: {branchReturnReworkIntelligence.companyAvgReturnRate.toFixed(1)}%</p>
+                      </div>
+                    </div>
+                    {branchReturnReworkIntelligence.problemBranches.length > 0 && (
+                      <span className="px-2 py-0.5 bg-rose-100 text-rose-700 text-[10px] font-medium rounded-full">
+                        {branchReturnReworkIntelligence.problemBranches.length} above avg
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    {branchReturnReworkIntelligence.branches
+                      .filter(b => b.returnOrders > 0 || b.completedOrders > 5)
+                      .slice(0, 5)
+                      .map((branch) => (
+                      <div 
+                        key={branch.branchId} 
+                        className={`flex items-center justify-between p-2 rounded-lg ${
+                          branch.returnReworkPercent > branchReturnReworkIntelligence.companyAvgReturnRate * 1.2 && branch.returnOrders > 0
+                            ? 'bg-rose-50 border border-rose-200' : 'bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <span className={`text-sm ${
+                            branch.trend === 'up' ? 'text-red-500' : 
+                            branch.trend === 'down' ? 'text-green-500' : 'text-gray-400'
+                          }`}>
+                            {branch.trend === 'up' ? '↑' : branch.trend === 'down' ? '↓' : '→'}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-xs font-medium text-gray-900 truncate" title={branch.branchId}>{branch.branchName}</p>
+                            {branch.topReturnReason && (
+                              <p className="text-[10px] text-gray-500 truncate">{branch.topReturnReason}</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-sm font-bold ${
+                            branch.returnReworkPercent > branchReturnReworkIntelligence.companyAvgReturnRate * 1.2 
+                              ? 'text-rose-600' : 'text-gray-900'
+                          }`}>
+                            {branch.returnReworkPercent.toFixed(1)}%
+                          </p>
+                          <p className="text-[10px] text-gray-500">
+                            {branch.returnOrders}/{branch.completedOrders} orders
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Insight */}
+                  {branchReturnReworkIntelligence.insight && (
+                    <div className={`mt-3 p-2 rounded-lg text-xs flex items-start gap-2 ${
+                      branchReturnReworkIntelligence.problemBranches.length > 0 ? 'bg-rose-50 text-rose-700' : 'bg-green-50 text-green-700'
+                    }`}>
+                      <Lightbulb className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                      <span>{branchReturnReworkIntelligence.insight}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ============================================================ */}
         {/* ORDER DETAILS TABLE (COLLAPSIBLE) */}
         {/* ============================================================ */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
@@ -1816,6 +3264,5 @@ export default function ReportsPage() {
           )}
         </div>
       </div>
-    </DashboardLayout>
   )
 }

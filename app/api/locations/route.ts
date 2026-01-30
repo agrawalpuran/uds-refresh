@@ -138,7 +138,24 @@ export async function POST(request: Request) {
       }, { status: 400 })
     }
     
-    const { name, companyId, adminId, adminEmail, email, address, city, state, pincode, phone, locationEmail, status } = body
+    const { 
+      name, 
+      companyId, 
+      adminId, 
+      adminEmail, 
+      email, 
+      address, 
+      address_line_1, 
+      address_line_2, 
+      address_line_3, 
+      city, 
+      state, 
+      pincode, 
+      country,
+      phone, 
+      locationEmail, 
+      status 
+    } = body
 
     // Validate required fields (adminId is now optional)
     if (!name || !companyId) {
@@ -176,14 +193,18 @@ export async function POST(request: Request) {
     }
 
     // Create location (adminId is optional)
+    // Support both old format (address) and new format (address_line_1, address_line_2, address_line_3)
     const location = await createLocation({
       name,
       companyId,
       adminId: adminId || undefined, // Optional
-      address_line_1: address,
+      address_line_1: address_line_1 || address || '',
+      address_line_2: address_line_2,
+      address_line_3: address_line_3,
       city,
       state,
       pincode,
+      country,
       phone,
       email: locationEmail, // Use locationEmail to avoid conflict with user email
       status: status || 'active'

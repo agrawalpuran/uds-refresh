@@ -2,14 +2,28 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { 
   getVendorReports, 
+  getVendorReportsForCompany,
   getVendorSalesPatterns, 
-  getVendorOrderStatusBreakdown, 
-  getVendorBusinessVolumeByCompany 
+  getVendorSalesPatternsForCompany,
+  getVendorOrderStatusBreakdown,
+  getVendorOrderStatusBreakdownForCompany,
+  getVendorBusinessVolumeByCompany,
+  getVendorBusinessVolumeByCompanyWithDateRange,
+  getVendorTopProducts,
+  getVendorDeliveryPerformance,
+  getVendorAccountHealth
 } from '@/lib/db/data-access'
 import connectDB from '@/lib/db/mongodb'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
+// Helper to parse date from query string
+function parseDateParam(dateStr: string | null): Date | null {
+  if (!dateStr) return null
+  const date = new Date(dateStr)
+  return isNaN(date.getTime()) ? null : date
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -17,8 +31,13 @@ export async function GET(request: NextRequest) {
     
     const searchParams = request.nextUrl.searchParams
     const vendorId = searchParams.get('vendorId')
-    const reportType = searchParams.get('type')  // 'full', 'sales-patterns', 'order-status', 'business-volume'
+    const companyId = searchParams.get('companyId') // Optional company filter
+    const reportType = searchParams.get('type')  // 'full', 'sales-patterns', 'order-status', 'business-volume', 'top-products', 'delivery', 'account-health'
     const period = searchParams.get('period') as 'daily' | 'weekly' | 'monthly' | null
+    
+    // Date range parameters
+    const startDate = parseDateParam(searchParams.get('startDate'))
+    const endDate = parseDateParam(searchParams.get('endDate'))
 
     if (!vendorId) {
       return NextResponse.json(
@@ -29,31 +48,62 @@ export async function GET(request: NextRequest) {
 
     // Return full comprehensive report by default
     if (!reportType || reportType === 'full') {
-      const reports = await getVendorReports(vendorId)
+      // Use company-filtered version with date range
+      const reports = await getVendorReportsForCompany(vendorId, companyId, startDate, endDate)
       return NextResponse.json(reports)
     }
 
     // Return sales patterns
     if (reportType === 'sales-patterns') {
-      const patterns = await getVendorSalesPatterns(vendorId, period || 'monthly')
+      const patterns = await getVendorSalesPatternsForCompany(vendorId, companyId, period || 'monthly', startDate, endDate)
       return NextResponse.json({ patterns, period: period || 'monthly' })
     }
 
     // Order status breakdown
     if (reportType === 'order-status') {
-      const breakdown = await getVendorOrderStatusBreakdown(vendorId)
+      const breakdown = await getVendorOrderStatusBreakdownForCompany(vendorId, companyId, startDate, endDate)
       return NextResponse.json({ breakdown })
     }
 
-    // Business volume
+    // Business volume by company (only for all-companies view)
     if (reportType === 'business-volume') {
-      const volume = await getVendorBusinessVolumeByCompany(vendorId)
+      if (companyId) {
+        return NextResponse.json({ 
+          volume: [],
+          message: 'Business volume by company is only available in All Companies view'
+        })
+      }
+      const volume = await getVendorBusinessVolumeByCompanyWithDateRange(vendorId, startDate, endDate)
       return NextResponse.json({ volume })
+    }
+
+    // Top products (context-aware)
+    if (reportType === 'top-products') {
+      const topProducts = await getVendorTopProducts(vendorId, companyId, 5, startDate, endDate)
+      return NextResponse.json({ topProducts })
+    }
+
+    // Delivery performance (context-aware)
+    if (reportType === 'delivery') {
+      const deliveryPerformance = await getVendorDeliveryPerformance(vendorId, companyId, startDate, endDate)
+      return NextResponse.json({ deliveryPerformance })
+    }
+
+    // Account health (single company view only - not filtered by date, shows lifetime)
+    if (reportType === 'account-health') {
+      if (!companyId) {
+        return NextResponse.json(
+          { error: 'Company ID is required for account health report' },
+          { status: 400 }
+        )
+      }
+      const accountHealth = await getVendorAccountHealth(vendorId, companyId)
+      return NextResponse.json({ accountHealth })
     }
 
     return NextResponse.json(
       { 
-        error: 'Invalid report type. Use: full, sales-patterns, order-status, or business-volume' 
+        error: 'Invalid report type. Use: full, sales-patterns, order-status, business-volume, top-products, delivery, or account-health' 
       },
       { status: 400 }
     )

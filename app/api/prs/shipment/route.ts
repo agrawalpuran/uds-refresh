@@ -776,13 +776,17 @@ export async function POST(request: Request) {
 
             // CRITICAL: Pass the shipmentId from createApiShipment as shipmentReferenceNumber
             // This ensures the Order document uses the same shipmentId as the Shipment document
+            // Use carrierDisplayName when provided so order card shows courier company name (e.g. BLUEDART) not code (e.g. 6)
+            const orderCarrierName = (shipmentData.carrierDisplayName && shipmentData.carrierDisplayName.trim())
+              ? shipmentData.carrierDisplayName.trim()
+              : shipmentData.carrierName?.trim()
             const updatedPR = await updatePRShipmentStatus(
               prId,
               {
                 shipperName: shipmentData.shipperName?.trim() || 'API Shipment',
-                carrierName: shipmentData.carrierName?.trim(),
+                carrierName: orderCarrierName,
                 modeOfTransport: shipmentData.modeOfTransport || 'COURIER',
-                trackingNumber: undefined, // Will be set from API response
+                trackingNumber: (apiResult as any).trackingNumber ?? (apiResult as any).courierAwbNumber ?? undefined,
                 dispatchedDate,
                 expectedDeliveryDate,
                 shipmentReferenceNumber: apiResult.shipmentId, // Use the shipmentId from createApiShipment

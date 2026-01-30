@@ -2896,6 +2896,167 @@ export async function getVendorBusinessVolumeByCompany(vendorId: string): Promis
   }
 }
 
+// ========== COMPANY-FILTERED VENDOR REPORT FUNCTIONS ==========
+
+/**
+ * Get comprehensive vendor reports with optional company and date range filtering
+ */
+export async function getVendorReportsForCompany(
+  vendorId: string, 
+  companyId: string | null = null,
+  startDate?: Date | null,
+  endDate?: Date | null
+): Promise<{
+  salesPatterns: {
+    daily: Array<{ period: string; revenue: number; orderCount: number; avgOrderValue: number }>
+    weekly: Array<{ period: string; revenue: number; orderCount: number; avgOrderValue: number }>
+    monthly: Array<{ period: string; revenue: number; orderCount: number; avgOrderValue: number }>
+  }
+  orderStatusBreakdown: Array<{ status: string; count: number; revenue: number; percentage: number }>
+  businessVolumeByCompany: Array<{ companyId: string; companyName: string; orderCount: number; revenue: number; avgOrderValue: number; percentage: number }>
+  topProducts: Array<{ productId: string; productName: string; quantitySold: number; revenue: number; orderCount: number }>
+  deliveryPerformance: {
+    avgDeliveryTime: number
+    bestDeliveryTime: number
+    slowestDeliveryTime: number
+    totalDeliveries: number
+    onTimeDeliveries: number
+    onTimePercentage: number
+  }
+  accountHealth?: {
+    repeatOrderRate: number
+    avgOrderValueTrend: number
+    orderFrequencyDays: number
+    accountSince: string
+    totalOrdersFromCompany: number
+    recentOrderTrend: 'growing' | 'stable' | 'declining'
+  }
+  summary: {
+    totalRevenue: number
+    totalOrders: number
+    avgOrderValue: number
+    totalCompanies: number
+    accountSince?: string
+    totalOrdersFromCompany?: number
+  }
+}> {
+  try {
+    let url = `/vendors/reports?vendorId=${vendorId}&type=full`
+    if (companyId) url += `&companyId=${companyId}`
+    if (startDate) url += `&startDate=${startDate.toISOString()}`
+    if (endDate) url += `&endDate=${endDate.toISOString()}`
+    return await fetchAPI<any>(url)
+  } catch (error) {
+    console.error('Error fetching vendor reports for company:', error)
+    throw error
+  }
+}
+
+/**
+ * Get vendor sales patterns with optional company and date range filtering
+ */
+export async function getVendorSalesPatternsForCompany(
+  vendorId: string, 
+  companyId: string | null = null,
+  period: 'daily' | 'weekly' | 'monthly' = 'monthly',
+  startDate?: Date | null,
+  endDate?: Date | null
+): Promise<Array<{ period: string; revenue: number; orderCount: number; avgOrderValue: number }>> {
+  try {
+    let url = `/vendors/reports?vendorId=${vendorId}&type=sales-patterns&period=${period}`
+    if (companyId) url += `&companyId=${companyId}`
+    if (startDate) url += `&startDate=${startDate.toISOString()}`
+    if (endDate) url += `&endDate=${endDate.toISOString()}`
+    const result = await fetchAPI<{ patterns: Array<{ period: string; revenue: number; orderCount: number; avgOrderValue: number }> }>(url)
+    return result?.patterns || []
+  } catch (error) {
+    console.error('Error fetching vendor sales patterns for company:', error)
+    throw error
+  }
+}
+
+/**
+ * Get vendor top products with optional company filtering
+ */
+export async function getVendorTopProducts(
+  vendorId: string, 
+  companyId: string | null = null
+): Promise<Array<{ productId: string; productName: string; quantitySold: number; revenue: number; orderCount: number }>> {
+  try {
+    const url = companyId 
+      ? `/vendors/reports?vendorId=${vendorId}&companyId=${companyId}&type=top-products`
+      : `/vendors/reports?vendorId=${vendorId}&type=top-products`
+    const result = await fetchAPI<{ topProducts: Array<{ productId: string; productName: string; quantitySold: number; revenue: number; orderCount: number }> }>(url)
+    return result?.topProducts || []
+  } catch (error) {
+    console.error('Error fetching vendor top products:', error)
+    throw error
+  }
+}
+
+/**
+ * Get vendor delivery performance with optional company filtering
+ */
+export async function getVendorDeliveryPerformance(
+  vendorId: string, 
+  companyId: string | null = null
+): Promise<{
+  avgDeliveryTime: number
+  bestDeliveryTime: number
+  slowestDeliveryTime: number
+  totalDeliveries: number
+  onTimeDeliveries: number
+  onTimePercentage: number
+}> {
+  try {
+    const url = companyId 
+      ? `/vendors/reports?vendorId=${vendorId}&companyId=${companyId}&type=delivery`
+      : `/vendors/reports?vendorId=${vendorId}&type=delivery`
+    const result = await fetchAPI<{ deliveryPerformance: any }>(url)
+    return result?.deliveryPerformance || {
+      avgDeliveryTime: 0,
+      bestDeliveryTime: 0,
+      slowestDeliveryTime: 0,
+      totalDeliveries: 0,
+      onTimeDeliveries: 0,
+      onTimePercentage: 0
+    }
+  } catch (error) {
+    console.error('Error fetching vendor delivery performance:', error)
+    throw error
+  }
+}
+
+/**
+ * Get vendor account health for a specific company
+ */
+export async function getVendorAccountHealth(
+  vendorId: string, 
+  companyId: string
+): Promise<{
+  repeatOrderRate: number
+  avgOrderValueTrend: number
+  orderFrequencyDays: number
+  accountSince: string
+  totalOrdersFromCompany: number
+  recentOrderTrend: 'growing' | 'stable' | 'declining'
+}> {
+  try {
+    const result = await fetchAPI<{ accountHealth: any }>(`/vendors/reports?vendorId=${vendorId}&companyId=${companyId}&type=account-health`)
+    return result?.accountHealth || {
+      repeatOrderRate: 0,
+      avgOrderValueTrend: 0,
+      orderFrequencyDays: 0,
+      accountSince: '',
+      totalOrdersFromCompany: 0,
+      recentOrderTrend: 'stable'
+    }
+  } catch (error) {
+    console.error('Error fetching vendor account health:', error)
+    throw error
+  }
+}
+
 // ========== BULK ORDER UPLOAD FUNCTIONS ==========
 
 /**

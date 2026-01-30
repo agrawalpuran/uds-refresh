@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
-import { Package, ShoppingCart, CheckCircle, Clock, Plus, Minus, ArrowRight } from 'lucide-react'
+import { Package, ShoppingCart, CheckCircle, Clock, Truck, Plus, Minus, ArrowRight } from 'lucide-react'
 import { getProductsForDesignation, getEmployeeByEmail, getOrdersByEmployee, getConsumedEligibility, getCompanyById, isCompanyAdmin, getLocationByAdminEmail, getBranchByAdminEmail, Uniform } from '@/lib/data-mongodb'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -326,6 +326,59 @@ export default function ConsumerDashboard() {
   
   // Show top 6 products for quick order
   const quickOrderProducts = companyProducts.slice(0, 6)
+
+  // Status helpers for Recent Orders (match My Orders page)
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'Delivered':
+        return <CheckCircle className="h-5 w-5 text-green-600" />
+      case 'Partially Delivered':
+        return <CheckCircle className="h-5 w-5 text-green-500" />
+      case 'Dispatched':
+      case 'Partially Dispatched':
+      case 'Awaiting Delivery':
+        return <Truck className="h-5 w-5 text-purple-600" />
+      case 'Awaiting Dispatch':
+      case 'Awaiting fulfilment':
+        return <Package className="h-5 w-5" style={{ color: company?.primaryColor || '#f76b1c' }} />
+      case 'Awaiting approval':
+        return <Clock className="h-5 w-5 text-yellow-600" />
+      default:
+        return <Clock className="h-5 w-5 text-gray-600" />
+    }
+  }
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'Delivered':
+        return { className: 'bg-green-100 text-green-700', style: undefined }
+      case 'Partially Delivered':
+        return { className: 'bg-gradient-to-r from-green-100 to-blue-100 text-green-700 border border-green-200', style: undefined }
+      case 'Dispatched':
+        return { className: 'bg-purple-100 text-purple-700', style: undefined }
+      case 'Partially Dispatched':
+      case 'Awaiting Delivery':
+        return { className: 'bg-blue-100 text-blue-600', style: undefined }
+      case 'Awaiting Dispatch':
+      case 'Awaiting fulfilment':
+        return company?.primaryColor
+          ? { className: '', style: { backgroundColor: `${company.primaryColor}20`, color: company.primaryColor } }
+          : { className: 'bg-orange-100 text-[#f76b1c]', style: undefined }
+      case 'Awaiting approval':
+        return { className: 'bg-yellow-100 text-yellow-700', style: undefined }
+      default:
+        return { className: 'bg-gray-100 text-gray-700', style: undefined }
+    }
+  }
+  const formatDateShort = (date: any) => {
+    if (!date) return 'N/A'
+    try {
+      const d = typeof date === 'string' ? new Date(date) : date
+      if (isNaN(d.getTime())) return 'N/A'
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    } catch {
+      return 'N/A'
+    }
+  }
   
   const getEligibilityForCategory = (category: string): number => {
     if (!currentEmployee) return 0
@@ -1211,36 +1264,63 @@ export default function ConsumerDashboard() {
               </Link>
             </div>
           ) : (
-            <div className="space-y-3">
-              {myOrders.map((order) => (
-                <div key={order.id} className="border border-neutral-200 rounded-md p-4 hover:bg-neutral-50 transition-colors">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h3 className="font-semibold text-neutral-900 text-sm">Order #{order.id}</h3>
-                      <p className="text-xs text-neutral-500 mt-0.5">{order.orderDate}</p>
-                    </div>
-                    <span className={`badge ${
-                      order.status === 'Delivered' ? 'badge-success' :
-                      order.status === 'Dispatched' ? 'badge-info' :
-                      order.status === 'Awaiting fulfilment' ? 'badge-info' :
-                      order.status === 'Awaiting approval' ? 'badge-warning' :
-                      'badge-neutral'
-                    }`}>
-                      {order.status}
-                    </span>
-                  </div>
-                  <div className="space-y-2">
-                    {order.items.map((item: any, idx: number) => (
-                      <div key={idx} className="flex justify-between text-sm">
-                        <span className="text-neutral-600">{item.uniformName} (Size: {item.size}) x {item.quantity}</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {myOrders.map((order) => {
+                const status = order.status || 'Awaiting approval'
+                const statusStyle = getStatusColor(status)
+                return (
+                  <div key={order.id} className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow flex flex-col">
+                    {/* Card header - matches My Orders */}
+                    <div className="bg-gradient-to-r from-gray-50 to-gray-100 px-4 py-3 border-b border-gray-200">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-start space-x-2 min-w-0">
+                          {getStatusIcon(status)}
+                          <div className="min-w-0">
+                            <Link href="/dashboard/consumer/orders" className="block">
+                              <h3 className="text-sm font-bold text-gray-900 truncate hover:underline" title={`Order #${order.id}`}>
+                                Order #{order.id?.length > 20 ? order.id.substring(order.id.length - 12) : order.id}
+                              </h3>
+                            </Link>
+                            <p className="text-xs text-gray-600">{formatDateShort(order.orderDate)}</p>
+                          </div>
+                        </div>
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs font-semibold whitespace-nowrap flex-shrink-0 ${statusStyle.className || ''}`}
+                          style={statusStyle.style}
+                        >
+                          {status}
+                        </span>
                       </div>
-                    ))}
+                    </div>
+                    {/* Items */}
+                    <div className="p-4 flex-1">
+                      {order.items && order.items.length > 0 ? (
+                        <div className="space-y-3">
+                          {order.items.map((item: any, idx: number) => (
+                            <div key={idx} className="bg-gray-50 rounded-lg p-3 border border-gray-100">
+                              <h4 className="text-sm font-semibold text-gray-900 line-clamp-1">{item.uniformName || 'Item'}</h4>
+                              <p className="text-xs text-gray-600">Size: {item.size || 'N/A'} • Qty: {item.quantity || 0}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-500">No items</p>
+                      )}
+                    </div>
+                    {/* Footer - matches My Orders */}
+                    <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 mt-auto">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-600">
+                          <span className="font-medium">Dispatch:</span> {order.dispatchLocation || 'direct'}
+                        </span>
+                        <span className="text-gray-600">
+                          {order.items?.length || 0} item{(order.items?.length || 0) !== 1 ? 's' : ''}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="mt-3 pt-3 border-t border-neutral-200">
-                    <span className="text-xs text-neutral-500">Dispatch to: {order.dispatchLocation}</span>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
           </div>

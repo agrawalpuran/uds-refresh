@@ -120,8 +120,19 @@ export async function POST(request: Request) {
       shipmentPackageId,
     })
 
-    // Get provider instance
-    const providerInstance = await getProviderInstance(provider.providerCode, undefined)
+    // Get provider instance (with decrypted authConfig from ShipmentServiceProvider)
+    let providerInstance: any
+    try {
+      providerInstance = await getProviderInstance(provider.providerCode, undefined)
+    } catch (authError: any) {
+      const msg = authError?.message || String(authError)
+      console.error('[shipping/estimate API] Provider init failed:', msg)
+      const isCreds = /credential|password|email|decrypt|auth|key|missing|required/i.test(msg)
+      const userMessage = isCreds
+        ? 'Shipping provider credentials are missing or could not be decrypted. Please ensure ENCRYPTION_KEY is correct and credentials are set in Super Admin → Shipping Provider (authConfig) or Company Shipping Provider settings.'
+        : msg
+      return NextResponse.json({ error: userMessage }, { status: 500 })
+    }
     if (!providerInstance) {
       return NextResponse.json({
         primary: null,

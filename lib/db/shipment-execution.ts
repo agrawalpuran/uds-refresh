@@ -623,6 +623,8 @@ export async function createApiShipment(
     return {
       success: true,
       shipmentId,
+      trackingNumber: result.trackingNumber || undefined,
+      courierAwbNumber: courierAwb?.trim() || undefined,
     }
   } catch (error: any) {
     console.error('[createApiShipment] Error:', error)
@@ -703,9 +705,9 @@ export async function fetchShipmentAWB(shipmentId: string): Promise<{ success: b
       }
     )
 
-    // Update Order with AWB
-    await Order.updateOne(
-      { pr_number: shipment.prNumber },
+    // Update Order with AWB (match by pr_number or id; Shipment.prNumber may be order.id when pr_number was empty)
+    await Order.updateMany(
+      { $or: [{ pr_number: shipment.prNumber }, { id: shipment.prNumber }] },
       {
         $set: {
           trackingNumber: awbNumber,

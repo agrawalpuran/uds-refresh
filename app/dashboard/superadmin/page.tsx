@@ -2248,14 +2248,12 @@ export default function SuperAdminPage() {
 
                     {/* Shipping Preference Display & Quick Toggle */}
                     <div className="mb-3 p-2 bg-gray-50 rounded border border-gray-200">
-                      <div>
+                      <div className="flex items-center justify-between mb-2">
                         <span className="text-xs font-semibold text-gray-700">Current Shipping Mode</span>
-                      </div>
-                      <div className="flex justify-center mb-2 -mt-2">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                        <span className={`inline-flex px-1.5 py-0.5 text-[10px] font-semibold rounded ${
                           ((company as any).shipmentRequestMode || 'MANUAL') === 'AUTOMATIC'
-                            ? 'bg-green-100 text-red-900'
-                            : 'bg-gray-100 text-red-900'
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-gray-200 text-gray-700'
                         }`}>
                           {(company as any).shipmentRequestMode || 'MANUAL'}
                         </span>

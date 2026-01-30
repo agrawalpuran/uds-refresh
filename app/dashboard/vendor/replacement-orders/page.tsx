@@ -1,10 +1,290 @@
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
-import { Search, CheckCircle, XCircle, Package, Truck, RefreshCw, Warehouse, Building2 } from 'lucide-react'
-import { useState, useEffect } from 'react'
+import { Search, CheckCircle, XCircle, Package, Truck, RefreshCw, Warehouse, Building2, TrendingUp, TrendingDown, Minus, AlertTriangle, Lightbulb, Clock, Timer, Activity } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
 import { getOrdersByVendor, updateOrderStatus, getCompaniesByVendor } from '@/lib/data-mongodb'
 import { maskEmployeeName, maskAddress } from '@/lib/utils/data-masking'
+
+// ============================================================================
+// INTELLIGENCE LAYER: CONFIGURATION & THRESHOLDS
+// ============================================================================
+const REPLACEMENT_INTELLIGENCE_CONFIG = {
+  // Processing thresholds
+  PENDING_HEALTHY: 3, // Healthy if pending < this
+  PENDING_WATCHLIST: 5, // Watchlist if >= this
+  PENDING_RISK: 10, // High risk if >= this
+  
+  // Resolution time thresholds (days from request to dispatch)
+  FULFILLMENT_FAST_DAYS: 2,
+  FULFILLMENT_NORMAL_DAYS: 5,
+  
+  // Spike detection
+  SPIKE_THRESHOLD_PERCENT: 50,
+  
+  // Minimum sample size
+  MIN_SAMPLE_SIZE: 3,
+  
+  // Time periods
+  CURRENT_WEEK_DAYS: 7,
+  PREVIOUS_WEEK_DAYS: 14,
+}
+
+// ============================================================================
+// INTELLIGENCE LAYER: TYPES
+// ============================================================================
+interface CompanyReplacementMetrics {
+  companyName: string
+  totalReplacements: number
+  pendingFulfillment: number
+  dispatched: number
+  delivered: number
+  avgFulfillmentDays: number | null
+  healthTag: 'Healthy' | 'Watchlist' | 'High Risk'
+}
+
+interface ReplacementIntelligence {
+  // Core metrics
+  totalReplacements: number
+  awaitingFulfillment: number
+  dispatched: number
+  delivered: number
+  
+  // Trend
+  replacementsThisWeek: number
+  replacementsLastWeek: number
+  weekOverWeekChange: number
+  trend: 'increasing' | 'decreasing' | 'stable'
+  hasSpikeDetected: boolean
+  
+  // Fulfillment time
+  avgFulfillmentDays: number | null
+  fulfillmentSpeed: 'fast' | 'normal' | 'slow'
+  
+  // Company comparison (Vendor specific)
+  companyMetrics: CompanyReplacementMetrics[]
+  highestVolumeCompany: CompanyReplacementMetrics | null
+  needsAttentionCompany: CompanyReplacementMetrics | null
+  
+  // Insights
+  insights: Array<{
+    type: 'warning' | 'info' | 'success'
+    message: string
+    priority: number
+  }>
+  
+  // Health tag
+  healthTag: 'Healthy' | 'Watchlist' | 'High Risk'
+}
+
+// ============================================================================
+// INTELLIGENCE LAYER: COMPUTATION FUNCTIONS
+// ============================================================================
+function computeReplacementIntelligence(orders: any[]): ReplacementIntelligence {
+  const now = new Date()
+  const oneWeekAgo = new Date(now.getTime() - (REPLACEMENT_INTELLIGENCE_CONFIG.CURRENT_WEEK_DAYS * 24 * 60 * 60 * 1000))
+  const twoWeeksAgo = new Date(now.getTime() - (REPLACEMENT_INTELLIGENCE_CONFIG.PREVIOUS_WEEK_DAYS * 24 * 60 * 60 * 1000))
+  
+  // Status breakdown
+  const awaitingFulfillment = orders.filter(o => 
+    o.status === 'Awaiting fulfilment' || o.status === 'Awaiting approval'
+  ).length
+  const dispatched = orders.filter(o => o.status === 'Dispatched').length
+  const delivered = orders.filter(o => o.status === 'Delivered').length
+  
+  // Week-over-week analysis
+  const replacementsThisWeek = orders.filter(o => {
+    const date = o.orderDate ? new Date(o.orderDate) : null
+    return date && date >= oneWeekAgo
+  }).length
+  
+  const replacementsLastWeek = orders.filter(o => {
+    const date = o.orderDate ? new Date(o.orderDate) : null
+    return date && date >= twoWeeksAgo && date < oneWeekAgo
+  }).length
+  
+  const weekOverWeekChange = replacementsLastWeek > 0
+    ? ((replacementsThisWeek - replacementsLastWeek) / replacementsLastWeek) * 100
+    : (replacementsThisWeek > 0 ? 100 : 0)
+  
+  const trend: 'increasing' | 'decreasing' | 'stable' = 
+    weekOverWeekChange > 20 ? 'increasing' :
+    weekOverWeekChange < -20 ? 'decreasing' : 'stable'
+  
+  const hasSpikeDetected = weekOverWeekChange >= REPLACEMENT_INTELLIGENCE_CONFIG.SPIKE_THRESHOLD_PERCENT &&
+    replacementsThisWeek >= REPLACEMENT_INTELLIGENCE_CONFIG.MIN_SAMPLE_SIZE
+  
+  // Fulfillment time calculation
+  const fulfilledOrders = orders.filter(o => 
+    (o.status === 'Dispatched' || o.status === 'Delivered') &&
+    o.orderDate && o.dispatchedDate
+  )
+  
+  let avgFulfillmentDays: number | null = null
+  if (fulfilledOrders.length > 0) {
+    const totalDays = fulfilledOrders.reduce((sum, o) => {
+      const created = new Date(o.orderDate)
+      const dispatched = new Date(o.dispatchedDate)
+      const days = (dispatched.getTime() - created.getTime()) / (24 * 60 * 60 * 1000)
+      return sum + Math.max(0, days)
+    }, 0)
+    avgFulfillmentDays = totalDays / fulfilledOrders.length
+  }
+  
+  const fulfillmentSpeed: 'fast' | 'normal' | 'slow' = 
+    avgFulfillmentDays === null ? 'normal' :
+    avgFulfillmentDays <= REPLACEMENT_INTELLIGENCE_CONFIG.FULFILLMENT_FAST_DAYS ? 'fast' :
+    avgFulfillmentDays <= REPLACEMENT_INTELLIGENCE_CONFIG.FULFILLMENT_NORMAL_DAYS ? 'normal' : 'slow'
+  
+  // Company metrics (Vendor-specific view)
+  const companyMap = new Map<string, { name: string; orders: any[] }>()
+  
+  orders.forEach(o => {
+    const companyId = o.companyId?.id || o.companyId || 'unknown'
+    const companyName = o.companyId?.name || o.companyName || 'Unknown Company'
+    
+    if (!companyMap.has(companyId)) {
+      companyMap.set(companyId, { name: companyName, orders: [] })
+    }
+    companyMap.get(companyId)!.orders.push(o)
+  })
+  
+  const companyMetrics: CompanyReplacementMetrics[] = Array.from(companyMap.entries())
+    .map(([_, data]) => {
+      const pending = data.orders.filter(o => 
+        o.status === 'Awaiting fulfilment' || o.status === 'Awaiting approval'
+      ).length
+      const companyDispatched = data.orders.filter(o => o.status === 'Dispatched').length
+      const companyDelivered = data.orders.filter(o => o.status === 'Delivered').length
+      
+      // Calculate company fulfillment time
+      const companyFulfilled = data.orders.filter(o => 
+        (o.status === 'Dispatched' || o.status === 'Delivered') && o.orderDate && o.dispatchedDate
+      )
+      let companyAvgDays: number | null = null
+      if (companyFulfilled.length > 0) {
+        const totalDays = companyFulfilled.reduce((sum, o) => {
+          const created = new Date(o.orderDate)
+          const dispatchedDate = new Date(o.dispatchedDate)
+          return sum + Math.max(0, (dispatchedDate.getTime() - created.getTime()) / (24 * 60 * 60 * 1000))
+        }, 0)
+        companyAvgDays = totalDays / companyFulfilled.length
+      }
+      
+      // Determine company health
+      let companyHealth: 'Healthy' | 'Watchlist' | 'High Risk' = 'Healthy'
+      if (pending >= REPLACEMENT_INTELLIGENCE_CONFIG.PENDING_RISK) {
+        companyHealth = 'High Risk'
+      } else if (pending >= REPLACEMENT_INTELLIGENCE_CONFIG.PENDING_WATCHLIST || 
+                 (companyAvgDays && companyAvgDays > REPLACEMENT_INTELLIGENCE_CONFIG.FULFILLMENT_NORMAL_DAYS)) {
+        companyHealth = 'Watchlist'
+      }
+      
+      return {
+        companyName: data.name,
+        totalReplacements: data.orders.length,
+        pendingFulfillment: pending,
+        dispatched: companyDispatched,
+        delivered: companyDelivered,
+        avgFulfillmentDays: companyAvgDays,
+        healthTag: companyHealth
+      }
+    })
+    .sort((a, b) => b.totalReplacements - a.totalReplacements)
+  
+  const highestVolumeCompany = companyMetrics.length > 0 ? companyMetrics[0] : null
+  const needsAttentionCompany = companyMetrics.find(c => c.healthTag === 'High Risk') ||
+    companyMetrics.find(c => c.healthTag === 'Watchlist') || null
+  
+  // Generate insights
+  const insights: Array<{ type: 'warning' | 'info' | 'success'; message: string; priority: number }> = []
+  
+  // Spike detection
+  if (hasSpikeDetected) {
+    insights.push({
+      type: 'warning',
+      message: `Replacement volume spiked ${weekOverWeekChange.toFixed(0)}% – check for quality issues`,
+      priority: 1
+    })
+  }
+  
+  // Pending backlog
+  if (awaitingFulfillment >= REPLACEMENT_INTELLIGENCE_CONFIG.PENDING_RISK) {
+    insights.push({
+      type: 'warning',
+      message: `${awaitingFulfillment} replacements awaiting fulfillment – backlog critical`,
+      priority: 1
+    })
+  } else if (awaitingFulfillment >= REPLACEMENT_INTELLIGENCE_CONFIG.PENDING_WATCHLIST) {
+    insights.push({
+      type: 'warning',
+      message: `${awaitingFulfillment} replacements pending – monitor fulfillment capacity`,
+      priority: 2
+    })
+  }
+  
+  // Fulfillment speed
+  if (fulfillmentSpeed === 'slow' && fulfilledOrders.length >= 3) {
+    insights.push({
+      type: 'warning',
+      message: `Avg fulfillment time (${avgFulfillmentDays?.toFixed(1)} days) exceeds target`,
+      priority: 2
+    })
+  } else if (fulfillmentSpeed === 'fast' && fulfilledOrders.length >= 5) {
+    insights.push({
+      type: 'success',
+      message: `Fast fulfillment: ${avgFulfillmentDays?.toFixed(1)} days average turnaround`,
+      priority: 3
+    })
+  }
+  
+  // Company-specific insight
+  if (needsAttentionCompany && needsAttentionCompany.healthTag === 'High Risk') {
+    insights.push({
+      type: 'warning',
+      message: `${needsAttentionCompany.companyName} has ${needsAttentionCompany.pendingFulfillment} pending – prioritize`,
+      priority: 1
+    })
+  }
+  
+  // Stability insight
+  if (trend === 'stable' && orders.length >= 5 && awaitingFulfillment < 3) {
+    insights.push({
+      type: 'success',
+      message: 'Replacement volume is stable and fulfillment is on track',
+      priority: 3
+    })
+  }
+  
+  insights.sort((a, b) => a.priority - b.priority)
+  
+  // Determine overall health tag
+  let healthTag: 'Healthy' | 'Watchlist' | 'High Risk' = 'Healthy'
+  if (hasSpikeDetected || awaitingFulfillment >= REPLACEMENT_INTELLIGENCE_CONFIG.PENDING_RISK || fulfillmentSpeed === 'slow') {
+    healthTag = 'High Risk'
+  } else if (awaitingFulfillment >= REPLACEMENT_INTELLIGENCE_CONFIG.PENDING_WATCHLIST || trend === 'increasing') {
+    healthTag = 'Watchlist'
+  }
+  
+  return {
+    totalReplacements: orders.length,
+    awaitingFulfillment,
+    dispatched,
+    delivered,
+    replacementsThisWeek,
+    replacementsLastWeek,
+    weekOverWeekChange,
+    trend,
+    hasSpikeDetected,
+    avgFulfillmentDays,
+    fulfillmentSpeed,
+    companyMetrics,
+    highestVolumeCompany,
+    needsAttentionCompany,
+    insights: insights.slice(0, 3),
+    healthTag
+  }
+}
 
 interface Warehouse {
   warehouseRefId: string
@@ -142,6 +422,84 @@ export default function VendorReplacementOrdersPage() {
     warehouse: null,
   })
   const [submittingManualShipment, setSubmittingManualShipment] = useState(false)
+
+  const handleSubmitManualShipment = async () => {
+    if (!manualShipmentForm.hasValidAddress || !manualShipmentForm.deliveryAddress) {
+      alert('Cannot create shipment: Delivery address is missing or invalid. Please contact support.')
+      return
+    }
+    
+    if (!manualShipmentForm.dispatchedDate || 
+        (manualShipmentForm.modeOfTransport === 'COURIER' && !manualShipmentForm.courierServiceProvider)) {
+      alert('Please fill all required fields')
+      return
+    }
+
+    try {
+      setSubmittingManualShipment(true)
+      const { getVendorId } = typeof window !== 'undefined'
+        ? await import('@/lib/utils/auth-storage')
+        : { getVendorId: () => null }
+
+      // SECURITY FIX: No localStorage fallback
+      const storedVendorId = getVendorId?.() || null
+
+      if (!storedVendorId) {
+        throw new Error('Vendor ID not found. Please log in again.')
+      }
+
+      const selectedWarehouse = warehouses.find(w => 
+        w.warehouseName === manualShipmentForm.warehouse?.warehouseName
+      )
+
+      const response = await fetch('/api/prs/manual-shipment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vendorId: storedVendorId,
+          poNumber: null, // Replacement orders don't have PO numbers
+          warehouseRefId: selectedWarehouse?.warehouseRefId || null,
+          prs: [{
+            prId: manualShipmentForm.orderId,
+            prNumber: manualShipmentForm.orderId, // Use orderId as PR number for replacement orders
+            modeOfTransport: manualShipmentForm.modeOfTransport,
+            courierServiceProvider: manualShipmentForm.courierServiceProvider || undefined,
+            dispatchedDate: manualShipmentForm.dispatchedDate,
+            shipmentNumber: manualShipmentForm.shipmentNumber || undefined,
+          }],
+        }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to create manual shipment')
+      }
+
+      const result = await response.json()
+      alert(`Successfully created shipment!`)
+      
+      setManualShipmentForm({
+        show: false,
+        orderId: null,
+        employeeName: '',
+        employeeEmail: '',
+        deliveryAddress: null,
+        hasValidAddress: false,
+        modeOfTransport: 'COURIER',
+        courierServiceProvider: '',
+        dispatchedDate: new Date().toISOString().split('T')[0],
+        shipmentNumber: '',
+        warehouse: null,
+      })
+      await loadOrders()
+    } catch (error: any) {
+      console.error('Error creating manual shipment:', error)
+      alert(`Failed to create manual shipment: ${error?.message || 'Unknown error'}`)
+    } finally {
+      setSubmittingManualShipment(false)
+    }
+  }
+
   const [shippingEstimation, setShippingEstimation] = useState<{
     primary: { courier: string; courierName?: string; serviceable: boolean; estimatedDays?: string; estimatedCost?: number; message?: string } | null
     secondary: { courier: string; courierName?: string; serviceable: boolean; estimatedDays?: string; estimatedCost?: number; message?: string } | null
@@ -831,6 +1189,13 @@ export default function VendorReplacementOrdersPage() {
     order.employeeName?.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
+  // ============================================================================
+  // INTELLIGENCE LAYER: Compute metrics
+  // ============================================================================
+  const intelligence = useMemo(() => {
+    return computeReplacementIntelligence(allOrders)
+  }, [allOrders])
+
   return (
     <DashboardLayout actorType="vendor">
       <div>
@@ -840,6 +1205,182 @@ export default function VendorReplacementOrdersPage() {
             <p className="text-gray-600 mt-2">View and fulfill replacement orders for returned items</p>
           </div>
         </div>
+
+        {/* Intelligence Panel */}
+        {allOrders.length > 0 && (
+          <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+            {/* Metrics Row */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+              {/* Total Replacements */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-gray-500">Total Replacements</span>
+                  <div className={`flex items-center gap-0.5 text-xs font-medium ${
+                    intelligence.weekOverWeekChange > 20 ? 'text-red-600' :
+                    intelligence.weekOverWeekChange < -20 ? 'text-green-600' : 'text-gray-500'
+                  }`}>
+                    {intelligence.weekOverWeekChange > 20 ? <TrendingUp className="h-3 w-3" /> :
+                     intelligence.weekOverWeekChange < -20 ? <TrendingDown className="h-3 w-3" /> :
+                     <Minus className="h-3 w-3" />}
+                    <span>{Math.abs(intelligence.weekOverWeekChange).toFixed(0)}%</span>
+                  </div>
+                </div>
+                <span className="text-2xl font-bold text-gray-900">{intelligence.totalReplacements}</span>
+                <p className="text-xs text-gray-500 mt-1">this week: {intelligence.replacementsThisWeek}</p>
+              </div>
+
+              {/* Awaiting Fulfillment */}
+              <div className={`rounded-lg p-4 ${
+                intelligence.awaitingFulfillment >= 5 ? 'bg-red-50' : 
+                intelligence.awaitingFulfillment >= 3 ? 'bg-yellow-50' : 'bg-gray-50'
+              }`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className={`text-xs font-medium ${
+                    intelligence.awaitingFulfillment >= 5 ? 'text-red-600' :
+                    intelligence.awaitingFulfillment >= 3 ? 'text-yellow-600' : 'text-gray-500'
+                  }`}>Pending</span>
+                  <Clock className={`h-3 w-3 ${
+                    intelligence.awaitingFulfillment >= 5 ? 'text-red-500' :
+                    intelligence.awaitingFulfillment >= 3 ? 'text-yellow-500' : 'text-gray-400'
+                  }`} />
+                </div>
+                <span className={`text-2xl font-bold ${
+                  intelligence.awaitingFulfillment >= 5 ? 'text-red-700' :
+                  intelligence.awaitingFulfillment >= 3 ? 'text-yellow-700' : 'text-gray-900'
+                }`}>{intelligence.awaitingFulfillment}</span>
+                <p className="text-xs text-gray-500 mt-1">awaiting fulfillment</p>
+              </div>
+
+              {/* Fulfillment Time */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-gray-500">Avg Fulfillment</span>
+                  <Timer className="h-3 w-3 text-gray-400" />
+                </div>
+                <span className={`text-xl font-bold ${
+                  intelligence.fulfillmentSpeed === 'fast' ? 'text-green-600' :
+                  intelligence.fulfillmentSpeed === 'slow' ? 'text-red-600' : 'text-gray-900'
+                }`}>
+                  {intelligence.avgFulfillmentDays !== null 
+                    ? `${intelligence.avgFulfillmentDays.toFixed(1)}d`
+                    : 'N/A'}
+                </span>
+                <p className={`text-xs mt-1 ${
+                  intelligence.fulfillmentSpeed === 'fast' ? 'text-green-600' :
+                  intelligence.fulfillmentSpeed === 'slow' ? 'text-red-600' : 'text-gray-500'
+                }`}>
+                  {intelligence.fulfillmentSpeed === 'fast' ? '✓ Fast' :
+                   intelligence.fulfillmentSpeed === 'slow' ? '⚠ Slow' : 'Normal'}
+                </p>
+              </div>
+
+              {/* Dispatched */}
+              <div className="bg-blue-50 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-blue-600">In Transit</span>
+                  <Truck className="h-3 w-3 text-blue-500" />
+                </div>
+                <span className="text-2xl font-bold text-blue-700">{intelligence.dispatched}</span>
+                <p className="text-xs text-gray-500 mt-1">dispatched</p>
+              </div>
+
+              {/* Health Status */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-gray-500">Operations Health</span>
+                </div>
+                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-semibold ${
+                  intelligence.healthTag === 'Healthy' ? 'bg-green-100 text-green-700' :
+                  intelligence.healthTag === 'Watchlist' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                }`}>
+                  {intelligence.healthTag}
+                </span>
+                {intelligence.hasSpikeDetected && (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3" /> Spike detected
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Company Comparison (if multiple companies) */}
+            {intelligence.companyMetrics.length > 1 && (
+              <div className="border-t border-gray-100 pt-4 mb-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="h-4 w-4 text-gray-500" />
+                    <span className="text-sm font-semibold text-gray-700">Replacements by Company</span>
+                  </div>
+                  <span className="text-xs text-gray-500">{intelligence.companyMetrics.length} companies</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="text-left py-2 px-2 font-semibold text-gray-600">Company</th>
+                        <th className="text-center py-2 px-2 font-semibold text-gray-600">Total</th>
+                        <th className="text-center py-2 px-2 font-semibold text-gray-600">Pending</th>
+                        <th className="text-center py-2 px-2 font-semibold text-gray-600">Avg Fulfillment</th>
+                        <th className="text-center py-2 px-2 font-semibold text-gray-600">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {intelligence.companyMetrics.slice(0, 5).map((company, idx) => (
+                        <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50">
+                          <td className="py-2 px-2 font-medium text-gray-900 truncate max-w-[150px]">{company.companyName}</td>
+                          <td className="py-2 px-2 text-center text-gray-700">{company.totalReplacements}</td>
+                          <td className={`py-2 px-2 text-center font-semibold ${
+                            company.pendingFulfillment >= 5 ? 'text-red-600' :
+                            company.pendingFulfillment >= 3 ? 'text-yellow-600' : 'text-gray-600'
+                          }`}>{company.pendingFulfillment}</td>
+                          <td className="py-2 px-2 text-center text-gray-600">
+                            {company.avgFulfillmentDays !== null 
+                              ? `${company.avgFulfillmentDays.toFixed(1)}d`
+                              : '-'}
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                              company.healthTag === 'Healthy' ? 'bg-green-100 text-green-700' :
+                              company.healthTag === 'Watchlist' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                            }`}>
+                              {company.healthTag}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Insights */}
+            {intelligence.insights.length > 0 && (
+              <div className="border-t border-gray-100 pt-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Lightbulb className="h-4 w-4 text-amber-500" />
+                  <span className="text-sm font-semibold text-gray-700">Insights</span>
+                </div>
+                <div className="space-y-2">
+                  {intelligence.insights.map((insight, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex items-start gap-2 p-2 rounded-lg text-xs ${
+                        insight.type === 'warning' ? 'bg-red-50 text-red-700' :
+                        insight.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'
+                      }`}
+                    >
+                      {insight.type === 'warning' && <AlertTriangle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />}
+                      {insight.type === 'success' && <CheckCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />}
+                      {insight.type === 'info' && <Lightbulb className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />}
+                      <span>{insight.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Search and Filter */}
         <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
@@ -1370,6 +1911,12 @@ export default function VendorReplacementOrdersPage() {
                         type="text"
                         value={manualShipmentForm.shipmentNumber}
                         onChange={(e) => setManualShipmentForm(prev => ({ ...prev, shipmentNumber: e.target.value }))}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !submittingManualShipment && manualShipmentForm.hasValidAddress) {
+                            e.preventDefault()
+                            handleSubmitManualShipment()
+                          }
+                        }}
                         placeholder="AWB / Docket Number"
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       />
@@ -1408,82 +1955,7 @@ export default function VendorReplacementOrdersPage() {
                   Cancel
                 </button>
                 <button
-                  onClick={async () => {
-                    if (!manualShipmentForm.hasValidAddress || !manualShipmentForm.deliveryAddress) {
-                      alert('Cannot create shipment: Delivery address is missing or invalid. Please contact support.')
-                      return
-                    }
-                    
-                    if (!manualShipmentForm.dispatchedDate || 
-                        (manualShipmentForm.modeOfTransport === 'COURIER' && !manualShipmentForm.courierServiceProvider)) {
-                      alert('Please fill all required fields')
-                      return
-                    }
-
-                    try {
-                      setSubmittingManualShipment(true)
-                      const { getVendorId } = typeof window !== 'undefined'
-                        ? await import('@/lib/utils/auth-storage')
-                        : { getVendorId: () => null }
-
-                      // SECURITY FIX: No localStorage fallback
-                      const storedVendorId = getVendorId?.() || null
-
-                      if (!storedVendorId) {
-                        throw new Error('Vendor ID not found. Please log in again.')
-                      }
-
-                      const selectedWarehouse = warehouses.find(w => 
-                        w.warehouseName === manualShipmentForm.warehouse?.warehouseName
-                      )
-
-                      const response = await fetch('/api/prs/manual-shipment', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                          vendorId: storedVendorId,
-                          poNumber: null, // Replacement orders don't have PO numbers
-                          warehouseRefId: selectedWarehouse?.warehouseRefId || null,
-                          prs: [{
-                            prId: manualShipmentForm.orderId,
-                            prNumber: manualShipmentForm.orderId, // Use orderId as PR number for replacement orders
-                            modeOfTransport: manualShipmentForm.modeOfTransport,
-                            courierServiceProvider: manualShipmentForm.courierServiceProvider || undefined,
-                            dispatchedDate: manualShipmentForm.dispatchedDate,
-                            shipmentNumber: manualShipmentForm.shipmentNumber || undefined,
-                          }],
-                        }),
-                      })
-
-                      if (!response.ok) {
-                        const error = await response.json()
-                        throw new Error(error.error || 'Failed to create manual shipment')
-                      }
-
-                      const result = await response.json()
-                      alert(`Successfully created shipment!`)
-                      
-                      setManualShipmentForm({
-                        show: false,
-                        orderId: null,
-                        employeeName: '',
-                        employeeEmail: '',
-                        deliveryAddress: null,
-                        hasValidAddress: false,
-                        modeOfTransport: 'COURIER',
-                        courierServiceProvider: '',
-                        dispatchedDate: new Date().toISOString().split('T')[0],
-                        shipmentNumber: '',
-                        warehouse: null,
-                      })
-                      await loadOrders()
-                    } catch (error: any) {
-                      console.error('Error creating manual shipment:', error)
-                      alert(`Failed to create manual shipment: ${error?.message || 'Unknown error'}`)
-                    } finally {
-                      setSubmittingManualShipment(false)
-                    }
-                  }}
+                  onClick={handleSubmitManualShipment}
                   disabled={submittingManualShipment || !manualShipmentForm.hasValidAddress}
                   className="flex-1 bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
                 >

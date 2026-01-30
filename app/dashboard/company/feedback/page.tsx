@@ -1,9 +1,304 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
-import { Star, MessageSquare, Search, Filter, ChevronDown, ChevronRight, Building2 } from 'lucide-react'
+import { Star, MessageSquare, Search, Filter, ChevronDown, ChevronRight, Building2, TrendingUp, TrendingDown, Minus, AlertTriangle, Lightbulb, Activity, Award, Users } from 'lucide-react'
 import { getProductFeedback, getCompanyById, getLocationByAdminEmail } from '@/lib/data-mongodb'
+
+// ============================================================================
+// INTELLIGENCE LAYER: CONFIGURATION & THRESHOLDS
+// ============================================================================
+const INTELLIGENCE_CONFIG = {
+  // Rating thresholds
+  RATING_DROP_ALERT_THRESHOLD: 10, // % drop triggers warning
+  LOW_RATING_THRESHOLD: 3.0, // Below this is considered poor
+  NEGATIVE_RATING_THRESHOLD: 30, // % of 1-2 star ratings triggers warning
+  
+  // Volatility detection (standard deviation)
+  VOLATILITY_STABLE_THRESHOLD: 0.5,
+  VOLATILITY_MODERATE_THRESHOLD: 1.0,
+  
+  // Time periods
+  RECENT_PERIOD_DAYS: 7,
+  COMPARISON_PERIOD_DAYS: 30,
+}
+
+// ============================================================================
+// INTELLIGENCE LAYER: TYPES
+// ============================================================================
+interface VendorIntelligence {
+  vendorName: string
+  avgRating: number
+  totalFeedback: number
+  ratingTrend30Days: number
+  negativeRatingPercentage: number
+  healthTag: 'Healthy' | 'Watchlist' | 'At Risk'
+}
+
+interface CompanyFeedbackIntelligence {
+  // Core metrics
+  avgRating: number
+  totalFeedback: number
+  ratingDistribution: { [key: number]: number }
+  
+  // Trends
+  avgRatingLast7Days: number
+  avgRatingLast30Days: number
+  ratingTrend7Days: number
+  ratingTrend30Days: number
+  volumeTrend: 'increasing' | 'decreasing' | 'stable'
+  
+  // Volatility
+  volatility: 'stable' | 'moderate' | 'fluctuating'
+  standardDeviation: number
+  
+  // Quality indicators
+  negativeRatingPercentage: number
+  hasQualityRisk: boolean
+  
+  // Vendor comparison (Company Admin specific)
+  vendorComparison: VendorIntelligence[]
+  bestVendor: VendorIntelligence | null
+  worstVendor: VendorIntelligence | null
+  
+  // Insights
+  insights: Array<{
+    type: 'warning' | 'info' | 'success'
+    message: string
+    priority: number
+  }>
+  
+  // Health tag
+  healthTag: 'Healthy' | 'Watchlist' | 'At Risk'
+}
+
+// ============================================================================
+// INTELLIGENCE LAYER: COMPUTATION FUNCTIONS
+// ============================================================================
+function computeCompanyFeedbackIntelligence(feedbackData: any[]): CompanyFeedbackIntelligence {
+  const now = new Date()
+  const sevenDaysAgo = new Date(now.getTime() - (INTELLIGENCE_CONFIG.RECENT_PERIOD_DAYS * 24 * 60 * 60 * 1000))
+  const thirtyDaysAgo = new Date(now.getTime() - (INTELLIGENCE_CONFIG.COMPARISON_PERIOD_DAYS * 24 * 60 * 60 * 1000))
+  const previousThirtyDaysStart = new Date(thirtyDaysAgo.getTime() - (INTELLIGENCE_CONFIG.COMPARISON_PERIOD_DAYS * 24 * 60 * 60 * 1000))
+  
+  // Rating distribution
+  const ratingDistribution: { [key: number]: number } = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+  feedbackData.forEach(fb => {
+    if (fb.rating >= 1 && fb.rating <= 5) {
+      ratingDistribution[fb.rating]++
+    }
+  })
+  
+  // Average rating
+  const avgRating = feedbackData.length > 0
+    ? feedbackData.reduce((sum, fb) => sum + (fb.rating || 0), 0) / feedbackData.length
+    : 0
+  
+  // Recent period ratings
+  const last7DaysFeedback = feedbackData.filter(fb => {
+    const date = fb.createdAt ? new Date(fb.createdAt) : null
+    return date && date >= sevenDaysAgo
+  })
+  const last30DaysFeedback = feedbackData.filter(fb => {
+    const date = fb.createdAt ? new Date(fb.createdAt) : null
+    return date && date >= thirtyDaysAgo
+  })
+  const previous30DaysFeedback = feedbackData.filter(fb => {
+    const date = fb.createdAt ? new Date(fb.createdAt) : null
+    return date && date >= previousThirtyDaysStart && date < thirtyDaysAgo
+  })
+  
+  const avgRatingLast7Days = last7DaysFeedback.length > 0
+    ? last7DaysFeedback.reduce((sum, fb) => sum + (fb.rating || 0), 0) / last7DaysFeedback.length
+    : avgRating
+  
+  const avgRatingLast30Days = last30DaysFeedback.length > 0
+    ? last30DaysFeedback.reduce((sum, fb) => sum + (fb.rating || 0), 0) / last30DaysFeedback.length
+    : avgRating
+  
+  const avgRatingPrevious30Days = previous30DaysFeedback.length > 0
+    ? previous30DaysFeedback.reduce((sum, fb) => sum + (fb.rating || 0), 0) / previous30DaysFeedback.length
+    : avgRatingLast30Days
+  
+  // Trend calculations
+  const ratingTrend7Days = avgRatingLast30Days > 0
+    ? ((avgRatingLast7Days - avgRatingLast30Days) / avgRatingLast30Days) * 100
+    : 0
+  const ratingTrend30Days = avgRatingPrevious30Days > 0
+    ? ((avgRatingLast30Days - avgRatingPrevious30Days) / avgRatingPrevious30Days) * 100
+    : 0
+  
+  // Volume trend
+  const volumeTrend: 'increasing' | 'decreasing' | 'stable' = 
+    last30DaysFeedback.length > previous30DaysFeedback.length * 1.1 ? 'increasing' :
+    last30DaysFeedback.length < previous30DaysFeedback.length * 0.9 ? 'decreasing' : 'stable'
+  
+  // Volatility
+  const ratings = feedbackData.map(fb => fb.rating || 0).filter(r => r > 0)
+  const mean = ratings.length > 0 ? ratings.reduce((a, b) => a + b, 0) / ratings.length : 0
+  const squaredDiffs = ratings.map(r => Math.pow(r - mean, 2))
+  const standardDeviation = ratings.length > 1
+    ? Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / (ratings.length - 1))
+    : 0
+  
+  const volatility: 'stable' | 'moderate' | 'fluctuating' = 
+    standardDeviation <= INTELLIGENCE_CONFIG.VOLATILITY_STABLE_THRESHOLD ? 'stable' :
+    standardDeviation <= INTELLIGENCE_CONFIG.VOLATILITY_MODERATE_THRESHOLD ? 'moderate' : 'fluctuating'
+  
+  // Negative rating percentage
+  const negativeCount = ratingDistribution[1] + ratingDistribution[2]
+  const negativeRatingPercentage = feedbackData.length > 0
+    ? (negativeCount / feedbackData.length) * 100
+    : 0
+  
+  const hasQualityRisk = negativeRatingPercentage >= INTELLIGENCE_CONFIG.NEGATIVE_RATING_THRESHOLD &&
+    feedbackData.length >= 5
+  
+  // ============================================================================
+  // VENDOR COMPARISON (Company Admin specific feature)
+  // ============================================================================
+  const vendorMap = new Map<string, { name: string; ratings: number[]; feedback: any[] }>()
+  
+  feedbackData.forEach(fb => {
+    const vendorId = fb.vendorId?._id || fb.vendorId?.id || fb.vendorId || 'unknown'
+    const vendorName = fb.vendorId?.name || 'Unknown Vendor'
+    
+    if (!vendorMap.has(vendorId)) {
+      vendorMap.set(vendorId, { name: vendorName, ratings: [], feedback: [] })
+    }
+    
+    const vendorData = vendorMap.get(vendorId)!
+    if (fb.rating) {
+      vendorData.ratings.push(fb.rating)
+    }
+    vendorData.feedback.push(fb)
+  })
+  
+  const vendorComparison: VendorIntelligence[] = Array.from(vendorMap.entries())
+    .filter(([_, data]) => data.ratings.length > 0)
+    .map(([_, data]) => {
+      const vendorAvg = data.ratings.reduce((a, b) => a + b, 0) / data.ratings.length
+      const vendorNegative = data.ratings.filter(r => r <= 2).length / data.ratings.length * 100
+      
+      // Calculate vendor trend
+      const vendorLast30 = data.feedback.filter(fb => {
+        const date = fb.createdAt ? new Date(fb.createdAt) : null
+        return date && date >= thirtyDaysAgo
+      })
+      const vendorPrev30 = data.feedback.filter(fb => {
+        const date = fb.createdAt ? new Date(fb.createdAt) : null
+        return date && date >= previousThirtyDaysStart && date < thirtyDaysAgo
+      })
+      
+      const last30Avg = vendorLast30.length > 0
+        ? vendorLast30.reduce((sum, fb) => sum + (fb.rating || 0), 0) / vendorLast30.length
+        : vendorAvg
+      const prev30Avg = vendorPrev30.length > 0
+        ? vendorPrev30.reduce((sum, fb) => sum + (fb.rating || 0), 0) / vendorPrev30.length
+        : last30Avg
+      
+      const vendorTrend = prev30Avg > 0 ? ((last30Avg - prev30Avg) / prev30Avg) * 100 : 0
+      
+      // Determine vendor health
+      let vendorHealth: 'Healthy' | 'Watchlist' | 'At Risk' = 'Healthy'
+      if (vendorNegative >= 30 || vendorAvg < 2.5) {
+        vendorHealth = 'At Risk'
+      } else if (vendorNegative >= 20 || vendorAvg < 3.0 || vendorTrend < -15) {
+        vendorHealth = 'Watchlist'
+      }
+      
+      return {
+        vendorName: data.name,
+        avgRating: vendorAvg,
+        totalFeedback: data.ratings.length,
+        ratingTrend30Days: vendorTrend,
+        negativeRatingPercentage: vendorNegative,
+        healthTag: vendorHealth
+      }
+    })
+    .sort((a, b) => b.avgRating - a.avgRating)
+  
+  const bestVendor = vendorComparison.length > 0 ? vendorComparison[0] : null
+  const worstVendor = vendorComparison.length > 1 ? vendorComparison[vendorComparison.length - 1] : null
+  
+  // Generate insights
+  const insights: Array<{ type: 'warning' | 'info' | 'success'; message: string; priority: number }> = []
+  
+  // Vendor-specific insights for Company Admin
+  if (worstVendor && worstVendor.healthTag === 'At Risk') {
+    insights.push({
+      type: 'warning',
+      message: `${worstVendor.vendorName} has ${worstVendor.negativeRatingPercentage.toFixed(0)}% negative ratings – review required`,
+      priority: 1
+    })
+  }
+  
+  if (bestVendor && bestVendor.avgRating >= 4.5 && bestVendor.totalFeedback >= 5) {
+    insights.push({
+      type: 'success',
+      message: `${bestVendor.vendorName} is top performer with ${bestVendor.avgRating.toFixed(1)} avg rating`,
+      priority: 2
+    })
+  }
+  
+  // Rating drop warning
+  if (ratingTrend30Days < -INTELLIGENCE_CONFIG.RATING_DROP_ALERT_THRESHOLD) {
+    insights.push({
+      type: 'warning',
+      message: `Overall rating dropped ${Math.abs(ratingTrend30Days).toFixed(0)}% compared to previous month`,
+      priority: 1
+    })
+  }
+  
+  // Quality risk warning
+  if (hasQualityRisk) {
+    insights.push({
+      type: 'warning',
+      message: `${negativeRatingPercentage.toFixed(0)}% of all feedback is negative – quality intervention needed`,
+      priority: 1
+    })
+  }
+  
+  // Stability insight
+  if (volatility === 'stable' && feedbackData.length >= 10) {
+    insights.push({
+      type: 'success',
+      message: 'Product quality ratings are consistent across vendors',
+      priority: 3
+    })
+  }
+  
+  insights.sort((a, b) => a.priority - b.priority)
+  
+  // Determine overall health tag
+  let healthTag: 'Healthy' | 'Watchlist' | 'At Risk' = 'Healthy'
+  if (hasQualityRisk || avgRating < 2.5) {
+    healthTag = 'At Risk'
+  } else if (volatility === 'fluctuating' || avgRating < INTELLIGENCE_CONFIG.LOW_RATING_THRESHOLD || 
+             ratingTrend30Days < -INTELLIGENCE_CONFIG.RATING_DROP_ALERT_THRESHOLD) {
+    healthTag = 'Watchlist'
+  }
+  
+  return {
+    avgRating,
+    totalFeedback: feedbackData.length,
+    ratingDistribution,
+    avgRatingLast7Days,
+    avgRatingLast30Days,
+    ratingTrend7Days,
+    ratingTrend30Days,
+    volumeTrend,
+    volatility,
+    standardDeviation,
+    negativeRatingPercentage,
+    hasQualityRisk,
+    vendorComparison,
+    bestVendor,
+    worstVendor,
+    insights: insights.slice(0, 3),
+    healthTag
+  }
+}
 
 export default function CompanyFeedbackPage() {
   console.log('[CompanyFeedbackPage] Component mounted/rendered')
@@ -162,6 +457,13 @@ export default function CompanyFeedbackPage() {
     return matchesSearch && matchesRating && matchesVendor
   })
 
+  // ============================================================================
+  // INTELLIGENCE LAYER: Compute metrics for Company Admin
+  // ============================================================================
+  const intelligence = useMemo(() => {
+    return computeCompanyFeedbackIntelligence(feedback)
+  }, [feedback])
+
   // Group feedback by vendor
   const groupedFeedback = filteredFeedback.reduce((acc, fb) => {
     const vendorName = fb.vendorId?.name || 'Unknown Vendor'
@@ -245,6 +547,210 @@ export default function CompanyFeedbackPage() {
           <h1 className="text-3xl font-bold text-gray-900">Product Feedback</h1>
           <p className="text-gray-600 mt-2">View feedback submitted by employees for delivered products</p>
         </div>
+
+        {/* Intelligence Panel */}
+        {feedback.length > 0 && (
+          <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+            {/* Metrics Row */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+              {/* Average Rating with Trend */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-gray-500">Avg Rating</span>
+                  <div className={`flex items-center gap-0.5 text-xs font-medium ${
+                    intelligence.ratingTrend30Days > 5 ? 'text-green-600' :
+                    intelligence.ratingTrend30Days < -5 ? 'text-red-600' : 'text-gray-500'
+                  }`}>
+                    {intelligence.ratingTrend30Days > 5 ? <TrendingUp className="h-3 w-3" /> :
+                     intelligence.ratingTrend30Days < -5 ? <TrendingDown className="h-3 w-3" /> :
+                     <Minus className="h-3 w-3" />}
+                    <span>{Math.abs(intelligence.ratingTrend30Days).toFixed(0)}%</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl font-bold text-gray-900">{intelligence.avgRating.toFixed(1)}</span>
+                  <div className="flex items-center">
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <Star
+                        key={star}
+                        className={`h-3 w-3 ${
+                          star <= Math.round(intelligence.avgRating)
+                            ? 'fill-yellow-400 text-yellow-400'
+                            : 'text-gray-300'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">vs last 30 days</p>
+              </div>
+
+              {/* Feedback Volume */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-gray-500">Total Feedback</span>
+                  <span className={`text-xs font-medium ${
+                    intelligence.volumeTrend === 'increasing' ? 'text-green-600' :
+                    intelligence.volumeTrend === 'decreasing' ? 'text-red-600' : 'text-gray-500'
+                  }`}>
+                    {intelligence.volumeTrend === 'increasing' ? '↑ Growing' :
+                     intelligence.volumeTrend === 'decreasing' ? '↓ Declining' : '→ Stable'}
+                  </span>
+                </div>
+                <span className="text-2xl font-bold text-gray-900">{intelligence.totalFeedback}</span>
+                <p className="text-xs text-gray-500 mt-1">reviews received</p>
+              </div>
+
+              {/* Rating Volatility */}
+              <div className="bg-gray-50 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-gray-500">Consistency</span>
+                  <Activity className="h-3 w-3 text-gray-400" />
+                </div>
+                <span className={`text-lg font-bold ${
+                  intelligence.volatility === 'stable' ? 'text-green-600' :
+                  intelligence.volatility === 'moderate' ? 'text-yellow-600' : 'text-red-600'
+                }`}>
+                  {intelligence.volatility === 'stable' ? 'Stable' :
+                   intelligence.volatility === 'moderate' ? 'Moderate' : 'Fluctuating'}
+                </span>
+                <p className="text-xs text-gray-500 mt-1">σ = {intelligence.standardDeviation.toFixed(2)}</p>
+              </div>
+
+              {/* Best Vendor (Company Admin specific) */}
+              {intelligence.bestVendor && (
+                <div className="bg-green-50 rounded-lg p-4 border border-green-100">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs font-medium text-green-700">Top Vendor</span>
+                    <Award className="h-3 w-3 text-green-600" />
+                  </div>
+                  <span className="text-sm font-bold text-green-800 line-clamp-1">{intelligence.bestVendor.vendorName}</span>
+                  <div className="flex items-center gap-1 mt-1">
+                    <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                    <span className="text-xs font-semibold text-green-700">{intelligence.bestVendor.avgRating.toFixed(1)}</span>
+                    <span className="text-xs text-green-600">({intelligence.bestVendor.totalFeedback})</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Worst Vendor (Company Admin specific) */}
+              {intelligence.worstVendor && intelligence.worstVendor.vendorName !== intelligence.bestVendor?.vendorName && (
+                <div className={`rounded-lg p-4 border ${
+                  intelligence.worstVendor.healthTag === 'At Risk' 
+                    ? 'bg-red-50 border-red-100' 
+                    : intelligence.worstVendor.healthTag === 'Watchlist'
+                    ? 'bg-yellow-50 border-yellow-100'
+                    : 'bg-gray-50 border-gray-100'
+                }`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-xs font-medium ${
+                      intelligence.worstVendor.healthTag === 'At Risk' ? 'text-red-700' :
+                      intelligence.worstVendor.healthTag === 'Watchlist' ? 'text-yellow-700' : 'text-gray-500'
+                    }`}>Needs Attention</span>
+                    {intelligence.worstVendor.healthTag === 'At Risk' && <AlertTriangle className="h-3 w-3 text-red-600" />}
+                  </div>
+                  <span className={`text-sm font-bold line-clamp-1 ${
+                    intelligence.worstVendor.healthTag === 'At Risk' ? 'text-red-800' :
+                    intelligence.worstVendor.healthTag === 'Watchlist' ? 'text-yellow-800' : 'text-gray-800'
+                  }`}>{intelligence.worstVendor.vendorName}</span>
+                  <div className="flex items-center gap-1 mt-1">
+                    <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                    <span className={`text-xs font-semibold ${
+                      intelligence.worstVendor.healthTag === 'At Risk' ? 'text-red-700' :
+                      intelligence.worstVendor.healthTag === 'Watchlist' ? 'text-yellow-700' : 'text-gray-700'
+                    }`}>{intelligence.worstVendor.avgRating.toFixed(1)}</span>
+                    <span className="text-xs text-gray-500">({intelligence.worstVendor.negativeRatingPercentage.toFixed(0)}% neg)</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Vendor Comparison Table (Company Admin specific) */}
+            {intelligence.vendorComparison.length > 2 && (
+              <div className="border-t border-gray-100 pt-4 mb-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-gray-500" />
+                    <span className="text-sm font-semibold text-gray-700">Vendor Performance Comparison</span>
+                  </div>
+                  <span className="text-xs text-gray-500">{intelligence.vendorComparison.length} vendors</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="text-left py-2 px-2 font-semibold text-gray-600">Vendor</th>
+                        <th className="text-center py-2 px-2 font-semibold text-gray-600">Rating</th>
+                        <th className="text-center py-2 px-2 font-semibold text-gray-600">Trend</th>
+                        <th className="text-center py-2 px-2 font-semibold text-gray-600">Feedback</th>
+                        <th className="text-center py-2 px-2 font-semibold text-gray-600">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {intelligence.vendorComparison.slice(0, 5).map((vendor, idx) => (
+                        <tr key={idx} className="border-b border-gray-50 hover:bg-gray-50">
+                          <td className="py-2 px-2 font-medium text-gray-900 truncate max-w-[150px]">{vendor.vendorName}</td>
+                          <td className="py-2 px-2 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                              <span className="font-semibold">{vendor.avgRating.toFixed(1)}</span>
+                            </div>
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <span className={`flex items-center justify-center gap-0.5 ${
+                              vendor.ratingTrend30Days > 5 ? 'text-green-600' :
+                              vendor.ratingTrend30Days < -5 ? 'text-red-600' : 'text-gray-500'
+                            }`}>
+                              {vendor.ratingTrend30Days > 5 ? <TrendingUp className="h-3 w-3" /> :
+                               vendor.ratingTrend30Days < -5 ? <TrendingDown className="h-3 w-3" /> :
+                               <Minus className="h-3 w-3" />}
+                              {Math.abs(vendor.ratingTrend30Days).toFixed(0)}%
+                            </span>
+                          </td>
+                          <td className="py-2 px-2 text-center text-gray-600">{vendor.totalFeedback}</td>
+                          <td className="py-2 px-2 text-center">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                              vendor.healthTag === 'Healthy' ? 'bg-green-100 text-green-700' :
+                              vendor.healthTag === 'Watchlist' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                            }`}>
+                              {vendor.healthTag}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Insights */}
+            {intelligence.insights.length > 0 && (
+              <div className="border-t border-gray-100 pt-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Lightbulb className="h-4 w-4 text-amber-500" />
+                  <span className="text-sm font-semibold text-gray-700">Insights</span>
+                </div>
+                <div className="space-y-2">
+                  {intelligence.insights.map((insight, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex items-start gap-2 p-2 rounded-lg text-xs ${
+                        insight.type === 'warning' ? 'bg-red-50 text-red-700' :
+                        insight.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700'
+                      }`}
+                    >
+                      {insight.type === 'warning' && <AlertTriangle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />}
+                      {insight.type === 'success' && <TrendingUp className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />}
+                      {insight.type === 'info' && <Lightbulb className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />}
+                      <span>{insight.message}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Filters */}
         <div className="bg-white rounded-xl shadow-lg p-6 mb-6">

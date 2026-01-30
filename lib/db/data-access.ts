@@ -43,6 +43,7 @@ import Invoice from '../models/Invoice'
 import SystemShippingConfig from '../models/SystemShippingConfig'
 import ShipmentServiceProvider from '../models/ShipmentServiceProvider'
 import CompanyShippingProvider from '../models/CompanyShippingProvider'
+import Shipment from '../models/Shipment'
 import { getCurrentCycleDates, isDateInCurrentCycle } from '../utils/eligibility-cycles'
 import {
   getCategoriesByCompany,
@@ -2777,12 +2778,13 @@ export async function createLocation(locationData: {
   }
   
   // Check if location name already exists for this company
+  const locationName = locationData.name?.trim() || ''
   const existingLocation = await Location.findOne({ 
     companyId: company.id, // Use string ID, not ObjectId
-    name: locationData.name.trim() 
+    name: locationName 
   })
   if (existingLocation) {
-    throw new Error(`Location with name "${locationData.name}" already exists for this company`)
+    throw new Error(`Location with name "${locationName}" already exists for this company`)
   }
   
   // Generate next 6-digit numeric location ID (starting from 400001)
@@ -2821,14 +2823,14 @@ export async function createLocation(locationData: {
   // Create location with structured address fields
   const locationDataToCreate: any = {
     id: locationId,
-    name: locationData.name.trim(),
+    name: locationData.name?.trim() || '',
     companyId: company.id, // Use string ID, not ObjectId
-    address_line_1: locationData.address_line_1.trim(),
-    address_line_2: locationData.address_line_2?.trim(),
-    address_line_3: locationData.address_line_3?.trim(),
-    city: locationData.city.trim(),
-    state: locationData.state.trim(),
-    pincode: locationData.pincode.trim(),
+    address_line_1: locationData.address_line_1?.trim() || '',
+    address_line_2: locationData.address_line_2?.trim() || '',
+    address_line_3: locationData.address_line_3?.trim() || '',
+    city: locationData.city?.trim() || '',
+    state: locationData.state?.trim() || '',
+    pincode: locationData.pincode?.trim() || '',
     country: locationData.country?.trim() || 'India',
     status: locationData.status || 'active',
   }
@@ -3569,6 +3571,7 @@ export async function updateCompanySettings(
               require_company_admin_approval: settings.require_company_admin_po_approval // Sync deprecated field
             }),
             ...(settings.allow_multi_pr_po !== undefined && { allow_multi_pr_po: settings.allow_multi_pr_po }),
+            ...(settings.shipmentRequestMode !== undefined && { shipmentRequestMode: settings.shipmentRequestMode }),
           }
         }
       )
@@ -3643,25 +3646,57 @@ export async function updateCompanySettings(
 }
 
 // ========== BRANCH FUNCTIONS ==========
+// NOTE: These functions now use the Location model instead of Branch model
+// The "Branch" terminology is kept for backwards compatibility with the UI/API
+// All data is stored in the 'locations' collection
 
 export async function getAllBranches(): Promise<any[]> {
   await connectDB()
   
-  const branches = await Branch.find()
-    .populate('companyId', 'id name')
-    .populate('adminId', 'id employeeId firstName lastName email designation')
+  // Use Location model - branches are now stored as locations
+  const locations = await Location.find({ status: 'active' })
     .lean()
-  return branches.map((b: any) => toPlainObject(b))
+  
+  // Manually populate company and admin info
+  const result = []
+  for (const loc of locations) {
+    const company = await Company.findOne({ id: loc.companyId }).select('id name').lean()
+    let admin = null
+    if (loc.adminId) {
+      admin = await Employee.findOne({ 
+        $or: [{ id: loc.adminId }, { employeeId: loc.adminId }] 
+      }).select('id employeeId firstName lastName email designation').lean()
+    }
+    result.push(toPlainObject({
+      ...loc,
+      companyId: company || loc.companyId,
+      adminId: admin || loc.adminId
+    }))
+  }
+  return result
 }
 
 export async function getBranchById(branchId: string): Promise<any | null> {
   await connectDB()
   
-  const branch = await Branch.findOne({ id: branchId })
-    .populate('companyId', 'id name')
-    .populate('adminId', 'id employeeId firstName lastName email designation')
-    .lean()
-  return branch ? toPlainObject(branch) : null
+  // Use Location model
+  const location = await Location.findOne({ id: branchId }).lean()
+  if (!location) return null
+  
+  // Manually populate company and admin info
+  const company = await Company.findOne({ id: location.companyId }).select('id name').lean()
+  let admin = null
+  if (location.adminId) {
+    admin = await Employee.findOne({ 
+      $or: [{ id: location.adminId }, { employeeId: location.adminId }] 
+    }).select('id employeeId firstName lastName email designation').lean()
+  }
+  
+  return toPlainObject({
+    ...location,
+    companyId: company || location.companyId,
+    adminId: admin || location.adminId
+  })
 }
 
 export async function getBranchesByCompany(companyId: string): Promise<any[]> {
@@ -3670,44 +3705,52 @@ export async function getBranchesByCompany(companyId: string): Promise<any[]> {
   const company = await Company.findOne({ id: companyId })
   if (!company) return []
 
-  // CRITICAL FIX: Branch.companyId is stored as STRING ID, not ObjectId
-  const branches = await Branch.find({ companyId: company.id })
-    .populate('companyId', 'id name')
-    .populate('adminId', 'id employeeId firstName lastName email designation')
-    .lean()
+  // Use Location model - query by company's string ID
+  const locations = await Location.find({ 
+    companyId: company.id,
+    status: 'active'
+  }).lean()
 
-  return branches.map((b: any) => toPlainObject(b))
+  // Manually populate company and admin info
+  const result = []
+  for (const loc of locations) {
+    let admin = null
+    if (loc.adminId) {
+      admin = await Employee.findOne({ 
+        $or: [{ id: loc.adminId }, { employeeId: loc.adminId }] 
+      }).select('id employeeId firstName lastName email designation').lean()
+    }
+    result.push(toPlainObject({
+      ...loc,
+      companyId: { id: company.id, name: company.name },
+      adminId: admin || loc.adminId
+    }))
+  }
+  return result
 }
 
 export async function getEmployeesByBranch(branchId: string): Promise<any[]> {
   await connectDB()
   
-  const branch = await Branch.findOne({ id: branchId })
-  if (!branch) return []
+  // Use Location model
+  const location = await Location.findOne({ id: branchId })
+  if (!location) return []
 
-  // CRITICAL FIX: Query by both ObjectId and string branchId
-  const branchStringId = branch.id || ''
+  // Employees are linked via locationId
   const employees = await Employee.find({ 
-    $or: [
-      { branchId: branch._id },
-      { branchId: branchStringId }
-    ]
+    locationId: location.id,
+    status: 'active'
   })
     .populate('companyId', 'id name')
-    .populate({
-      path: 'branchId',
-      select: 'id name address_line_1 city state pincode',
-      strictPopulate: false
-    })
     .lean()
 
   return employees.map((e: any) => toPlainObject(e))
 }
 
 /**
- * Create a new branch
+ * Create a new branch (stored in locations collection)
  * @param branchData Branch data including structured address fields
- * @returns Created branch
+ * @returns Created branch/location
  */
 export async function createBranch(branchData: {
   name: string
@@ -3735,60 +3778,59 @@ export async function createBranch(branchData: {
   // Find employee (Branch Admin) by employeeId if provided
   let adminEmployee = null
   if (branchData.adminId) {
-    adminEmployee = await Employee.findOne({ employeeId: branchData.adminId })
+    adminEmployee = await Employee.findOne({ 
+      $or: [{ employeeId: branchData.adminId }, { id: branchData.adminId }]
+    })
     if (!adminEmployee) {
       throw new Error(`Employee not found for Branch Admin: ${branchData.adminId}`)
     }
     
     // Verify employee belongs to the same company
-    // CRITICAL FIX: adminEmployee.companyId is a STRING ID, not ObjectId
     const employeeCompanyId = typeof adminEmployee.companyId === 'object' && adminEmployee.companyId?.id
       ? adminEmployee.companyId.id
-      : (await Company.findOne({ id: String(adminEmployee.companyId) }))?.id
+      : String(adminEmployee.companyId)
     
     if (employeeCompanyId !== branchData.companyId) {
       throw new Error(`Employee ${branchData.adminId} does not belong to company ${branchData.companyId}`)
     }
   }
   
-  // Generate next 6-digit numeric branch ID
-  const existingBranches = await Branch.find({})
+  // Generate next location ID (format: LOC-XXXXXX)
+  // Find highest existing location ID number
+  const existingLocations = await Location.find({})
     .sort({ id: -1 })
-    .limit(1)
+    .limit(10)
     .lean()
   
-  let nextBranchId = 200001 // Start from 200001
-  if (existingBranches.length > 0) {
-    const lastId = existingBranches[0].id
-    if (/^[A-Za-z0-9_-]{1,50}$/.test(String(lastId))) {
-      const lastIdNum = parseInt(String(lastId), 10)
-      if (lastIdNum >= 200001) {
-        nextBranchId = lastIdNum + 1
+  let nextIdNum = 200001 // Start from 200001 for branch-created locations
+  for (const loc of existingLocations) {
+    const idStr = String(loc.id || '')
+    // Try to extract numeric part from various formats
+    const numMatch = idStr.match(/(\d+)$/)
+    if (numMatch) {
+      const num = parseInt(numMatch[1], 10)
+      if (num >= nextIdNum) {
+        nextIdNum = num + 1
       }
     }
   }
   
-  let branchId = String(nextBranchId).padStart(6, '0')
+  // Generate ID - use simple numeric format for consistency
+  let locationId = String(nextIdNum)
   
   // Check if this ID already exists (safety check)
-  const existingById = await Branch.findOne({ id: branchId })
-  if (existingById) {
-    // Find next available ID
-    for (let i = nextBranchId + 1; i < 300000; i++) {
-      const testId = String(i).padStart(6, '0')
-      const exists = await Branch.findOne({ id: testId })
-      if (!exists) {
-        branchId = testId
-        break
-      }
-    }
+  let existingById = await Location.findOne({ id: locationId })
+  while (existingById && nextIdNum < 999999) {
+    nextIdNum++
+    locationId = String(nextIdNum)
+    existingById = await Location.findOne({ id: locationId })
   }
   
-  // Create branch with structured address fields
-  const branchDataToCreate: any = {
-    id: branchId,
+  // Create location with structured address fields
+  const locationDataToCreate: any = {
+    id: locationId,
     name: branchData.name.trim(),
-    companyId: company.id,  // Use string ID, not ObjectId
+    companyId: company.id,  // Use string ID
     address_line_1: branchData.address_line_1.trim(),
     address_line_2: branchData.address_line_2?.trim(),
     address_line_3: branchData.address_line_3?.trim(),
@@ -3800,31 +3842,40 @@ export async function createBranch(branchData: {
   }
   
   // Add optional fields
-  if (branchData.phone) branchDataToCreate.phone = branchData.phone.trim()
-  if (branchData.email) branchDataToCreate.email = branchData.email.trim()
+  if (branchData.phone) locationDataToCreate.phone = branchData.phone.trim()
+  if (branchData.email) locationDataToCreate.email = branchData.email.trim()
   
   // Add adminId if provided
   if (adminEmployee) {
-    branchDataToCreate.adminId = adminEmployee.id || adminEmployee.employeeId || String(adminEmployee._id || '')
+    locationDataToCreate.adminId = adminEmployee.id || adminEmployee.employeeId
   }
   
-  const newBranch = await Branch.create(branchDataToCreate)
+  const newLocation = await Location.create(locationDataToCreate)
   
-  // Populate and return - use string id field instead of _id
-  const newBranchId = newBranch.id || String(newBranch._id || '')
-  const populated = await Branch.findOne({ id: newBranchId })
-    .populate('companyId', 'id name')
-    .populate('adminId', 'id employeeId firstName lastName email designation')
-    .lean()
+  // Fetch and return with populated data
+  const createdId = newLocation.id
+  const created = await Location.findOne({ id: createdId }).lean()
   
-  return toPlainObject(populated)
+  // Manually populate company and admin
+  let admin = null
+  if (created?.adminId) {
+    admin = await Employee.findOne({ 
+      $or: [{ id: created.adminId }, { employeeId: created.adminId }] 
+    }).select('id employeeId firstName lastName email designation').lean()
+  }
+  
+  return toPlainObject({
+    ...created,
+    companyId: { id: company.id, name: company.name },
+    adminId: admin || created?.adminId
+  })
 }
 
 /**
- * Update branch
- * @param branchId Branch ID
+ * Update branch (stored in locations collection)
+ * @param branchId Branch/Location ID
  * @param updateData Fields to update
- * @returns Updated branch
+ * @returns Updated branch/location
  */
 export async function updateBranch(
   branchId: string,
@@ -3845,105 +3896,115 @@ export async function updateBranch(
 ): Promise<any> {
   await connectDB()
   
-  const branch = await Branch.findOne({ id: branchId })
-  if (!branch) {
+  // Use Location model
+  const location = await Location.findOne({ id: branchId })
+  if (!location) {
     throw new Error(`Branch not found: ${branchId}`)
   }
   
-  // Update name if provided
-  if (updateData.name !== undefined) {
-    branch.name = updateData.name.trim()
-  }
+  // Build update object
+  const updateFields: any = {}
   
-  // Update address fields if provided
+  if (updateData.name !== undefined) {
+    updateFields.name = updateData.name.trim()
+  }
   if (updateData.address_line_1 !== undefined) {
-    branch.address_line_1 = updateData.address_line_1.trim()
+    updateFields.address_line_1 = updateData.address_line_1.trim()
   }
   if (updateData.address_line_2 !== undefined) {
-    branch.address_line_2 = updateData.address_line_2?.trim()
+    updateFields.address_line_2 = updateData.address_line_2?.trim() || ''
   }
   if (updateData.address_line_3 !== undefined) {
-    branch.address_line_3 = updateData.address_line_3?.trim()
+    updateFields.address_line_3 = updateData.address_line_3?.trim() || ''
   }
   if (updateData.city !== undefined) {
-    branch.city = updateData.city.trim()
+    updateFields.city = updateData.city.trim()
   }
   if (updateData.state !== undefined) {
-    branch.state = updateData.state.trim()
+    updateFields.state = updateData.state.trim()
   }
   if (updateData.pincode !== undefined) {
-    branch.pincode = updateData.pincode.trim()
+    updateFields.pincode = updateData.pincode.trim()
   }
   if (updateData.country !== undefined) {
-    branch.country = updateData.country.trim()
+    updateFields.country = updateData.country.trim()
   }
-  
-  // Update optional fields
   if (updateData.phone !== undefined) {
-    branch.phone = updateData.phone?.trim()
+    updateFields.phone = updateData.phone?.trim() || ''
   }
   if (updateData.email !== undefined) {
-    branch.email = updateData.email?.trim()
+    updateFields.email = updateData.email?.trim() || ''
   }
   if (updateData.status !== undefined) {
-    branch.status = updateData.status
+    updateFields.status = updateData.status
   }
   
   // Update admin if provided
   if (updateData.adminId !== undefined) {
     if (updateData.adminId) {
-      const adminEmployee = await Employee.findOne({ employeeId: updateData.adminId })
+      const adminEmployee = await Employee.findOne({ 
+        $or: [{ employeeId: updateData.adminId }, { id: updateData.adminId }]
+      })
       if (!adminEmployee) {
         throw new Error(`Employee not found for Branch Admin: ${updateData.adminId}`)
       }
       
       // Verify employee belongs to the same company
-      const employeeCompanyId = typeof adminEmployee.companyId === 'object' && adminEmployee.companyId?.id
-        ? adminEmployee.companyId.id
-        : (await Company.findOne({ id: String(adminEmployee.companyId) }))?.id
+      const employeeCompanyId = String(adminEmployee.companyId)
+      const locationCompanyId = String(location.companyId)
       
-      // CRITICAL FIX: branch.companyId is a STRING ID, not ObjectId
-      const branchCompanyId = typeof branch.companyId === 'object' && branch.companyId?.id
-        ? branch.companyId.id
-        : (await Company.findOne({ id: String(branch.companyId) }))?.id
-      
-      if (employeeCompanyId !== branchCompanyId) {
+      if (employeeCompanyId !== locationCompanyId) {
         throw new Error(`Employee ${updateData.adminId} does not belong to branch's company`)
       }
       
-      // Use string ID for adminId instead of ObjectId
-      branch.adminId = adminEmployee.id || adminEmployee.employeeId  // Use string ID, not ObjectId
+      updateFields.adminId = adminEmployee.id || adminEmployee.employeeId
     } else {
-      branch.adminId = undefined
+      updateFields.adminId = ''
     }
   }
   
-  await branch.save()
+  // Update the location
+  await Location.findOneAndUpdate(
+    { id: branchId },
+    { $set: updateFields }
+  )
   
-  // Populate and return - use string id field instead of _id
-  const updatedBranchId = branch.id || String(branch._id || '')
-  const updated = await Branch.findOne({ id: updatedBranchId })
-    .populate('companyId', 'id name')
-    .populate('adminId', 'id employeeId firstName lastName email designation')
-    .lean()
+  // Fetch updated record
+  const updated = await Location.findOne({ id: branchId }).lean()
   
-  return toPlainObject(updated)
+  // Get company info
+  const company = await Company.findOne({ id: updated?.companyId }).select('id name').lean()
+  
+  // Get admin info
+  let admin = null
+  if (updated?.adminId) {
+    admin = await Employee.findOne({ 
+      $or: [{ id: updated.adminId }, { employeeId: updated.adminId }] 
+    }).select('id employeeId firstName lastName email designation').lean()
+  }
+  
+  return toPlainObject({
+    ...updated,
+    companyId: company || updated?.companyId,
+    adminId: admin || updated?.adminId
+  })
 }
 
 /**
- * Delete branch
- * @param branchId Branch ID
+ * Delete branch (from locations collection)
+ * @param branchId Branch/Location ID
  * @returns true if deleted
  */
 export async function deleteBranch(branchId: string): Promise<boolean> {
   await connectDB()
   
-  const branch = await Branch.findOne({ id: branchId })
-  if (!branch) {
+  // Use Location model
+  const location = await Location.findOne({ id: branchId })
+  if (!location) {
     throw new Error(`Branch not found: ${branchId}`)
   }
   
-  await Branch.deleteOne({ id: branchId })
+  await Location.deleteOne({ id: branchId })
   return true
 }
 
@@ -4625,9 +4686,9 @@ export async function canApproveOrders(email: string, companyId: string): Promis
 // ========== BRANCH ADMIN AUTHORIZATION FUNCTIONS ==========
 
 /**
- * Check if an employee is a Branch Admin for a specific branch
+ * Check if an employee is a Branch Admin for a specific branch (uses Location collection)
  * @param email Employee email
- * @param branchId Branch ID (string)
+ * @param branchId Branch/Location ID (string)
  * @returns true if employee is Branch Admin for the branch
  */
 export async function isBranchAdmin(email: string, branchId: string): Promise<boolean> {
@@ -4669,28 +4730,27 @@ export async function isBranchAdmin(email: string, branchId: string): Promise<bo
     return false
   }
   
-  // Find branch
-  const Branch = require('../models/Branch').default
-  const branch = await Branch.findOne({ id: branchId })
-  if (!branch) {
+  // Find location (branch)
+  const location = await Location.findOne({ id: branchId })
+  if (!location) {
     return false
   }
   
-  // Check if employee is the Branch Admin
-  const employeeIdStr = (employee._id || employee.id).toString()
-  const branchAdminIdStr = branch.adminId?.toString()
+  // Check if employee is the Branch/Location Admin
+  const employeeIdStr = employee.id || employee.employeeId || ''
+  const locationAdminIdStr = location.adminId || ''
   
-  return employeeIdStr === branchAdminIdStr
+  return employeeIdStr === locationAdminIdStr
 }
 
 /**
- * Get the branch for which an employee ID is Branch Admin
- * This is the PRIMARY method - uses employee ID directly, independent of email
+ * Get the branch (location) for which an employee ID is Branch Admin
+ * Uses Location collection - searches by adminId field
  * @param employeeId The employee ID (string like "EMP-000001" or "300004")
- * @returns Branch object if employee is a Branch Admin, null otherwise
+ * @returns Branch/Location object if employee is a Branch Admin, null otherwise
  */
 export async function getBranchByAdminEmployeeId(employeeId: string): Promise<any | null> {
-  console.log(`[getBranchByAdminEmployeeId] Looking up branch for employee: ${employeeId}`)
+  console.log(`[getBranchByAdminEmployeeId] Looking up location for employee: ${employeeId}`)
   await connectDB()
   
   if (!employeeId) {
@@ -4698,30 +4758,28 @@ export async function getBranchByAdminEmployeeId(employeeId: string): Promise<an
     return null
   }
   
-  const Branch = require('../models/Branch').default
+  // Query Location by string adminId
+  const location = await Location.findOne({ adminId: employeeId }).lean()
   
-  // Query by string adminId - this is how it should be stored
-  const branch = await Branch.findOne({ adminId: employeeId }).lean()
-  
-  if (!branch) {
-    console.log(`[getBranchByAdminEmployeeId] ❌ No branch found for admin: ${employeeId}`)
+  if (!location) {
+    console.log(`[getBranchByAdminEmployeeId] ❌ No location found for admin: ${employeeId}`)
     return null
   }
   
-  console.log(`[getBranchByAdminEmployeeId] ✅ Found branch: ${branch.name} (${branch.id})`)
+  console.log(`[getBranchByAdminEmployeeId] ✅ Found location: ${location.name} (${location.id})`)
   
   // Manually populate companyId since it's a string reference
-  const branchObj = toPlainObject(branch)
-  if (branchObj.companyId && typeof branchObj.companyId === 'string') {
-    const companyInfo = await Company.findOne({ id: branchObj.companyId })
+  const locationObj = toPlainObject(location)
+  if (locationObj.companyId && typeof locationObj.companyId === 'string') {
+    const companyInfo = await Company.findOne({ id: locationObj.companyId })
       .select('id name')
       .lean()
     if (companyInfo) {
-      branchObj.companyId = toPlainObject(companyInfo)
+      locationObj.companyId = toPlainObject(companyInfo)
     }
   }
   
-  return branchObj
+  return locationObj
 }
 
 /**
@@ -7968,7 +8026,7 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
   // Include orderType and returnRequestId for replacement orders
   // Note: items array includes all fields (dispatchedQuantity, deliveredQuantity) automatically
   let orders = await Order.find(vendorOrderQuery)
-    .select('id employeeId employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date unified_pr_status unified_status deliveryStatus dispatchStatus shipping_address_line_1 shipping_address_line_2 shipping_address_line_3 shipping_city shipping_state shipping_pincode shipping_country orderType returnRequestId')
+    .select('id employeeId employeeName items total status orderDate dispatchLocation companyId deliveryAddress parentOrderId vendorId vendorName isPersonalPayment personalPaymentAmount createdAt pr_number pr_date unified_pr_status unified_status deliveryStatus dispatchStatus shipping_address_line_1 shipping_address_line_2 shipping_address_line_3 shipping_city shipping_state shipping_pincode shipping_country orderType returnRequestId carrierName trackingNumber shipmentReferenceNumber shipmentId')
     .populate('employeeId', 'id firstName lastName email locationId')
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
@@ -8134,7 +8192,85 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
       status: correctedStatus
     }
   })
-  
+
+  // Enrich orders with tracking from Shipment collection (shipment.courierAwbNumber) for automatic shipments
+  if (orders.length > 0) {
+    try {
+      // Shipment can be linked by prNumber (order.pr_number or order.id), Order.shipmentId, or Order.shipmentReferenceNumber (e.g. SHIP_...)
+      const prKeys = [...new Set(orders.flatMap((o: any) => [o.pr_number, o.id].filter(Boolean)))]
+      const shipmentIds = orders.map((o: any) => o.shipmentId).filter(Boolean)
+      const refNumbers = orders.map((o: any) => o.shipmentReferenceNumber).filter(Boolean)
+      const query: any = { vendorId: vendorNumericId }
+      if (prKeys.length > 0 || shipmentIds.length > 0 || refNumbers.length > 0) {
+        query.$or = []
+        if (prKeys.length > 0) query.$or.push({ prNumber: { $in: prKeys } })
+        if (shipmentIds.length > 0) query.$or.push({ shipmentId: { $in: shipmentIds } })
+        if (refNumbers.length > 0) query.$or.push({ shipmentId: { $in: refNumbers } })
+      }
+      if (!query.$or?.length) query.$or = [{ prNumber: { $in: [] } }]
+      const shipments = await Shipment.find(query)
+        .select('prNumber shipmentId courierAwbNumber trackingNumber courierProviderCode')
+        .lean()
+      const shipmentByPr = new Map<string, any>()
+      const shipmentById = new Map<string, any>()
+      for (const s of shipments) {
+        const pr = (s as any).prNumber
+        const sid = (s as any).shipmentId
+        if (pr) shipmentByPr.set(pr, s)
+        if (sid) shipmentById.set(sid, s)
+      }
+      orders = orders.map((order: any) => {
+        const shipment =
+          shipmentByPr.get(order.pr_number) ||
+          shipmentByPr.get(order.id) ||
+          (order.shipmentId ? shipmentById.get(order.shipmentId) : null) ||
+          (order.shipmentReferenceNumber ? shipmentById.get(order.shipmentReferenceNumber) : null) ||
+          null
+        const displayTracking = order.trackingNumber
+          || (shipment && ((shipment as any).courierAwbNumber || (shipment as any).trackingNumber))
+          || undefined
+        if ((order.status === 'Dispatched' || order.status === 'Delivered') && !displayTracking) {
+          console.log(`[getOrdersByVendor] ⚠️ No tracking for order ${order.id}: order.trackingNumber=${order.trackingNumber ?? 'n/a'}, shipment=${shipment ? 'found' : 'not found'}, shipment.courierAwbNumber=${shipment ? (shipment as any).courierAwbNumber ?? 'n/a' : 'n/a'}, shipment.trackingNumber=${shipment ? (shipment as any).trackingNumber ?? 'n/a' : 'n/a'}, order.shipmentId=${order.shipmentId ?? 'n/a'}, order.shipmentReferenceNumber=${order.shipmentReferenceNumber ?? 'n/a'}`)
+        }
+        return {
+          ...order,
+          displayTracking: displayTracking || undefined,
+        }
+      })
+
+      // On-demand AWB fetch: Shipments found but with empty courierAwbNumber/trackingNumber (e.g. created before AWB was stored)
+      const needAwb = [...new Set(
+        orders
+          .filter((o: any) => (o.status === 'Dispatched' || o.status === 'Delivered') && !o.displayTracking && o.shipmentReferenceNumber)
+          .map((o: any) => o.shipmentReferenceNumber)
+      )].slice(0, 10)
+      if (needAwb.length > 0) {
+        try {
+          const { fetchShipmentAWB } = await import('./shipment-execution')
+          const awbByShipmentId = new Map<string, string>()
+          for (const sid of needAwb) {
+            const result = await fetchShipmentAWB(sid)
+            if (result.success && result.awbNumber) awbByShipmentId.set(sid, result.awbNumber)
+          }
+          if (awbByShipmentId.size > 0) {
+            orders = orders.map((order: any) => {
+              const awb = order.shipmentReferenceNumber ? awbByShipmentId.get(order.shipmentReferenceNumber) : undefined
+              if (awb && !order.displayTracking) {
+                return { ...order, displayTracking: awb }
+              }
+              return order
+            })
+            console.log(`[getOrdersByVendor] ✅ Backfilled AWB for ${awbByShipmentId.size} shipment(s)`)
+          }
+        } catch (awbErr: any) {
+          console.warn('[getOrdersByVendor] On-demand AWB fetch failed:', awbErr?.message || awbErr)
+        }
+      }
+    } catch (shipmentErr: any) {
+      console.warn('[getOrdersByVendor] Could not enrich with shipment tracking:', shipmentErr?.message || shipmentErr)
+    }
+  }
+
   // Log order details for debugging
   console.log(`[getOrdersByVendor] 📋 Order Summary:`)
   orders.forEach((order, idx) => {
@@ -8230,6 +8366,14 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
     
     // Mask the decrypted name for vendor privacy
     plain.employeeName = maskEmployeeName(decryptedName)
+    
+    // Ensure tracking fields are always passed through to the client (enriched displayTracking from Shipment)
+    if (o.displayTracking !== undefined && o.displayTracking !== null && String(o.displayTracking).trim() !== '') {
+      plain.displayTracking = String(o.displayTracking).trim()
+    }
+    if (o.trackingNumber !== undefined && o.trackingNumber !== null && String(o.trackingNumber).trim() !== '') {
+      plain.trackingNumber = String(o.trackingNumber).trim()
+    }
     
     return plain
   })
@@ -8358,7 +8502,7 @@ export async function getVendorBusinessVolumeByCompany(vendorId: string): Promis
   revenue: number
   avgOrderValue: number
   percentage: number
-}> {
+}[]> {
   await connectDB()
   
   const vendor = await Vendor.findOne({ id: vendorId })
@@ -8372,18 +8516,52 @@ export async function getVendorBusinessVolumeByCompany(vendorId: string): Promis
       { vendorId: vendorStrIdBiz }
     ]
   })
-    .populate('companyId', 'id name')
     .select('companyId total')
     .lean()
 
   if (orders.length === 0) return []
 
+  // Collect unique company IDs (stored as strings in Order)
+  const companyIdSet = new Set<string>()
+  orders.forEach((order: any) => {
+    if (order.companyId) {
+      const compId = typeof order.companyId === 'object' 
+        ? (order.companyId._id?.toString() || order.companyId.toString())
+        : String(order.companyId)
+      companyIdSet.add(compId)
+    }
+  })
+
+  // Fetch all company names in one query
+  const companyIds = Array.from(companyIdSet)
+  const companies = await Company.find({
+    $or: [
+      { id: { $in: companyIds } },
+      { _id: { $in: companyIds.filter(id => /^[a-f0-9]{24}$/i.test(id)) } }
+    ]
+  }).select('id _id name').lean()
+
+  // Build company name lookup map
+  const companyNameMap = new Map<string, string>()
+  companies.forEach((c: any) => {
+    if (c.id) companyNameMap.set(c.id, c.name || 'Unknown Company')
+    if (c._id) companyNameMap.set(c._id.toString(), c.name || 'Unknown Company')
+  })
+
   const companyMap = new Map<string, { companyName: string; orderCount: number; revenue: number }>()
   let totalRevenue = 0
 
   orders.forEach((order: any) => {
-    const companyId = order.companyId?._id?.toString() || order.companyId?.toString() || 'Unknown'
-    const companyName = order.companyId?.name || 'Unknown Company'
+    // Extract company ID (handle both ObjectId and string)
+    let companyId = 'Unknown'
+    if (order.companyId) {
+      companyId = typeof order.companyId === 'object' 
+        ? (order.companyId._id?.toString() || order.companyId.id || order.companyId.toString())
+        : String(order.companyId)
+    }
+    
+    // Look up company name
+    const companyName = companyNameMap.get(companyId) || 'Unknown Company'
     const revenue = order.total || 0
 
     if (!companyMap.has(companyId)) {
@@ -8462,6 +8640,720 @@ export async function getVendorReports(vendorId: string): Promise<{
       totalCompanies
     }
   }
+}
+
+// ========== COMPANY-SPECIFIC VENDOR REPORT FUNCTIONS ==========
+
+/**
+ * Get vendor sales patterns filtered by a specific company and date range
+ * Generates continuous time series with gap filling for better visualization
+ */
+export async function getVendorSalesPatternsForCompany(
+  vendorId: string, 
+  companyId: string | null,
+  period: 'daily' | 'weekly' | 'monthly' = 'monthly',
+  startDate?: Date | null,
+  endDate?: Date | null
+): Promise<{
+  period: string
+  revenue: number
+  orderCount: number
+  avgOrderValue: number
+  previousRevenue?: number
+}[]> {
+  await connectDB()
+  
+  const vendor = await Vendor.findOne({ id: vendorId })
+  if (!vendor) return []
+
+  // Build query - filter by company if specified
+  const query: any = {
+    $or: [
+      { vendorId: vendor._id },
+      { vendorId: vendor.id }
+    ]
+  }
+  
+  if (companyId) {
+    query.companyId = companyId
+  }
+
+  // Add date range filter
+  if (startDate || endDate) {
+    query.orderDate = {}
+    if (startDate) query.orderDate.$gte = startDate
+    if (endDate) query.orderDate.$lte = endDate
+  }
+
+  const orders = await Order.find(query)
+    .select('orderDate total status companyId')
+    .lean()
+
+  // Generate continuous time series periods (with gap filling)
+  const now = endDate || new Date()
+  const rangeStart = startDate || new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000) // Default 6 months
+  const periodMap = new Map<string, { revenue: number; orderCount: number }>()
+  
+  // Calculate periods based on date range
+  let maxPeriods: number
+  if (startDate && endDate) {
+    const daysDiff = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+    if (period === 'daily') {
+      maxPeriods = Math.min(daysDiff + 1, 60) // Max 60 days
+    } else if (period === 'weekly') {
+      maxPeriods = Math.min(Math.ceil(daysDiff / 7) + 1, 12) // Max 12 weeks
+    } else {
+      maxPeriods = Math.min(Math.ceil(daysDiff / 30) + 1, 12) // Max 12 months
+    }
+  } else {
+    maxPeriods = period === 'daily' ? 14 : period === 'weekly' ? 8 : 6
+  }
+  
+  // Generate all period keys for the chart (fills gaps with zeros)
+  for (let i = maxPeriods - 1; i >= 0; i--) {
+    let periodKey = ''
+    
+    if (period === 'daily') {
+      const date = new Date(now)
+      date.setDate(now.getDate() - i)
+      if (date >= rangeStart) {
+        periodKey = date.toISOString().split('T')[0]
+      }
+    } else if (period === 'weekly') {
+      const date = new Date(now)
+      date.setDate(now.getDate() - (i * 7))
+      date.setDate(date.getDate() - date.getDay())
+      if (date >= rangeStart) {
+        periodKey = date.toISOString().split('T')[0]
+      }
+    } else {
+      const date = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      if (date >= rangeStart) {
+        periodKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+      }
+    }
+    
+    if (periodKey) {
+      periodMap.set(periodKey, { revenue: 0, orderCount: 0 })
+    }
+  }
+
+  // Populate with actual order data
+  orders.forEach((order: any) => {
+    if (!order.orderDate) return
+    
+    const date = new Date(order.orderDate)
+    if (isNaN(date.getTime())) return // Skip invalid dates
+    
+    let periodKey = ''
+
+    if (period === 'daily') {
+      periodKey = date.toISOString().split('T')[0]
+    } else if (period === 'weekly') {
+      const weekStart = new Date(date)
+      weekStart.setDate(date.getDate() - date.getDay())
+      periodKey = weekStart.toISOString().split('T')[0]
+    } else {
+      // Monthly
+      periodKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+    }
+
+    // Only add to existing periods (within our time range)
+    if (periodMap.has(periodKey)) {
+      const periodData = periodMap.get(periodKey)!
+      periodData.revenue += order.total || 0
+      periodData.orderCount += 1
+    }
+  })
+  
+  return Array.from(periodMap.entries())
+    .map(([periodKey, data]) => ({
+      period: periodKey,
+      revenue: data.revenue,
+      orderCount: data.orderCount,
+      avgOrderValue: data.orderCount > 0 ? data.revenue / data.orderCount : 0
+    }))
+    .sort((a, b) => a.period.localeCompare(b.period))
+}
+
+/**
+ * Get vendor order status breakdown filtered by company and date range
+ */
+export async function getVendorOrderStatusBreakdownForCompany(
+  vendorId: string,
+  companyId: string | null,
+  startDate?: Date | null,
+  endDate?: Date | null
+): Promise<{
+  status: string
+  count: number
+  revenue: number
+  percentage: number
+}[]> {
+  await connectDB()
+  
+  const vendor = await Vendor.findOne({ id: vendorId })
+  if (!vendor) return []
+
+  const query: any = {
+    $or: [
+      { vendorId: vendor._id },
+      { vendorId: vendor.id }
+    ]
+  }
+  
+  if (companyId) {
+    query.companyId = companyId
+  }
+
+  // Add date range filter
+  if (startDate || endDate) {
+    query.orderDate = {}
+    if (startDate) query.orderDate.$gte = startDate
+    if (endDate) query.orderDate.$lte = endDate
+  }
+
+  const orders = await Order.find(query)
+    .select('status total')
+    .lean()
+
+  if (orders.length === 0) return []
+
+  const statusMap = new Map<string, { count: number; revenue: number }>()
+
+  orders.forEach((order: any) => {
+    const status = order.status || 'Unknown'
+    if (!statusMap.has(status)) {
+      statusMap.set(status, { count: 0, revenue: 0 })
+    }
+    const statusData = statusMap.get(status)!
+    statusData.count += 1
+    statusData.revenue += order.total || 0
+  })
+
+  const totalOrders = orders.length
+
+  return Array.from(statusMap.entries())
+    .map(([status, data]) => ({
+      status,
+      count: data.count,
+      revenue: data.revenue,
+      percentage: totalOrders > 0 ? (data.count / totalOrders) * 100 : 0
+    }))
+    .sort((a, b) => b.count - a.count)
+}
+
+/**
+ * Get top products sold by vendor (context-aware with date range)
+ */
+export async function getVendorTopProducts(
+  vendorId: string,
+  companyId: string | null,
+  limit: number = 5,
+  startDate?: Date | null,
+  endDate?: Date | null
+): Promise<{
+  productId: string
+  productName: string
+  quantitySold: number
+  revenue: number
+  orderCount: number
+}[]> {
+  await connectDB()
+  
+  const vendor = await Vendor.findOne({ id: vendorId })
+  if (!vendor) return []
+
+  const query: any = {
+    $or: [
+      { vendorId: vendor._id },
+      { vendorId: vendor.id }
+    ]
+  }
+  
+  if (companyId) {
+    query.companyId = companyId
+  }
+
+  // Add date range filter
+  if (startDate || endDate) {
+    query.orderDate = {}
+    if (startDate) query.orderDate.$gte = startDate
+    if (endDate) query.orderDate.$lte = endDate
+  }
+
+  const orders = await Order.find(query)
+    .select('items total')
+    .lean()
+
+  if (orders.length === 0) return []
+
+  const productMap = new Map<string, {
+    productName: string
+    quantitySold: number
+    revenue: number
+    orderCount: number
+    ordersSet: Set<string>
+  }>()
+
+  orders.forEach((order: any) => {
+    if (!order.items || !Array.isArray(order.items)) return
+    
+    order.items.forEach((item: any) => {
+      const productId = item.productId || item.uniformName || 'Unknown'
+      const productName = item.uniformName || item.productId || 'Unknown Product'
+      
+      if (!productMap.has(productId)) {
+        productMap.set(productId, {
+          productName,
+          quantitySold: 0,
+          revenue: 0,
+          orderCount: 0,
+          ordersSet: new Set()
+        })
+      }
+      
+      const data = productMap.get(productId)!
+      data.quantitySold += item.quantity || 0
+      data.revenue += (item.price || 0) * (item.quantity || 0)
+      data.ordersSet.add(order._id?.toString() || '')
+    })
+  })
+
+  return Array.from(productMap.entries())
+    .map(([productId, data]) => ({
+      productId,
+      productName: data.productName,
+      quantitySold: data.quantitySold,
+      revenue: data.revenue,
+      orderCount: data.ordersSet.size
+    }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, limit)
+}
+
+/**
+ * Get vendor delivery performance metrics (context-aware with date range)
+ */
+export async function getVendorDeliveryPerformance(
+  vendorId: string,
+  companyId: string | null,
+  startDate?: Date | null,
+  endDate?: Date | null
+): Promise<{
+  avgDeliveryTime: number
+  bestDeliveryTime: number
+  slowestDeliveryTime: number
+  totalDeliveries: number
+  onTimeDeliveries: number
+  onTimePercentage: number
+}> {
+  await connectDB()
+  
+  const vendor = await Vendor.findOne({ id: vendorId })
+  if (!vendor) {
+    return {
+      avgDeliveryTime: 0,
+      bestDeliveryTime: 0,
+      slowestDeliveryTime: 0,
+      totalDeliveries: 0,
+      onTimeDeliveries: 0,
+      onTimePercentage: 0
+    }
+  }
+
+  const query: any = {
+    $or: [
+      { vendorId: vendor._id },
+      { vendorId: vendor.id }
+    ],
+    status: 'Delivered',
+    deliveredDate: { $exists: true },
+    orderDate: { $exists: true }
+  }
+  
+  if (companyId) {
+    query.companyId = companyId
+  }
+
+  // Add date range filter (filter by delivered date for delivery metrics)
+  if (startDate || endDate) {
+    query.deliveredDate = query.deliveredDate || {}
+    if (startDate) query.deliveredDate.$gte = startDate
+    if (endDate) query.deliveredDate.$lte = endDate
+  }
+
+  const orders = await Order.find(query)
+    .select('orderDate deliveredDate dispatchedDate')
+    .lean()
+
+  if (orders.length === 0) {
+    return {
+      avgDeliveryTime: 0,
+      bestDeliveryTime: 0,
+      slowestDeliveryTime: 0,
+      totalDeliveries: 0,
+      onTimeDeliveries: 0,
+      onTimePercentage: 0
+    }
+  }
+
+  const deliveryTimes: number[] = []
+  let onTimeCount = 0
+  const SLA_DAYS = 7 // Assume 7-day SLA
+
+  orders.forEach((order: any) => {
+    const created = new Date(order.orderDate)
+    const delivered = new Date(order.deliveredDate)
+    const diffMs = delivered.getTime() - created.getTime()
+    const diffDays = diffMs / (1000 * 60 * 60 * 24)
+    
+    if (diffDays >= 0) {
+      deliveryTimes.push(diffDays)
+      if (diffDays <= SLA_DAYS) {
+        onTimeCount++
+      }
+    }
+  })
+
+  if (deliveryTimes.length === 0) {
+    return {
+      avgDeliveryTime: 0,
+      bestDeliveryTime: 0,
+      slowestDeliveryTime: 0,
+      totalDeliveries: 0,
+      onTimeDeliveries: 0,
+      onTimePercentage: 0
+    }
+  }
+
+  const avgDeliveryTime = deliveryTimes.reduce((a, b) => a + b, 0) / deliveryTimes.length
+  const bestDeliveryTime = Math.min(...deliveryTimes)
+  const slowestDeliveryTime = Math.max(...deliveryTimes)
+
+  return {
+    avgDeliveryTime,
+    bestDeliveryTime,
+    slowestDeliveryTime,
+    totalDeliveries: deliveryTimes.length,
+    onTimeDeliveries: onTimeCount,
+    onTimePercentage: (onTimeCount / deliveryTimes.length) * 100
+  }
+}
+
+/**
+ * Get company account health for a vendor (single company view only)
+ */
+export async function getVendorAccountHealth(
+  vendorId: string,
+  companyId: string
+): Promise<{
+  repeatOrderRate: number
+  avgOrderValueTrend: number
+  orderFrequencyDays: number
+  accountSince: string
+  totalOrdersFromCompany: number
+  recentOrderTrend: 'growing' | 'stable' | 'declining'
+}> {
+  await connectDB()
+  
+  const vendor = await Vendor.findOne({ id: vendorId })
+  if (!vendor) {
+    return {
+      repeatOrderRate: 0,
+      avgOrderValueTrend: 0,
+      orderFrequencyDays: 0,
+      accountSince: '',
+      totalOrdersFromCompany: 0,
+      recentOrderTrend: 'stable'
+    }
+  }
+
+  const orders = await Order.find({
+    $or: [
+      { vendorId: vendor._id },
+      { vendorId: vendor.id }
+    ],
+    companyId: companyId
+  })
+    .select('orderDate total employeeId')
+    .sort({ orderDate: 1 })
+    .lean()
+
+  if (orders.length === 0) {
+    return {
+      repeatOrderRate: 0,
+      avgOrderValueTrend: 0,
+      orderFrequencyDays: 0,
+      accountSince: '',
+      totalOrdersFromCompany: 0,
+      recentOrderTrend: 'stable'
+    }
+  }
+
+  // Account since (first order date)
+  const firstOrder = orders[0]
+  const accountSince = new Date(firstOrder.orderDate).toISOString().split('T')[0]
+
+  // Repeat order rate (employees who ordered more than once)
+  const employeeOrders = new Map<string, number>()
+  orders.forEach((order: any) => {
+    const empId = order.employeeId?.toString() || ''
+    employeeOrders.set(empId, (employeeOrders.get(empId) || 0) + 1)
+  })
+  const repeatCustomers = Array.from(employeeOrders.values()).filter(count => count > 1).length
+  const repeatOrderRate = employeeOrders.size > 0 ? (repeatCustomers / employeeOrders.size) * 100 : 0
+
+  // Order frequency (average days between orders)
+  let totalGapDays = 0
+  for (let i = 1; i < orders.length; i++) {
+    const prev = new Date(orders[i - 1].orderDate)
+    const curr = new Date(orders[i].orderDate)
+    totalGapDays += (curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24)
+  }
+  const orderFrequencyDays = orders.length > 1 ? totalGapDays / (orders.length - 1) : 0
+
+  // Calculate trend (compare last 30 days vs previous 30 days)
+  const now = new Date()
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+  const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000)
+
+  const recentOrders = orders.filter((o: any) => new Date(o.orderDate) >= thirtyDaysAgo)
+  const previousOrders = orders.filter((o: any) => {
+    const d = new Date(o.orderDate)
+    return d >= sixtyDaysAgo && d < thirtyDaysAgo
+  })
+
+  const recentRevenue = recentOrders.reduce((sum: number, o: any) => sum + (o.total || 0), 0)
+  const previousRevenue = previousOrders.reduce((sum: number, o: any) => sum + (o.total || 0), 0)
+
+  let avgOrderValueTrend = 0
+  if (previousRevenue > 0) {
+    avgOrderValueTrend = ((recentRevenue - previousRevenue) / previousRevenue) * 100
+  }
+
+  let recentOrderTrend: 'growing' | 'stable' | 'declining' = 'stable'
+  if (recentOrders.length > previousOrders.length * 1.2) {
+    recentOrderTrend = 'growing'
+  } else if (recentOrders.length < previousOrders.length * 0.8) {
+    recentOrderTrend = 'declining'
+  }
+
+  return {
+    repeatOrderRate,
+    avgOrderValueTrend,
+    orderFrequencyDays,
+    accountSince,
+    totalOrdersFromCompany: orders.length,
+    recentOrderTrend
+  }
+}
+
+/**
+ * Get comprehensive vendor reports with company and date range filtering support
+ */
+export async function getVendorReportsForCompany(
+  vendorId: string,
+  companyId: string | null = null,
+  startDate?: Date | null,
+  endDate?: Date | null
+): Promise<{
+  salesPatterns: {
+    daily: Array<{ period: string; revenue: number; orderCount: number; avgOrderValue: number }>
+    weekly: Array<{ period: string; revenue: number; orderCount: number; avgOrderValue: number }>
+    monthly: Array<{ period: string; revenue: number; orderCount: number; avgOrderValue: number }>
+  }
+  orderStatusBreakdown: Array<{ status: string; count: number; revenue: number; percentage: number }>
+  businessVolumeByCompany: Array<{ companyId: string; companyName: string; orderCount: number; revenue: number; avgOrderValue: number; percentage: number }>
+  topProducts: Array<{ productId: string; productName: string; quantitySold: number; revenue: number; orderCount: number }>
+  deliveryPerformance: {
+    avgDeliveryTime: number
+    bestDeliveryTime: number
+    slowestDeliveryTime: number
+    totalDeliveries: number
+    onTimeDeliveries: number
+    onTimePercentage: number
+  }
+  accountHealth?: {
+    repeatOrderRate: number
+    avgOrderValueTrend: number
+    orderFrequencyDays: number
+    accountSince: string
+    totalOrdersFromCompany: number
+    recentOrderTrend: 'growing' | 'stable' | 'declining'
+  }
+  summary: {
+    totalRevenue: number
+    totalOrders: number
+    avgOrderValue: number
+    totalCompanies: number
+    accountSince?: string
+    totalOrdersFromCompany?: number
+  }
+}> {
+  await connectDB()
+  
+  const vendor = await Vendor.findOne({ id: vendorId })
+  if (!vendor) {
+    throw new Error(`Vendor not found: ${vendorId}`)
+  }
+
+  // Fetch all data in parallel with date range
+  const [
+    salesPatternsDaily,
+    salesPatternsWeekly,
+    salesPatternsMonthly,
+    orderStatusBreakdown,
+    topProducts,
+    deliveryPerformance,
+    businessVolumeByCompany
+  ] = await Promise.all([
+    getVendorSalesPatternsForCompany(vendorId, companyId, 'daily', startDate, endDate),
+    getVendorSalesPatternsForCompany(vendorId, companyId, 'weekly', startDate, endDate),
+    getVendorSalesPatternsForCompany(vendorId, companyId, 'monthly', startDate, endDate),
+    getVendorOrderStatusBreakdownForCompany(vendorId, companyId, startDate, endDate),
+    getVendorTopProducts(vendorId, companyId, 5, startDate, endDate),
+    getVendorDeliveryPerformance(vendorId, companyId, startDate, endDate),
+    companyId ? Promise.resolve([]) : getVendorBusinessVolumeByCompanyWithDateRange(vendorId, startDate, endDate)
+  ])
+
+  // Get account health only if single company selected (account health is lifetime, not filtered)
+  let accountHealth
+  if (companyId) {
+    accountHealth = await getVendorAccountHealth(vendorId, companyId)
+  }
+
+  // Calculate summary
+  const totalRevenue = orderStatusBreakdown.reduce((sum, item) => sum + item.revenue, 0)
+  const totalOrders = orderStatusBreakdown.reduce((sum, item) => sum + item.count, 0)
+  const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0
+  
+  // For all companies view, count unique companies; for single company, show 1
+  const totalCompanies = companyId ? 1 : businessVolumeByCompany.length
+
+  return {
+    salesPatterns: {
+      daily: salesPatternsDaily,
+      weekly: salesPatternsWeekly,
+      monthly: salesPatternsMonthly
+    },
+    orderStatusBreakdown,
+    businessVolumeByCompany,
+    topProducts,
+    deliveryPerformance,
+    accountHealth,
+    summary: {
+      totalRevenue,
+      totalOrders,
+      avgOrderValue,
+      totalCompanies,
+      accountSince: accountHealth?.accountSince,
+      totalOrdersFromCompany: accountHealth?.totalOrdersFromCompany
+    }
+  }
+}
+
+/**
+ * Get business volume by company with date range filtering
+ */
+export async function getVendorBusinessVolumeByCompanyWithDateRange(
+  vendorId: string,
+  startDate?: Date | null,
+  endDate?: Date | null
+): Promise<{
+  companyId: string
+  companyName: string
+  orderCount: number
+  revenue: number
+  avgOrderValue: number
+  percentage: number
+}[]> {
+  await connectDB()
+  
+  const vendor = await Vendor.findOne({ id: vendorId })
+  if (!vendor) return []
+
+  const query: any = {
+    $or: [
+      { vendorId: vendor._id },
+      { vendorId: vendor.id }
+    ]
+  }
+
+  // Add date range filter
+  if (startDate || endDate) {
+    query.orderDate = {}
+    if (startDate) query.orderDate.$gte = startDate
+    if (endDate) query.orderDate.$lte = endDate
+  }
+
+  const orders = await Order.find(query)
+    .select('companyId total')
+    .lean()
+
+  if (orders.length === 0) return []
+
+  // Collect unique company IDs
+  const companyIdSet = new Set<string>()
+  orders.forEach((order: any) => {
+    if (order.companyId) {
+      const compId = typeof order.companyId === 'object' 
+        ? (order.companyId._id?.toString() || order.companyId.toString())
+        : String(order.companyId)
+      companyIdSet.add(compId)
+    }
+  })
+
+  // Fetch all company names in one query
+  const companyIds = Array.from(companyIdSet)
+  const companies = await Company.find({
+    $or: [
+      { id: { $in: companyIds } },
+      { _id: { $in: companyIds.filter(id => /^[a-f0-9]{24}$/i.test(id)) } }
+    ]
+  }).select('id _id name').lean()
+
+  // Build company name lookup map
+  const companyNameMap = new Map<string, string>()
+  companies.forEach((c: any) => {
+    if (c.id) companyNameMap.set(c.id, c.name || 'Unknown Company')
+    if (c._id) companyNameMap.set(c._id.toString(), c.name || 'Unknown Company')
+  })
+
+  const companyMap = new Map<string, { companyName: string; orderCount: number; revenue: number }>()
+  let totalRevenue = 0
+
+  orders.forEach((order: any) => {
+    let companyId = 'Unknown'
+    if (order.companyId) {
+      companyId = typeof order.companyId === 'object' 
+        ? (order.companyId._id?.toString() || order.companyId.id || order.companyId.toString())
+        : String(order.companyId)
+    }
+    
+    const companyName = companyNameMap.get(companyId) || 'Unknown Company'
+    const revenue = order.total || 0
+
+    if (!companyMap.has(companyId)) {
+      companyMap.set(companyId, { companyName, orderCount: 0, revenue: 0 })
+    }
+
+    const companyData = companyMap.get(companyId)!
+    companyData.orderCount += 1
+    companyData.revenue += revenue
+    totalRevenue += revenue
+  })
+
+  return Array.from(companyMap.entries())
+    .map(([companyId, data]) => ({
+      companyId,
+      companyName: data.companyName,
+      orderCount: data.orderCount,
+      revenue: data.revenue,
+      avgOrderValue: data.orderCount > 0 ? data.revenue / data.orderCount : 0,
+      percentage: totalRevenue > 0 ? (data.revenue / totalRevenue) * 100 : 0
+    }))
+    .sort((a, b) => b.revenue - a.revenue)
 }
 
 /**
@@ -8903,10 +9795,28 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
       .lean()
     
     // CRITICAL FIX: Fetch parent categories manually since parentCategoryId is also a string ID
+    // Try BOTH global Category AND company-specific ProductCategory to handle data model variations
     const uniqueParentCategoryIds = [...new Set(subcategories.map((s: any) => s.parentCategoryId).filter(Boolean))]
-    const parentCategories = await Category.find({ id: { $in: uniqueParentCategoryIds } })
+    
+    // First, try global Category collection
+    let parentCategories = await Category.find({ id: { $in: uniqueParentCategoryIds } })
       .select('id name')
       .lean()
+    
+    // Also try ProductCategory (company-specific) for any IDs not found in global Category
+    const foundIds = new Set(parentCategories.map((c: any) => c.id))
+    const missingIds = uniqueParentCategoryIds.filter(id => !foundIds.has(id))
+    if (missingIds.length > 0) {
+      const productCategories = await ProductCategory.find({ 
+        id: { $in: missingIds },
+        companyId: company.id 
+      })
+        .select('id name')
+        .lean()
+      parentCategories = [...parentCategories, ...productCategories]
+      console.log(`[getEmployeeEligibilityFromDesignation] Found ${productCategories.length} parent categories from ProductCategory collection`)
+    }
+    
     const parentCategoryMap = new Map(parentCategories.map((c: any) => [c.id, c]))
     
     // Attach parent categories to subcategories
@@ -8933,15 +9843,19 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
       if (!subcat || !subcat.parentCategory) continue
       
       const parentCategory = subcat.parentCategory
-      const categoryName = parentCategory.name?.toLowerCase() || ''
-      if (!categoryName) continue
+      const rawCategoryName = parentCategory.name?.toLowerCase() || ''
+      if (!rawCategoryName) continue
+      
+      // CRITICAL FIX: Normalize category name to handle singular/plural variations
+      // e.g., "accessories" -> "accessory", "shirts" -> "shirt"
+      const categoryName = normalizeCategoryName(rawCategoryName)
       
       const quantity = elig.quantity || 0
       const renewalFrequency = elig.renewalFrequency || 6
       const renewalUnit = elig.renewalUnit || 'months'
       const cycleMonths = renewalUnit === 'years' ? renewalFrequency * 12 : renewalFrequency
       
-      // Aggregate quantities for same category
+      // Aggregate quantities for same category (using normalized name)
       if (!eligibility[categoryName]) {
         eligibility[categoryName] = 0
         cycleDurations[categoryName] = cycleMonths
@@ -8953,8 +9867,8 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
         cycleDurations[categoryName] = cycleMonths
       }
         
-      // Update legacy eligibility
-      const normalizedCategory = normalizeCategoryName(categoryName)
+      // Update legacy eligibility (categoryName is already normalized)
+      const normalizedCategory = categoryName
       if (normalizedCategory === 'shirt' || categoryName === 'shirt') {
         legacyEligibility.shirt += quantity
       } else if (normalizedCategory === 'pant' || categoryName === 'pant' || categoryName === 'trouser') {
@@ -9080,9 +9994,11 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
   
 
   // Initialize consumed eligibility for all categories
+  // CRITICAL FIX: Normalize category names to match eligibility keys (singular/plural)
   const consumed: Record<string, number> = {}
   categories.forEach(cat => {
-    consumed[cat.name.toLowerCase()] = 0
+    const normalizedName = normalizeCategoryName(cat.name)
+    consumed[normalizedName] = 0
   })
   
   // Legacy consumed for backward compatibility
@@ -9116,6 +10032,7 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
       }
 
       // Get category name (handle both old and new formats)
+      // CRITICAL FIX: Always normalize category names to match eligibility keys
       let categoryName: string | null = null
       
       // Try new format first (categoryId)
@@ -9123,17 +10040,17 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
         const categoryId = uniform.categoryId.toString()
         const category = await getCategoryByIdOrName(company.id, categoryId)
         if (category) {
-          categoryName = category.name.toLowerCase()
+          categoryName = normalizeCategoryName(category.name)
         }
       }
       
       // Fallback to old format (category string)
       if (!categoryName && 'category' in uniform && uniform.category) {
         categoryName = normalizeCategoryName(uniform.category as string)
-        // Try to find matching category
+        // Try to find matching category (for additional validation)
         const category = await getCategoryByIdOrName(company.id, categoryName)
         if (category) {
-          categoryName = category.name.toLowerCase()
+          categoryName = normalizeCategoryName(category.name)
         }
       }
 
@@ -9225,6 +10142,7 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
     }
 
     // Get category name (handle both old and new formats)
+    // CRITICAL FIX: Always normalize category names to match eligibility keys
     let categoryName: string | null = null
     
     // Try new format first (categoryId)
@@ -9232,17 +10150,17 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
       const categoryId = uniform.categoryId.toString()
       const category = await getCategoryByIdOrName(company.id, categoryId)
       if (category) {
-        categoryName = category.name.toLowerCase()
+        categoryName = normalizeCategoryName(category.name)
       }
     }
     
     // Fallback to old format (category string)
     if (!categoryName && 'category' in uniform && uniform.category) {
       categoryName = normalizeCategoryName(uniform.category as string)
-      // Try to find matching category
+      // Try to find matching category (for additional validation)
       const category = await getCategoryByIdOrName(company.id, categoryName)
       if (category) {
-        categoryName = category.name.toLowerCase()
+        categoryName = normalizeCategoryName(category.name)
       }
     }
 
@@ -15660,27 +16578,15 @@ export async function updatePRShipmentStatus(
     }
   }
   
-  // Generate numeric shipmentId for Order (must be 6-10 digits per Order schema validation)
-  // Note: shipmentReferenceNumber can be alphanumeric (references Shipment.shipmentId)
-  // But Order.shipmentId must be numeric
+  // Order.shipmentId: use shipmentReferenceNumber when provided (Order schema allows alphanumeric).
+  // This keeps Order.shipmentId in sync with Shipment.shipmentId so getOrdersByVendor can resolve tracking.
   let shipmentId: string
   if (shipmentData.shipmentReferenceNumber) {
-    // If shipmentReferenceNumber is provided, check if it's already numeric
-    const refNumber = shipmentData.shipmentReferenceNumber.trim()
-    if (/^\d{6,10}$/.test(refNumber)) {
-      // It's already a valid numeric ID, use it
-      shipmentId = refNumber
-      console.log(`[updatePRShipmentStatus] ✅ Using numeric shipmentReferenceNumber as shipmentId: ${shipmentId} for PR: ${prId}`)
-    } else {
-      // It's alphanumeric (e.g., SHIP_XXXXX from Shipment model), generate new numeric ID
-      shipmentId = String(Date.now()).slice(-10).padStart(6, '0')
-      console.log(`[updatePRShipmentStatus] ⚠️ shipmentReferenceNumber is alphanumeric (${refNumber}), generated new numeric shipmentId: ${shipmentId} for PR: ${prId}`)
-      console.log(`[updatePRShipmentStatus]    shipmentReferenceNumber will be stored separately: ${refNumber}`)
-    }
+    shipmentId = shipmentData.shipmentReferenceNumber.trim()
+    console.log(`[updatePRShipmentStatus] ✅ Using shipmentReferenceNumber as Order.shipmentId: ${shipmentId} for PR: ${prId}`)
   } else {
-    // No shipmentReferenceNumber provided, generate new numeric ID
     shipmentId = String(Date.now()).slice(-10).padStart(6, '0')
-    console.log(`[updatePRShipmentStatus] ⚠️ No shipmentReferenceNumber provided, generated new numeric shipmentId: ${shipmentId} for PR: ${prId}`)
+    console.log(`[updatePRShipmentStatus] ⚠️ No shipmentReferenceNumber provided, generated shipmentId: ${shipmentId} for PR: ${prId}`)
   }
   
   // Update PR with shipment data
@@ -15729,7 +16635,9 @@ export async function updatePRShipmentStatus(
   pr.shipperName = shipmentData.shipperName.trim()
   pr.carrierName = shipmentData.carrierName?.trim()
   pr.modeOfTransport = shipmentData.modeOfTransport
-  pr.trackingNumber = shipmentData.trackingNumber?.trim()
+  // Preserve existing tracking (e.g. from createApiShipment) when incoming is undefined
+  const incomingTracking = shipmentData.trackingNumber?.trim()
+  pr.trackingNumber = incomingTracking !== undefined && incomingTracking !== '' ? incomingTracking : (pr.trackingNumber ?? undefined)
   
   // DUAL-WRITE: Dispatch status (behind feature flag)
   if (process.env.DUAL_WRITE_ENABLED === "true") {

@@ -7,6 +7,8 @@ export interface IOrderItem {
   size: string
   quantity: number
   price: number
+  /** Fit type: STANDARD = off-the-shelf size; MTM = Made-to-Measure. MTM excluded from size distribution analytics. */
+  fit_type?: 'STANDARD' | 'MTM'
   // Shipment tracking fields (PR-level, backward compatible)
   dispatchedQuantity?: number // Quantity dispatched for this item (default: 0)
   deliveredQuantity?: number // Quantity delivered for this item (default: 0)
@@ -128,6 +130,12 @@ const OrderItemSchema = new Schema<IOrderItem>({
   price: {
     type: Number,
     required: true,
+  },
+  fit_type: {
+    type: String,
+    enum: ['STANDARD', 'MTM'],
+    default: 'STANDARD',
+    required: false,
   },
   // Shipment tracking fields (backward compatible, all optional)
   dispatchedQuantity: {

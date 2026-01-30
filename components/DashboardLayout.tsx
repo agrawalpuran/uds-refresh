@@ -423,6 +423,7 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
         { name: 'Invoices', href: '/dashboard/company/invoices', icon: FileText },
         { name: 'Feedback', href: '/dashboard/company/feedback', icon: MessageSquare },
         { name: 'Bulk Order Upload', href: '/dashboard/company/batch-upload', icon: Upload },
+        { name: 'Vendor Stock', href: '/dashboard/company/vendor-stock', icon: Warehouse },
       ]
     },
     {
@@ -440,15 +441,14 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
       icon: Settings,
       items: [
         { name: 'Settings', href: '/dashboard/company/settings', icon: Settings },
+        { name: 'Branches', href: '/dashboard/company/locations', icon: MapPin },
       ]
     },
   ]
 
   // Additional flat menu items for Company Admin
   const companyAdminFlatMenu: MenuItem[] = [
-    { name: 'Branches', href: '/dashboard/company/locations', icon: MapPin },
-    { name: 'Vendor Stock', href: '/dashboard/company/vendor-stock', icon: Warehouse },
-    { name: 'Reports', href: '/dashboard/company/reports', icon: BarChart3 },
+    { name: 'Reports & Analytics', href: '/dashboard/company/reports', icon: BarChart3 },
   ]
 
   // Toggle category expansion

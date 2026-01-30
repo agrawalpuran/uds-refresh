@@ -94,12 +94,24 @@ export async function GET(request: Request) {
       if (!company) {
         return NextResponse.json({ error: 'Company not found' }, { status: 404 })
       }
-      return NextResponse.json(company)
+      return NextResponse.json(company, {
+        headers: {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      })
     }
 
     // Get all companies
     const companies = await getAllCompanies()
-    return NextResponse.json(companies)
+    return NextResponse.json(companies, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
+    })
   } catch (error: any) {
     console.error('API Error:', error)
     // Return appropriate status code based on error type
