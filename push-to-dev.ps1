@@ -70,14 +70,47 @@ Write-Host "`nCurrent branch: $(git branch --show-current)" -ForegroundColor Gre
 Write-Host "`nChecking git status..." -ForegroundColor Yellow
 git status --short
 
+# Remove stale index.lock so 'git add' can run (e.g. after a crashed Git process or another app holding the lock)
+$lockPath = Join-Path (Get-Location) ".git\index.lock"
+if (Test-Path $lockPath) {
+    Write-Host "`nRemoving stale .git\index.lock so staging can proceed..." -ForegroundColor Yellow
+    Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
+    if (Test-Path $lockPath) {
+        Write-Host "Could not remove index.lock. Close Cursor/VS Code Source Control, other Git UIs, and any 'git' terminals, then run this script again." -ForegroundColor Red
+        exit 1
+    }
+}
+
 Write-Host "`nStaging all changes..." -ForegroundColor Yellow
 git add .
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "`n'git add .' failed (often due to a locked file, e.g. PowerPoint/Excel open or OneDrive). Staging everything except common locked files..." -ForegroundColor Yellow
+    # Fallback: stage by path so one locked file (e.g. .pptx) doesn't block the rest
+    $paths = @("app", "lib", "components", "public", "docs", "*.md", "push-to-dev.ps1", "package.json", "package-lock.json", "tsconfig.json", "next.config.js", "next.config.mjs", "README.md", ".env.example", ".gitignore")
+    foreach ($p in $paths) {
+        if (Test-Path $p -ErrorAction SilentlyContinue) {
+            git add $p 2>$null
+        }
+    }
+    # Add remaining files that are not the locked presentation (avoid .pptx, .xlsx, .docx)
+    $porcelainLines = git status --porcelain 2>$null
+    foreach ($line in $porcelainLines) {
+        $s = $line.Trim(); if ($s.Length -lt 4) { continue }
+        $path = $s.Substring(3).Trim().Trim('"')
+        if ($path -and $path -notmatch '\.(pptx|xlsx|docx)$' -and $path -notlike '*Uniform-Distribution-System*Presentation*') {
+            git add $path 2>$null
+        }
+    }
+}
 
 # Check if there are changes to commit
 $hasChanges = git diff --cached --quiet
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`nNo changes to commit. Checking if there are commits to push..." -ForegroundColor Yellow
-    
+    $porcelain = git status --porcelain 2>$null
+    if ($porcelain) {
+        Write-Host "You have uncommitted changes in your working tree. If you expected to push them, 'git add' may have failed (e.g. .git/index.lock). Close other Git tools and run this script again." -ForegroundColor Yellow
+    }
     # Check if there are unpushed commits
     $unpushed = git log $RemoteName/$BranchName..HEAD 2>$null
     if (-not $unpushed) {

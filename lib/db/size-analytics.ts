@@ -74,17 +74,15 @@ export async function getSizeDistributionFilterOptions(companyId: string): Promi
     status: 'Delivered',
     $or: [{ unified_status: { $ne: 'CANCELLED' } }, { unified_status: { $exists: false } }]
   })
-    .select('items orderDate vendorId locationId')
+    .select('items orderDate vendorId')
     .lean()
 
   const uniformIds = new Set<string>()
   const vendorIds = new Set<string>()
   const years = new Set<number>()
-  const locationIds = new Set<string>()
 
   for (const o of orders as any[]) {
     if (o.vendorId) vendorIds.add(o.vendorId)
-    if (o.locationId) locationIds.add(o.locationId)
     if (o.orderDate) years.add(new Date(o.orderDate).getFullYear())
     if (o.items && Array.isArray(o.items)) {
       for (const it of o.items) {
@@ -115,8 +113,10 @@ export async function getSizeDistributionFilterOptions(companyId: string): Promi
     .select('id name')
     .lean()
 
-  const locations = await Location.find({ id: { $in: Array.from(locationIds) } })
+  // All locations for the company (not limited to delivered orders)
+  const locations = await Location.find({ companyId: companyIdStr })
     .select('id name')
+    .sort({ name: 1 })
     .lean()
 
   const categoryLabels: Record<string, string> = {

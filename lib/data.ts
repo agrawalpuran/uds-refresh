@@ -13,6 +13,8 @@ export interface Uniform {
   stock: number
   // Many-to-many relationships
   companyIds: string[] // Products can be associated with multiple companies
+  /** When false, Size Guide link is hidden on catalog. Default true. */
+  sizeChartAvailable?: boolean
 }
 
 export interface Vendor {

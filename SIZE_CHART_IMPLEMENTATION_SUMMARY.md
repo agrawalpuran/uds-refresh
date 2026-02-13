@@ -105,19 +105,52 @@ Size chart images should be stored in:
 
 ## 🚀 Usage
 
-### Adding a Size Chart (Manual/Admin)
+### How to add a size chart for a product
 
-1. **Upload image** to `public/uploads/size-charts/product-{productId}.{extension}`
-2. **Create database record** using `upsertProductSizeChart()`:
+1. **Ensure the product has "Size chart available" = Yes**  
+   In **Superadmin → Products → Edit product**, set **Size chart available** to **Yes**. (If it’s **No**, the Size Guide link is hidden in the catalog.)
+
+2. **Add the size chart image**
+   - Create the folder if needed: `public/uploads/size-charts/`
+   - Save your size chart image (one image per product, e.g. M/L/XL measurements) as:
+     - **Path:** `public/uploads/size-charts/product-{productId}.{ext}`
+     - **Example:** `public/uploads/size-charts/product-200001.jpg`  
+   - Allowed formats: **jpg**, **jpeg**, **png**, **webp**
+
+3. **Create the database record**  
+   The app expects a record in the **ProductSizeChart** collection. You can add it in one of these ways:
+
+   **Option A – From code (e.g. script or API route)**  
+   Call the data-access function (server-side only):
    ```javascript
+   const { upsertProductSizeChart } = require('@/lib/db/data-access')
    await upsertProductSizeChart(
-     '200001', // productId
-     '/uploads/size-charts/product-200001.jpg', // imageUrl
-     'jpg', // imageType
-     'product-200001.jpg', // fileName
-     102400 // fileSize in bytes
+     '200001',                    // productId (same as Uniform.id)
+     '/uploads/size-charts/product-200001.jpg',  // imageUrl (path from public)
+     'jpg',                       // imageType: 'jpg' | 'jpeg' | 'png' | 'webp'
+     'product-200001.jpg',        // fileName
+     102400                      // fileSize in bytes
    )
    ```
+
+   **Option B – Directly in MongoDB**  
+   Insert a document in the `productsizecharts` collection:
+   ```json
+   {
+     "productId": "200001",
+     "imageUrl": "/uploads/size-charts/product-200001.jpg",
+     "imageType": "jpg",
+     "fileName": "product-200001.jpg",
+     "fileSize": 102400
+   }
+   ```
+   (The `id` field is auto-generated if not provided.)
+
+4. **Check in the catalog**  
+   Open **Consumer** or **Company** catalog. For that product you should see the **Size Guide** link; clicking it opens the size chart image in a modal.
+
+**Summary:**  
+Product has **Size chart available = Yes** → image file in `public/uploads/size-charts/product-{id}.{ext}` → record in **ProductSizeChart** (via code or DB). Then the Size Guide link appears and shows your image.
 
 ### Viewing Size Chart
 

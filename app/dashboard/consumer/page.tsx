@@ -215,7 +215,7 @@ export default function ConsumerDashboard() {
               getOrdersByEmployee(employeeId),
               getConsumedEligibility(employeeId),
               getCompanyById(companyId),
-              fetch(`/api/employees/${employeeId}/eligibility`).then(res => res.ok ? res.json() : null).catch(() => null)
+              fetch(`/api/employees/${employeeId}/eligibility`, { cache: 'no-store' }).then(res => res.ok ? res.json() : null).catch(() => null)
             ])
             
             console.log('Consumer Dashboard - Products loaded:', products.length, products)

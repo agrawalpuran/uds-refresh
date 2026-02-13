@@ -630,20 +630,20 @@ export default function VendorCatalogPage() {
                 <h3 className="font-bold text-gray-900 mb-1">{uniform.name}</h3>
                 <p className="text-xs text-gray-500 mb-2 font-mono">SKU: {uniform.sku}</p>
                 
-                {/* View Size Chart Link */}
-                {sizeCharts[uniform.id] && (
+                {/* Size Guide link – only when product has Size chart available = Yes */}
+                {(uniform as any).sizeChartAvailable !== false && (
                   <button
                     onClick={() => {
                       setSizeChartModal({
                         isOpen: true,
-                        imageUrl: sizeCharts[uniform.id].imageUrl,
+                        imageUrl: sizeCharts[uniform.id]?.imageUrl ?? '',
                         productName: uniform.name,
                       })
                     }}
                     className="mb-2 text-xs text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 transition-colors"
                   >
                     <Ruler className="h-3 w-3" />
-                    <span>View Size Chart</span>
+                    <span>Size Guide</span>
                   </button>
                 )}
                 

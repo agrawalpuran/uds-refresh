@@ -1,11 +1,13 @@
 'use client'
 
-import { X } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { X, Ruler } from 'lucide-react'
 import Image from 'next/image'
 
 interface SizeChartModalProps {
   isOpen: boolean
   onClose: () => void
+  /** URL to size chart image; empty string = show "not available" message (Myntra/Amazon-style static link) */
   imageUrl: string
   productName: string
 }
@@ -16,7 +18,16 @@ export default function SizeChartModal({
   imageUrl,
   productName,
 }: SizeChartModalProps) {
+  const [imageLoadError, setImageLoadError] = useState(false)
+
+  useEffect(() => {
+    if (isOpen) setImageLoadError(false)
+  }, [isOpen, imageUrl])
+
   if (!isOpen) return null
+
+  const hasImage = Boolean(imageUrl?.trim())
+  const showNotAvailable = !hasImage || imageLoadError
 
   return (
     <div
@@ -29,7 +40,7 @@ export default function SizeChartModal({
       >
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between z-10">
           <h2 className="text-xl font-bold text-gray-900">
-            Size Chart - {productName}
+            Size Guide – {productName}
           </h2>
           <button
             onClick={onClose}
@@ -40,21 +51,26 @@ export default function SizeChartModal({
           </button>
         </div>
         <div className="p-6">
-          <div className="relative w-full" style={{ minHeight: '400px' }}>
-            <Image
-              src={imageUrl}
-              alt={`Size chart for ${productName}`}
-              width={800}
-              height={1000}
-              className="w-full h-auto object-contain"
-              unoptimized={true}
-              onError={(e) => {
-                const target = e.target as HTMLImageElement
-                target.src = '/images/uniforms/default.jpg'
-                target.alt = 'Size chart image not available'
-              }}
-            />
-          </div>
+          {showNotAvailable ? (
+            <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+              <div className="rounded-full bg-gray-100 p-4 mb-4">
+                <Ruler className="h-10 w-10 text-gray-400" />
+              </div>
+              <p className="text-gray-600 font-medium">Not available at the moment.</p>
+            </div>
+          ) : (
+            <div className="relative w-full" style={{ minHeight: '400px' }}>
+              <Image
+                src={imageUrl}
+                alt={`Size chart for ${productName} – M, L, XL measurements`}
+                width={800}
+                height={1000}
+                className="w-full h-auto object-contain"
+                unoptimized={true}
+                onError={() => setImageLoadError(true)}
+              />
+            </div>
+          )}
         </div>
         <div className="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-3 flex justify-end">
           <button

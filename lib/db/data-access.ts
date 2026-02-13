@@ -1785,6 +1785,7 @@ export async function createProduct(productData: {
   attribute2_value?: string | number
   attribute3_name?: string
   attribute3_value?: string | number
+  sizeChartAvailable?: boolean
 }): Promise<any> {
   await connectDB()
   
@@ -1840,6 +1841,7 @@ export async function createProduct(productData: {
     image: productData.image || '',
     sku: productData.sku,
     companyIds: [],
+    sizeChartAvailable: productData.sizeChartAvailable !== false, // default true for backward compatibility
   }
   
   // Add optional attributes (only include if name is provided - name is required for attribute to be valid)
@@ -2059,6 +2061,7 @@ export async function updateProduct(
     attribute2_value?: string | number
     attribute3_name?: string
     attribute3_value?: string | number
+    sizeChartAvailable?: boolean
   }
 ): Promise<any> {
   await connectDB()
@@ -2089,6 +2092,7 @@ export async function updateProduct(
   if (updateData.price !== undefined) updateObject.price = updateData.price
   if (updateData.image !== undefined) updateObject.image = updateData.image
   if (updateData.sku !== undefined) updateObject.sku = updateData.sku
+  if (updateData.sizeChartAvailable !== undefined) updateObject.sizeChartAvailable = updateData.sizeChartAvailable
   
   console.log('[updateProduct] Update data received:', JSON.stringify(updateData, null, 2))
   
@@ -9653,6 +9657,10 @@ export async function getOrdersByParentOrderId(parentOrderId: string): Promise<a
 export async function getEmployeeEligibilityFromDesignation(employeeId: string): Promise<{
   eligibility: Record<string, number> // Dynamic category eligibility: { "shirt": 2, "pant": 2, "custom-category": 1, ... }
   cycleDurations: Record<string, number> // Dynamic category cycle durations: { "shirt": 6, "pant": 6, ... }
+  /** Per-subcategory eligibility (for display and enforcement per product). Key = subcategoryId. */
+  eligibilityBySubcategory: Record<string, { quantity: number; cycleMonths: number }>
+  /** Per-subcategory cycle duration in months. Key = subcategoryId. */
+  cycleDurationsBySubcategory: Record<string, number>
   // Legacy fields for backward compatibility
   shirt: number
   pant: number
@@ -9672,6 +9680,8 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
     return {
       eligibility: {},
       cycleDurations: {},
+      eligibilityBySubcategory: {},
+      cycleDurationsBySubcategory: {},
       shirt: 0,
       pant: 0,
       shoe: 0,
@@ -9709,6 +9719,8 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
     return {
       eligibility,
       cycleDurations,
+      eligibilityBySubcategory: {},
+      cycleDurationsBySubcategory: {},
       ...legacyEligibility
     }
   }
@@ -9737,17 +9749,20 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
   console.log(`  - gender: ${JSON.stringify(genderFilter)}`)
   
   // Query DesignationSubcategoryEligibility (subcategory-based)
-  // CRITICAL FIX: Use company.id (string ID) instead of company._id (ObjectId)
-  // DesignationSubcategoryEligibility stores companyId as a string ID (e.g., "100001")
+  // Case-insensitive designation match so "Pilot" and "pilot" both match
+  const designationRegex = new RegExp(`^${normalizedDesignation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
   const subcategoryEligibilities = await DesignationSubcategoryEligibility.find({
     companyId: company.id, // Use string ID, not ObjectId
-    designationId: normalizedDesignation,
+    designationId: { $regex: designationRegex },
     gender: genderFilter,
     status: 'active'
   })
     .lean()
   
   console.log(`[getEmployeeEligibilityFromDesignation] Found ${subcategoryEligibilities.length} subcategory eligibility rules`)
+  if (subcategoryEligibilities.length > 0) {
+    console.log(`[getEmployeeEligibilityFromDesignation] Raw rules (id, subCategoryId, quantity):`, subcategoryEligibilities.map((e: any) => ({ id: e.id, subCategoryId: e.subCategoryId, quantity: e.quantity })))
+  }
   
   // CRITICAL MIGRATION: Subcategory eligibility is the SINGLE source of truth
   // NO category-based fallback allowed
@@ -9761,6 +9776,8 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
     return {
       eligibility: {},
       cycleDurations: {},
+      eligibilityBySubcategory: {},
+      cycleDurationsBySubcategory: {},
       shirt: 0,
       pant: 0,
       shoe: 0,
@@ -9770,9 +9787,12 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
     
   // Process subcategory-based eligibility
   {
-    // Aggregate subcategory eligibility by parent category
+    // Aggregate subcategory eligibility by parent category (for legacy/backward compat)
     const eligibility: Record<string, number> = {}
     const cycleDurations: Record<string, number> = {}
+    // Per-subcategory eligibility (for display and enforcement per product)
+    const eligibilityBySubcategory: Record<string, { quantity: number; cycleMonths: number }> = {}
+    const cycleDurationsBySubcategory: Record<string, number> = {}
     let legacyEligibility = { shirt: 0, pant: 0, shoe: 0, jacket: 0 }
     
     // Get all subcategories with their parent categories
@@ -9817,30 +9837,34 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
       console.log(`[getEmployeeEligibilityFromDesignation] Found ${productCategories.length} parent categories from ProductCategory collection`)
     }
     
-    const parentCategoryMap = new Map(parentCategories.map((c: any) => [c.id, c]))
+    const parentCategoryMap = new Map(parentCategories.map((c: any) => [String(c.id ?? ''), c]))
     
-    // Attach parent categories to subcategories
-    // Keep original parentCategoryId (string ID) and add parentCategory object
+    // Attach parent categories to subcategories (use String for lookup — DB may return id as number)
     const subcategoriesWithParents = subcategories.map((sub: any) => ({
       ...sub,
-      parentCategory: parentCategoryMap.get(sub.parentCategoryId) || null
+      parentCategory: parentCategoryMap.get(String(sub.parentCategoryId ?? '')) || null
     }))
     
-    // Create map: subcategory id (string) -> subcategory data
+    // Create map: subcategory id (string) -> subcategory data — use String() so lookup by String(elig.subCategoryId) always finds it (DB may return id as number)
     const subcategoryMap = new Map()
     for (const subcat of subcategoriesWithParents) {
-      const subcatId = (subcat as any).id // Use string id field
+      const subcatId = String((subcat as any).id ?? '')
       subcategoryMap.set(subcatId, subcat)
     }
     
     // Aggregate eligibility by parent category
     for (const elig of subcategoryEligibilities) {
       // subCategoryId is a string ID, not ObjectId
-      const subcatId = String(elig.subCategoryId || '')
+      const subcatId = String(elig.subCategoryId ?? '')
       if (!subcatId) continue
       
       const subcat = subcategoryMap.get(subcatId)
-      if (!subcat || !subcat.parentCategory) continue
+      if (!subcat || !subcat.parentCategory) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[getEmployeeEligibilityFromDesignation] Skipping eligibility row: subCategoryId=%s (subcat=%s, parent=%s)', subcatId, !!subcat, subcat ? !!subcat.parentCategory : 'n/a')
+        }
+        continue
+      }
       
       const parentCategory = subcat.parentCategory
       const rawCategoryName = parentCategory.name?.toLowerCase() || ''
@@ -9866,7 +9890,11 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
       if (cycleMonths > cycleDurations[categoryName]) {
         cycleDurations[categoryName] = cycleMonths
       }
-        
+
+      // Per-subcategory (for display/enforcement per product)
+      eligibilityBySubcategory[subcatId] = { quantity, cycleMonths }
+      cycleDurationsBySubcategory[subcatId] = cycleMonths
+
       // Update legacy eligibility (categoryName is already normalized)
       const normalizedCategory = categoryName
       if (normalizedCategory === 'shirt' || categoryName === 'shirt') {
@@ -9888,6 +9916,8 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
     return {
       eligibility,
       cycleDurations,
+      eligibilityBySubcategory,
+      cycleDurationsBySubcategory,
       ...legacyEligibility
     }
   }
@@ -9900,6 +9930,8 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
   return {
     eligibility: {},
     cycleDurations: {},
+    eligibilityBySubcategory: {},
+    cycleDurationsBySubcategory: {},
     shirt: 0,
     pant: 0,
     shoe: 0,
@@ -9909,6 +9941,8 @@ export async function getEmployeeEligibilityFromDesignation(employeeId: string):
 
 export async function getConsumedEligibility(employeeId: string): Promise<{
   consumed: Record<string, number> // Dynamic category consumption: { "shirt": 1, "pant": 2, "custom-category": 0, ... }
+  /** Per-subcategory consumption (for display and enforcement per product). Key = subcategoryId. */
+  consumedBySubcategory: Record<string, number>
   // Legacy fields for backward compatibility
   shirt: number
   pant: number
@@ -9924,13 +9958,13 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
     employee = await Employee.findOne({ id: employeeId })
   }
   if (!employee) {
-    return { consumed: {}, shirt: 0, pant: 0, shoe: 0, jacket: 0 }
+    return { consumed: {}, consumedBySubcategory: {}, shirt: 0, pant: 0, shoe: 0, jacket: 0 }
   }
 
   // Get company using safe helper
   const company = await getCompanyByIdSafe(employee.companyId)
   if (!company) {
-    return { consumed: {}, shirt: 0, pant: 0, shoe: 0, jacket: 0 }
+    return { consumed: {}, consumedBySubcategory: {}, shirt: 0, pant: 0, shoe: 0, jacket: 0 }
   }
 
   // Ensure system categories exist
@@ -9949,8 +9983,8 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
     ? new Date(employee.dateOfJoining) 
     : new Date('2025-10-01T00:00:00.000Z')
 
-  // Get cycle durations from designation rules (or fallback to employee-level)
-  const { cycleDurations } = await getEmployeeEligibilityFromDesignation(employeeId)
+  // Get cycle durations from designation rules (for category and subcategory)
+  const { cycleDurations, cycleDurationsBySubcategory } = await getEmployeeEligibilityFromDesignation(employeeId)
 
   // Get all orders that count towards consumed eligibility (all except cancelled)
   // We'll filter by item-specific cycles below
@@ -9991,7 +10025,21 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
   for (const uniform of uniforms) {
     uniformMap.set(uniform.id, uniform)
   }
-  
+
+  // Build productId → subcategoryId map for per-subcategory consumed (use first mapping per product)
+  const productToSubcategory = new Map<string, string>()
+  const mappings = await ProductSubcategoryMapping.find({
+    companyId: company.id,
+    productId: { $in: Array.from(allUniformIds) }
+  })
+    .select('productId subCategoryId')
+    .lean()
+  for (const m of mappings as any[]) {
+    const pid = String(m.productId || '')
+    if (pid && !productToSubcategory.has(pid)) {
+      productToSubcategory.set(pid, String(m.subCategoryId || ''))
+    }
+  }
 
   // Initialize consumed eligibility for all categories
   // CRITICAL FIX: Normalize category names to match eligibility keys (singular/plural)
@@ -10001,6 +10049,9 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
     consumed[normalizedName] = 0
   })
   
+  // Per-subcategory consumed (for display/enforcement per product)
+  const consumedBySubcategory: Record<string, number> = {}
+
   // Legacy consumed for backward compatibility
   const legacyConsumed = { shirt: 0, pant: 0, shoe: 0, jacket: 0 }
 
@@ -10082,7 +10133,17 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
         }
         consumed[categoryName] += quantity
         processedItems++
-        
+
+        // Per-subcategory consumed (for display/enforcement per product)
+        const subcategoryId = (item as any).subcategoryId || productToSubcategory.get(uniformId)
+        if (subcategoryId) {
+          const cycleMonthsSub = cycleDurationsBySubcategory[subcategoryId] ?? 6
+          const inCycleSub = isDateInCurrentCycle(orderDate, subcategoryId, dateOfJoining, cycleMonthsSub)
+          if (inCycleSub) {
+            consumedBySubcategory[subcategoryId] = (consumedBySubcategory[subcategoryId] || 0) + quantity
+          }
+        }
+
         // Update legacy consumed for backward compatibility
         if (categoryName === 'shirt') {
           legacyConsumed.shirt += quantity
@@ -10188,7 +10249,22 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
       if (consumed[categoryName] !== undefined) {
         consumed[categoryName] = Math.max(0, consumed[categoryName] - returnedQty)
       }
-      
+
+      // Per-subcategory: resolve return's product to subcategory and subtract
+      const returnUniformId = String((uniform as any).id || (uniform as any)._id?.toString() || '')
+      if (returnUniformId) {
+        const mapping = await ProductSubcategoryMapping.findOne({
+          companyId: company.id,
+          productId: returnUniformId
+        })
+          .select('subCategoryId')
+          .lean()
+        const subcatId = mapping ? String((mapping as any).subCategoryId || '') : null
+        if (subcatId && consumedBySubcategory[subcatId] !== undefined) {
+          consumedBySubcategory[subcatId] = Math.max(0, consumedBySubcategory[subcatId] - returnedQty)
+        }
+      }
+
       // Update legacy consumed for backward compatibility
       if (categoryName === 'shirt') {
         legacyConsumed.shirt = Math.max(0, legacyConsumed.shirt - returnedQty)
@@ -10203,10 +10279,11 @@ export async function getConsumedEligibility(employeeId: string): Promise<{
   }
 
   // Log summary for debugging (can be removed in production)
-  console.log(`[getConsumedEligibility] Employee ${employeeStringId}: ${orders.length} orders, consumed=${JSON.stringify(consumed)}`)
+  console.log(`[getConsumedEligibility] Employee ${employeeStringId}: ${orders.length} orders, consumed=${JSON.stringify(consumed)}, consumedBySubcategory=${Object.keys(consumedBySubcategory).length} subcategories`)
 
   return {
     consumed,
+    consumedBySubcategory,
     ...legacyConsumed
   }
 }
@@ -10436,15 +10513,15 @@ export async function validateBulkOrderItemSubcategoryEligibility(
   const employeeGender = employee.gender || 'unisex'
   const genderFilter = employeeGender === 'unisex' ? { $in: ['male', 'female', 'unisex'] } : employeeGender
 
-  // Check for subcategory-based eligibility
-  // CRITICAL FIX: Query by both ObjectId and string companyId
+  // Check for subcategory-based eligibility (case-insensitive designation match)
+  const designationRegex = new RegExp(`^${normalizedDesignation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
   const companyStrIdElig = company.id || ''
   const subcategoryEligibilities = await DesignationSubcategoryEligibility.find({
     $or: [
       { companyId: company._id },
       { companyId: companyStrIdElig }
     ],
-    designationId: normalizedDesignation,
+    designationId: { $regex: designationRegex },
     gender: genderFilter,
     status: 'active'
   })
@@ -10544,6 +10621,7 @@ export async function createOrder(orderData: {
     size: string
     quantity: number
     price: number
+    subcategoryId?: string
   }>
   deliveryAddress: string
   estimatedDeliveryTime: string
@@ -11184,6 +11262,17 @@ export async function createOrder(orderData: {
       console.log(`[createOrder] Added vendor to map: ${vendorKey} -> ${vendor.id} (${vendor.name})`)
     }
 
+    // Resolve subcategoryId for eligibility tracking (use from item or lookup)
+    let subcategoryId = item.subcategoryId
+    if (!subcategoryId) {
+      const mapping = await ProductSubcategoryMapping.findOne({
+        companyId: companyStringId,
+        productId: uniform.id
+      })
+        .select('subCategoryId')
+        .lean()
+      if (mapping) subcategoryId = String((mapping as any).subCategoryId || '')
+    }
     itemsByVendor.get(vendorKey)!.push({
         uniformId: uniform.id, // CRITICAL FIX: Use string ID (6-digit numeric), not ObjectId
         productId: uniform.id, // Store numeric/string product ID for correlation
@@ -11191,6 +11280,7 @@ export async function createOrder(orderData: {
         size: item.size,
         quantity: item.quantity,
         price: itemPrice,
+        ...(subcategoryId && { subcategoryId }),
     })
   }
 
@@ -21539,9 +21629,10 @@ export async function getProductsForDesignation(
   console.log(`  - gender: ${JSON.stringify(genderFilter)}`)
   console.log(`  - status: 'active'`)
   
+  const designationRegex = new RegExp(`^${normalizedDesignation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')
   const subcategoryEligibilities = await DesignationSubcategoryEligibility.find({
     companyId: company.id,
-    designationId: normalizedDesignation,
+    designationId: { $regex: designationRegex },
     gender: genderFilter,
     status: 'active'
   }).lean()
@@ -21691,21 +21782,26 @@ export async function getProductsForDesignation(
   // ============================================================
   // Create a map of productId -> subcategory info for reference
   const productSubcategoryMap = new Map<string, string[]>()
-  productMappingDetails.forEach(({ productId, subcategoryName }) => {
+  const productPrimarySubcategoryMap = new Map<string, { subcategoryId: string; subcategoryName: string }>()
+  productMappingDetails.forEach(({ productId, subcategoryId, subcategoryName }) => {
     if (!productSubcategoryMap.has(productId)) {
       productSubcategoryMap.set(productId, [])
+      productPrimarySubcategoryMap.set(productId, { subcategoryId, subcategoryName })
     }
     productSubcategoryMap.get(productId)!.push(subcategoryName)
   })
-  
-  // Add subcategory information to products (optional, for debugging/reference)
+
+  // Add subcategory information to products (for per-product eligibility display and order item subcategoryId)
   const enhancedProducts = filteredProducts.map((product: any) => {
     // CRITICAL FIX: Use string id field, not _id ObjectId
     const productId = product.id || product._id?.toString()
     const subcategories = productSubcategoryMap.get(productId) || []
+    const primary = productPrimarySubcategoryMap.get(productId)
     return {
       ...product,
-      _eligibleSubcategories: subcategories // For debugging/reference only
+      _eligibleSubcategories: subcategories, // For debugging/reference only
+      primarySubcategoryId: primary?.subcategoryId,
+      primarySubcategoryName: primary?.subcategoryName
     }
   })
   

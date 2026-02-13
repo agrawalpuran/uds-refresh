@@ -1778,36 +1778,81 @@ export default function ReportsPage() {
     return locationIdOrName.charAt(0).toUpperCase() + locationIdOrName.slice(1)
   }, [companyBranches])
 
-  // Branch Spend Comparison with CONDITIONAL RENDERING
+  // Classify location as branch + segment (hub vs direct) for stacked bar
+  const getBranchAndSegment = useCallback((locationIdOrName: string): { branchKey: string; branchName: string; segment: 'hub' | 'direct' } => {
+    const raw = (locationIdOrName || 'Unknown').trim()
+    if (!raw || raw === 'Unknown') {
+      const name = getBranchName(raw)
+      return { branchKey: raw, branchName: name.length > 20 ? name.substring(0, 20) + '...' : name, segment: 'hub' }
+    }
+    const lower = raw.toLowerCase()
+    if (lower === 'direct') {
+      return { branchKey: 'Direct', branchName: 'Direct', segment: 'direct' }
+    }
+    // "Mumbai Hub", "Bangalore Hub" etc. -> branch = base name, segment = hub
+    if (lower.endsWith(' hub')) {
+      const base = raw.slice(0, -4).trim() || raw
+      return { branchKey: base, branchName: base.length > 20 ? base.substring(0, 20) + '...' : base, segment: 'hub' }
+    }
+    if (lower.includes(' hub')) {
+      const base = raw.substring(0, raw.toLowerCase().indexOf(' hub')).trim() || raw
+      return { branchKey: base, branchName: base.length > 20 ? base.substring(0, 20) + '...' : base, segment: 'hub' }
+    }
+    const name = getBranchName(raw)
+    return { branchKey: raw, branchName: name.length > 20 ? name.substring(0, 20) + '...' : name, segment: 'hub' }
+  }, [getBranchName])
+
+  // Branch Spend: one bar per branch, stacked Hub (one color) + Direct (other color); tooltip shows total
   const branchSpendData = useMemo(() => {
-    const branchSpend = new Map<string, { name: string; spend: number; orders: number; employees: Set<string> }>()
-    
+    const byBranch = new Map<string, {
+      name: string; fullName: string; hubSpend: number; directSpend: number; orders: number; employees: Set<string>
+    }>()
+
     filteredOrdersByTimeRange.forEach(order => {
       const locationId = order.locationId || order.dispatchLocation || 'Unknown'
-      const branchName = getBranchName(locationId)
-      const existing = branchSpend.get(locationId) || { name: branchName, spend: 0, orders: 0, employees: new Set<string>() }
-      existing.spend += calculateOrderTotal(order)
-      existing.orders += 1
-      existing.employees.add(order.employeeId)
-      branchSpend.set(locationId, existing)
+      const { branchKey, branchName, segment } = getBranchAndSegment(locationId)
+      const existing = byBranch.get(branchKey)
+      if (!existing) {
+        byBranch.set(branchKey, {
+          name: branchName,
+          fullName: branchName,
+          hubSpend: segment === 'hub' ? calculateOrderTotal(order) : 0,
+          directSpend: segment === 'direct' ? calculateOrderTotal(order) : 0,
+          orders: 1,
+          employees: new Set<string>(order.employeeId ? [order.employeeId] : [])
+        })
+      } else {
+        if (segment === 'hub') existing.hubSpend += calculateOrderTotal(order)
+        else existing.directSpend += calculateOrderTotal(order)
+        existing.orders += 1
+        if (order.employeeId) existing.employees.add(order.employeeId)
+      }
     })
 
     const totalCompanySpend = filteredOrdersByTimeRange.reduce((sum, o) => sum + calculateOrderTotal(o), 0)
 
-    return Array.from(branchSpend.entries())
-      .map(([id, data]) => ({
-        id,
-        name: data.name.length > 20 ? data.name.substring(0, 20) + '...' : data.name,
-        fullName: data.name,
-        spend: data.spend,
-        orders: data.orders,
-        employeeCount: data.employees.size,
-        spendPerEmployee: data.employees.size > 0 ? data.spend / data.employees.size : 0,
-        percentOfTotal: totalCompanySpend > 0 ? (data.spend / totalCompanySpend) * 100 : 0
-      }))
+    return Array.from(byBranch.entries())
+      .map(([id, data]) => {
+        const spend = data.hubSpend + data.directSpend
+        const empCount = data.employees.size
+        return {
+          id,
+          name: data.name,
+          fullName: data.fullName,
+          hubSpend: data.hubSpend,
+          directSpend: data.directSpend,
+          spend,
+          orders: data.orders,
+          employeeCount: empCount,
+          hubSpendPerEmployee: empCount > 0 ? data.hubSpend / empCount : 0,
+          directSpendPerEmployee: empCount > 0 ? data.directSpend / empCount : 0,
+          spendPerEmployee: empCount > 0 ? spend / empCount : 0,
+          percentOfTotal: totalCompanySpend > 0 ? (spend / totalCompanySpend) * 100 : 0
+        }
+      })
       .sort((a, b) => b.spend - a.spend)
       .slice(0, 8)
-  }, [filteredOrdersByTimeRange, getBranchName])
+  }, [filteredOrdersByTimeRange, getBranchName, getBranchAndSegment])
 
   // Employee Consumption (Outliers)
   const employeeOutliers = useMemo(() => {
@@ -1984,6 +2029,40 @@ export default function ReportsPage() {
       return true
     })
   }, [companyOrders, tableFilter])
+
+  // Custom tooltip for Spend by Branch: shows Total and Hub/Direct breakdown
+  const BranchSpendTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null
+    const p = payload[0]?.payload
+    if (!p) return null
+    const isTotal = branchMetricType === 'total'
+    const total = isTotal ? p.spend : p.spendPerEmployee
+    const hub = isTotal ? p.hubSpend : p.hubSpendPerEmployee
+    const direct = isTotal ? p.directSpend : p.directSpendPerEmployee
+    return (
+      <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3">
+        <p className="text-sm font-medium text-gray-900 mb-2">{label ?? p.fullName}</p>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-xs text-gray-500">Total:</span>
+            <span className="text-sm font-semibold text-gray-900">{formatCurrency(total)}</span>
+          </div>
+          {hub > 0 && (
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-xs text-gray-500">Hub:</span>
+              <span className="text-sm text-gray-700">{formatCurrency(hub)}</span>
+            </div>
+          )}
+          {direct > 0 && (
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-xs text-gray-500">Direct:</span>
+              <span className="text-sm text-gray-700">{formatCurrency(direct)}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   // ============================================================================
   // CUSTOM TOOLTIP FOR SPEND TREND
@@ -2508,12 +2587,14 @@ export default function ReportsPage() {
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={180}>
-                <BarChart data={branchSpendData} layout="vertical">
+                <BarChart data={branchSpendData} layout="vertical" margin={{ left: 4, right: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
                   <XAxis type="number" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(value) => formatCurrency(value)} />
                   <YAxis type="category" dataKey="name" fontSize={10} tickLine={false} axisLine={false} width={70} />
-                  <Tooltip formatter={(value: number) => [formatCurrency(value), branchMetricType === 'total' ? 'Total' : 'Per Emp']} contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }} />
-                  <Bar dataKey={branchMetricType === 'total' ? 'spend' : 'spendPerEmployee'} fill={companyPrimaryColor} radius={[0, 4, 4, 0]} />
+                  <Tooltip content={<BranchSpendTooltip />} contentStyle={{ borderRadius: '8px', border: '1px solid #e5e7eb' }} />
+                  <Legend wrapperStyle={{ fontSize: 10 }} iconSize={8} formatter={(value) => value} />
+                  <Bar dataKey={branchMetricType === 'total' ? 'hubSpend' : 'hubSpendPerEmployee'} name="Hub" stackId="branch" fill={companyPrimaryColor} radius={[0, 0, 0, 0]} />
+                  <Bar dataKey={branchMetricType === 'total' ? 'directSpend' : 'directSpendPerEmployee'} name="Direct" stackId="branch" fill="#0d9488" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             )}

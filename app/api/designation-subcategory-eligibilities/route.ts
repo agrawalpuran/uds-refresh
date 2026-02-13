@@ -97,14 +97,15 @@ export async function GET(request: NextRequest) {
       .lean()
     const parentCategoryMap = new Map(parentCategories.map((c: any) => [c.id, c]))
     
-    return NextResponse.json({
-      success: true,
-      eligibilities: eligibilities.map((elig: any) => {
+    return NextResponse.json(
+      {
+        success: true,
+        eligibilities: eligibilities.map((elig: any) => {
         const subcategory = subcategoryMap.get(elig.subCategoryId)
         const parentCategory = subcategory?.parentCategoryId ? parentCategoryMap.get(subcategory.parentCategoryId) : null
         
         return {
-          id: elig.id,
+          id: elig.id ?? (elig._id != null ? String(elig._id) : undefined),
           designationId: elig.designationId,
           subCategoryId: elig.subCategoryId,
           subcategory: subcategory ? {
@@ -127,7 +128,13 @@ export async function GET(request: NextRequest) {
           updatedAt: elig.updatedAt
         }
       })
-    })
+    },
+    {
+      headers: {
+        'Cache-Control': 'no-store, max-age=0'
+      }
+    }
+    )
   } catch (error: any) {
     console.error('Error fetching designation-subcategory eligibilities:', error)
     console.error('Error fetching designation-subcategory eligibilities:', error)
@@ -395,50 +402,65 @@ export async function PUT(request: NextRequest) {
 
     const { 
       eligibilityId, 
+      subCategoryId,
       quantity, 
       renewalFrequency, 
       renewalUnit, 
       status 
     } = body
     
-    if (!eligibilityId) {
+    console.log('[PUT designation-subcategory-eligibilities] body:', { eligibilityId, subCategoryId: subCategoryId ?? 'none', quantity, renewalFrequency, renewalUnit: renewalUnit ?? 'none' })
+    
+    if (eligibilityId === undefined || eligibilityId === null || eligibilityId === '') {
       return NextResponse.json(
         { error: 'eligibilityId is required' },
         { status: 400 }
       )
     }
     
-    // Find eligibility - use string ID
-    const eligibility = await DesignationSubcategoryEligibility.findOne({ id: eligibilityId })
+    // Find eligibility: when subCategoryId is provided, find by BOTH id and subCategoryId so we update
+    // the correct record even if duplicate ids exist in the DB (e.g. two rows with same id, different subcategories).
+    const idStr = String(eligibilityId).trim()
+    const subCategoryIdStr = subCategoryId != null && subCategoryId !== '' ? String(subCategoryId).trim() : null
+    const query: any = subCategoryIdStr ? { id: idStr, subCategoryId: subCategoryIdStr } : { id: idStr }
+    let eligibility = await DesignationSubcategoryEligibility.findOne(query)
+    if (!eligibility && !subCategoryIdStr && mongoose.Types.ObjectId.isValid(idStr) && String(new mongoose.Types.ObjectId(idStr)) === idStr) {
+      eligibility = await DesignationSubcategoryEligibility.findById(idStr)
+    }
     
     if (!eligibility) {
+      console.log('[PUT designation-subcategory-eligibilities] NOT FOUND for query:', query)
       return NextResponse.json(
         { error: 'Eligibility not found' },
         { status: 404 }
       )
     }
     
+    console.log('[PUT designation-subcategory-eligibilities] found doc id:', eligibility.id, 'subCategoryId:', eligibility.subCategoryId, 'current quantity:', eligibility.quantity)
+    
     // TODO: Validate companyId from auth context
     
-    // Update fields
+    // Update fields (coerce to number - body may send string from JSON)
     if (quantity !== undefined) {
-      if (quantity < 0) {
+      const qty = Number(quantity)
+      if (Number.isNaN(qty) || qty < 0) {
         return NextResponse.json(
           { error: 'quantity must be >= 0' },
           { status: 400 }
         )
       }
-      eligibility.quantity = quantity
+      eligibility.quantity = qty
     }
     
     if (renewalFrequency !== undefined) {
-      if (renewalFrequency <= 0) {
+      const freq = Number(renewalFrequency)
+      if (Number.isNaN(freq) || freq <= 0) {
         return NextResponse.json(
           { error: 'renewalFrequency must be > 0' },
           { status: 400 }
         )
       }
-      eligibility.renewalFrequency = renewalFrequency
+      eligibility.renewalFrequency = freq
     }
     
     if (renewalUnit !== undefined) {
@@ -462,6 +484,7 @@ export async function PUT(request: NextRequest) {
     }
     
     await eligibility.save()
+    console.log('[PUT designation-subcategory-eligibilities] saved. new quantity:', eligibility.quantity)
     
     // CRITICAL FIX: subCategoryId is stored as STRING ID, not ObjectId - cannot use populate
     // Fetch subcategory manually for response
@@ -486,7 +509,6 @@ export async function PUT(request: NextRequest) {
       }
     })
   } catch (error: any) {
-    console.error('Error updating designation-subcategory eligibility:', error)
     console.error('Error updating designation-subcategory eligibility:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
@@ -547,8 +569,11 @@ export async function DELETE(request: NextRequest) {
       )
     }
     
-    // Find eligibility - use string ID
-    const eligibility = await DesignationSubcategoryEligibility.findOne({ id: eligibilityId })
+    const idStr = String(eligibilityId).trim()
+    let eligibility = await DesignationSubcategoryEligibility.findOne({ id: idStr })
+    if (!eligibility && mongoose.Types.ObjectId.isValid(idStr) && String(new mongoose.Types.ObjectId(idStr)) === idStr) {
+      eligibility = await DesignationSubcategoryEligibility.findById(idStr)
+    }
     
     if (!eligibility) {
       return NextResponse.json(

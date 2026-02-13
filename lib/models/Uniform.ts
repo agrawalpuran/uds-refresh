@@ -18,6 +18,8 @@ export interface IUniform extends Document {
   attribute2_value?: string | number
   attribute3_name?: string
   attribute3_value?: string | number
+  /** When false, Size Guide link is hidden on catalog. Default true for backward compatibility. */
+  sizeChartAvailable?: boolean
   createdAt?: Date
   updatedAt?: Date
 }
@@ -114,6 +116,11 @@ const UniformSchema = new Schema<IUniform>(
     attribute3_value: {
       type: Schema.Types.Mixed, // Can be string or number
       required: false,
+    },
+    sizeChartAvailable: {
+      type: Boolean,
+      required: false,
+      default: true, // When false, Size Guide link is hidden on catalog
     },
   },
   {

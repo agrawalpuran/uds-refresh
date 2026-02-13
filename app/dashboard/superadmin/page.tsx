@@ -5,7 +5,7 @@ import Image from 'next/image'
 import DashboardLayout from '@/components/DashboardLayout'
 import { 
   Package, Users, Building2, ShoppingBag, Link2, 
-  Plus, Edit, Trash2, Search, Save, ChevronDown, ChevronUp
+  Plus, Edit, Trash2, Search, Save, ChevronDown, ChevronUp, Ruler
 } from 'lucide-react'
 import { 
   getAllProducts, getAllVendors, getAllCompanies, getAllEmployees,
@@ -20,7 +20,7 @@ import {
 import { maskEmployeeData, maskEmail } from '@/lib/utils/data-masking'
 
 export default function SuperAdminPage() {
-  const [activeTab, setActiveTab] = useState<'products' | 'vendors' | 'companies' | 'employees' | 'relationships'>('products')
+  const [activeTab, setActiveTab] = useState<'products' | 'vendors' | 'companies' | 'employees' | 'relationships' | 'sizeCharts'>('products')
   const [relationshipSubTab, setRelationshipSubTab] = useState<'productToCompany' | 'productToVendor'>('productToCompany')
   const [searchTerm, setSearchTerm] = useState('')
   const [expandedVendorSections, setExpandedVendorSections] = useState<Set<string>>(new Set())
@@ -101,6 +101,31 @@ export default function SuperAdminPage() {
     loadAllData()
   }, [])
   
+  // Load size charts when Size Charts tab is opened
+  useEffect(() => {
+    if (activeTab === 'sizeCharts' && products.length > 0) {
+      const chunk = (arr: string[], size: number) => {
+        const out: string[][] = []
+        for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+        return out
+      }
+      const load = async () => {
+        const ids = products.map(p => p.id)
+        const chunks = chunk(ids, 50)
+        const map: Record<string, { imageUrl: string; productId: string }> = {}
+        for (const c of chunks) {
+          const res = await fetch(`/api/products/size-charts?productIds=${c.join(',')}`)
+          if (res.ok) {
+            const data = await res.json()
+            Object.assign(map, data)
+          }
+        }
+        setSizeChartsMap(map)
+      }
+      load()
+    }
+  }, [activeTab, products])
+
   // Refresh admins when Companies tab is opened
   useEffect(() => {
     if (activeTab === 'companies' && companies.length > 0) {
@@ -127,6 +152,11 @@ export default function SuperAdminPage() {
   const [editingVendor, setEditingVendor] = useState<Vendor | null>(null)
   const [editingCompany, setEditingCompany] = useState<Company | null>(null)
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([])
+  const [sizeChartsMap, setSizeChartsMap] = useState<Record<string, { imageUrl: string; productId: string }>>({})
+  const [sizeChartSaving, setSizeChartSaving] = useState<Record<string, boolean>>({})
+  const [savingProductImage, setSavingProductImage] = useState<Record<string, boolean>>({})
+  const [sizeChartCompanyFilter, setSizeChartCompanyFilter] = useState<string>('')
+  const [sizeChartVendorFilter, setSizeChartVendorFilter] = useState<string>('')
   
   // Warehouse management state
   const [vendorWarehouses, setVendorWarehouses] = useState<any[]>([])
@@ -167,6 +197,7 @@ export default function SuperAdminPage() {
     { id: 'companies', name: 'Companies', icon: Building2 },
     { id: 'employees', name: 'Employees', icon: Users },
     { id: 'relationships', name: 'Relationships', icon: Link2 },
+    { id: 'sizeCharts', name: 'Product Media', icon: Ruler },
   ]
 
   const filteredProducts = products.filter(p => 
@@ -207,6 +238,7 @@ export default function SuperAdminPage() {
           attribute2_value: (product as any).attribute2_value,
           attribute3_name: (product as any).attribute3_name,
           attribute3_value: (product as any).attribute3_value,
+          sizeChartAvailable: (product as any).sizeChartAvailable,
         })
         
         // Reload products list
@@ -230,6 +262,7 @@ export default function SuperAdminPage() {
           attribute2_value: (product as any).attribute2_value,
           attribute3_name: (product as any).attribute3_name,
           attribute3_value: (product as any).attribute3_value,
+          sizeChartAvailable: (product as any).sizeChartAvailable !== false,
         })
         
         // Reload products list
@@ -892,6 +925,7 @@ export default function SuperAdminPage() {
                         attribute2_value: (formData.get('attribute2_value') as string) || undefined,
                         attribute3_name: (formData.get('attribute3_name') as string) || undefined,
                         attribute3_value: (formData.get('attribute3_value') as string) || undefined,
+                        sizeChartAvailable: (formData.get('sizeChartAvailable') as string) === 'yes',
                       }
                       await handleSaveProduct(productData)
                     }}
@@ -956,8 +990,20 @@ export default function SuperAdminPage() {
                           step="0.01"
                           defaultValue={editingProduct.price || 0}
                           required
-                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          className="w-24 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Size chart available</label>
+                        <select
+                          name="sizeChartAvailable"
+                          defaultValue={editingProduct.sizeChartAvailable === false ? 'no' : 'yes'}
+                          className="w-full max-w-[8rem] px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        >
+                          <option value="yes">Yes</option>
+                          <option value="no">No</option>
+                        </select>
+                        <p className="text-xs text-gray-500 mt-1">No = Size Guide link hidden in catalog</p>
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-4">
@@ -3165,8 +3211,255 @@ export default function SuperAdminPage() {
 
           </div>
         )}
+
+        {/* Product Media Tab – product images + size charts, grouped by category */}
+        {activeTab === 'sizeCharts' && (
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Product Media</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Set image paths for each product: <strong>Product image</strong> (main photo) and <strong>Size chart</strong>. Upload to <code className="bg-gray-100 px-1 rounded">public/uploads/</code> or <code className="bg-gray-100 px-1 rounded">public/images/uniforms/</code>, enter paths below, then Save. Grouped by category.
+            </p>
+            {/* Company and Vendor filters at top */}
+            <div className="flex flex-wrap gap-4 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="min-w-[180px]">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Company</label>
+                <select
+                  value={sizeChartCompanyFilter}
+                  onChange={(e) => setSizeChartCompanyFilter(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">All Companies</option>
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="min-w-[180px]">
+                <label className="block text-xs font-medium text-gray-600 mb-1">Vendor</label>
+                <select
+                  value={sizeChartVendorFilter}
+                  onChange={(e) => setSizeChartVendorFilter(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">All Vendors</option>
+                  {vendors.map((v) => (
+                    <option key={v.id} value={v.id}>{v.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            {(() => {
+              let filtered = products
+              if (sizeChartCompanyFilter) {
+                const companyProductIds = new Set(productCompanies.filter(pc => pc.companyId === sizeChartCompanyFilter).map(pc => pc.productId))
+                filtered = filtered.filter(p => companyProductIds.has(p.id))
+              }
+              if (sizeChartVendorFilter) {
+                const vendorProductIds = new Set(productVendors.filter(pv => pv.vendorId === sizeChartVendorFilter).map(pv => pv.productId))
+                filtered = filtered.filter(p => vendorProductIds.has(p.id))
+              }
+              if (searchTerm) {
+                filtered = filtered.filter(p =>
+                  p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                  p.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                  (p.sku && p.sku.toLowerCase().includes(searchTerm.toLowerCase()))
+                )
+              }
+              const categoryOrder: Array<{ key: string; label: string }> = [
+                { key: 'shirt', label: 'Shirts' },
+                { key: 'pant', label: 'Pants' },
+                { key: 'shoe', label: 'Shoes' },
+                { key: 'jacket', label: 'Jackets' },
+                { key: 'accessory', label: 'Accessories' },
+                { key: '_other', label: 'Other' },
+              ]
+              const byCategory = new Map<string, Uniform[]>()
+              filtered.forEach((p) => {
+                const cat = (p.category && categoryOrder.some(c => c.key === p.category) ? p.category : '_other') as string
+                if (!byCategory.has(cat)) byCategory.set(cat, [])
+                byCategory.get(cat)!.push(p)
+              })
+              if (filtered.length === 0 && products.length > 0) {
+                return (
+                  <p className="text-gray-500 py-8 text-center">No products match the selected Company/Vendor or search. Try changing filters.</p>
+                )
+              }
+              return (
+                <div className="space-y-6">
+                  {categoryOrder.map(({ key, label }) => {
+                    const list = byCategory.get(key) || []
+                    if (list.length === 0) return null
+                    return (
+                      <div key={key} className="border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 font-semibold text-gray-900">
+                          {label} ({list.length})
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full divide-y divide-gray-200">
+                            <thead>
+                              <tr className="bg-gray-50">
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product ID</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Chart</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product image</th>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Size chart</th>
+                              </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                              {list.map((product) => {
+                                const existing = sizeChartsMap[product.id]
+                                const savingImage = !!savingProductImage[product.id]
+                                const savingChart = !!sizeChartSaving[product.id]
+                                return (
+                                  <ProductMediaRow
+                                    key={product.id}
+                                    product={product}
+                                    productImageUrl={product.image ?? ''}
+                                    existingSizeChartUrl={existing?.imageUrl ?? ''}
+                                    savingImage={savingImage}
+                                    savingChart={savingChart}
+                                    onSaveImage={async (productImageUrl) => {
+                                      setSavingProductImage(prev => ({ ...prev, [product.id]: true }))
+                                      try {
+                                        const putRes = await fetch(`/api/products?productId=${encodeURIComponent(product.id)}`, {
+                                          method: 'PUT',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ image: productImageUrl.trim() }),
+                                        })
+                                        if (!putRes.ok) {
+                                          const err = await putRes.json().catch(() => ({}))
+                                          throw new Error(err.error || putRes.statusText)
+                                        }
+                                        setProducts(prev => prev.map(p => p.id === product.id ? { ...p, image: productImageUrl.trim() } : p))
+                                        alert(`Product image saved for ${product.name}.`)
+                                      } catch (e: any) {
+                                        alert(`Failed to save image: ${e?.message || 'Unknown error'}.`)
+                                      } finally {
+                                        setSavingProductImage(prev => ({ ...prev, [product.id]: false }))
+                                      }
+                                    }}
+                                    onSaveChart={async (sizeChartUrl) => {
+                                      setSizeChartSaving(prev => ({ ...prev, [product.id]: true }))
+                                      try {
+                                        const chartRes = await fetch(`/api/products/${product.id}/size-chart`, {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ imageUrl: sizeChartUrl.trim() }),
+                                        })
+                                        if (!chartRes.ok) {
+                                          const err = await chartRes.json().catch(() => ({}))
+                                          throw new Error(err.error || chartRes.statusText)
+                                        }
+                                        setSizeChartsMap(prev => ({ ...prev, [product.id]: { productId: product.id, imageUrl: sizeChartUrl.trim() } }))
+                                        alert(`Size chart saved for ${product.name}.`)
+                                      } catch (e: any) {
+                                        alert(`Failed to save size chart: ${e?.message || 'Unknown error'}.`)
+                                      } finally {
+                                        setSizeChartSaving(prev => ({ ...prev, [product.id]: false }))
+                                      }
+                                    }}
+                                  />
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
+            {products.length === 0 && (
+              <p className="text-gray-500 py-8 text-center">No products. Add products first in the Products tab.</p>
+            )}
+          </div>
+        )}
       </div>
     </DashboardLayout>
+  )
+}
+
+function ProductMediaRow({
+  product,
+  productImageUrl: initialProductImage,
+  existingSizeChartUrl,
+  savingImage,
+  savingChart,
+  onSaveImage,
+  onSaveChart,
+}: {
+  product: Uniform
+  productImageUrl: string
+  existingSizeChartUrl: string
+  savingImage: boolean
+  savingChart: boolean
+  onSaveImage: (productImageUrl: string) => Promise<void>
+  onSaveChart: (sizeChartUrl: string) => Promise<void>
+}) {
+  const defaultProductImage = `/images/uniforms/product-${product.id}.jpg`
+  const defaultSizeChart = `/uploads/size-charts/product-${product.id}.jpg`
+  const [productImageUrl, setProductImageUrl] = useState(initialProductImage || defaultProductImage)
+  const [sizeChartUrl, setSizeChartUrl] = useState(existingSizeChartUrl || defaultSizeChart)
+  const hasChart = !!existingSizeChartUrl
+  useEffect(() => {
+    setProductImageUrl(initialProductImage || defaultProductImage)
+  }, [initialProductImage, defaultProductImage])
+  useEffect(() => {
+    if (existingSizeChartUrl) setSizeChartUrl(existingSizeChartUrl)
+    else setSizeChartUrl(defaultSizeChart)
+  }, [existingSizeChartUrl, defaultSizeChart])
+
+  return (
+    <tr>
+      <td className="px-4 py-3 text-sm font-mono text-gray-900">{product.id}</td>
+      <td className="px-4 py-3 text-sm text-gray-900">{product.name}</td>
+      <td className="px-4 py-3">
+        {hasChart ? (
+          <span className="text-xs font-medium text-green-700 bg-green-50 px-2 py-1 rounded">Yes</span>
+        ) : (
+          <span className="text-xs font-medium text-gray-500 bg-gray-100 px-2 py-1 rounded">No</span>
+        )}
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={productImageUrl}
+            onChange={(e) => setProductImageUrl(e.target.value)}
+            placeholder={defaultProductImage}
+            className="flex-1 min-w-[140px] px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+          <button
+            type="button"
+            disabled={savingImage}
+            onClick={() => onSaveImage(productImageUrl)}
+            className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {savingImage ? '…' : 'Save'}
+          </button>
+        </div>
+      </td>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={sizeChartUrl}
+            onChange={(e) => setSizeChartUrl(e.target.value)}
+            placeholder={defaultSizeChart}
+            className="flex-1 min-w-[140px] px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+          <button
+            type="button"
+            disabled={savingChart}
+            onClick={() => onSaveChart(sizeChartUrl)}
+            className="flex-shrink-0 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {savingChart ? '…' : 'Save'}
+          </button>
+        </div>
+      </td>
+    </tr>
   )
 }
 

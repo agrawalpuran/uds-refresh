@@ -33,6 +33,8 @@ export default function ConsumerCatalogPage() {
   })
   const [dynamicEligibility, setDynamicEligibility] = useState<Record<string, number>>({}) // Full dynamic eligibility object
   const [dynamicConsumedEligibility, setDynamicConsumedEligibility] = useState<Record<string, number>>({}) // Full dynamic consumed eligibility
+  const [eligibilityBySubcategory, setEligibilityBySubcategory] = useState<Record<string, { quantity: number; cycleMonths: number }>>({}) // Per-subcategory eligibility
+  const [consumedBySubcategory, setConsumedBySubcategory] = useState<Record<string, number>>({}) // Per-subcategory consumed
   const [eligibilityResponse, setEligibilityResponse] = useState<any>(null) // Store full eligibility response for cycle durations
   const [hasEligibilityConfigured, setHasEligibilityConfigured] = useState<boolean>(false)
   const [companyAdmins, setCompanyAdmins] = useState<any[]>([])
@@ -163,7 +165,7 @@ export default function ConsumerCatalogPage() {
           getProductsForDesignation(companyId, employeeDesignation, employeeGender),
           getConsumedEligibility(employeeId),
           getCompanyById(companyId),
-          fetch(`/api/employees/${employeeId}/eligibility`).then(res => res.ok ? res.json() : null).catch(() => null),
+          fetch(`/api/employees/${employeeId}/eligibility`, { cache: 'no-store' }).then(res => res.ok ? res.json() : null).catch(() => null),
           fetch(`/api/companies?getAdmins=true&companyId=${companyId}`).then(res => res.ok ? res.json() : []).catch(() => [])
         ])
         
@@ -197,8 +199,13 @@ export default function ConsumerCatalogPage() {
         setConsumedEligibility(consumed)
         setCompany(companyData)
         
-        // Store full eligibility response for cycle durations access
+        // Store full eligibility response for cycle durations and per-subcategory eligibility
         setEligibilityResponse(eligibilityResponse)
+        if (eligibilityResponse?.eligibilityBySubcategory) {
+          setEligibilityBySubcategory(eligibilityResponse.eligibilityBySubcategory)
+        } else {
+          setEligibilityBySubcategory({})
+        }
         
         // Set total eligibility from designation rules (fallback to employee-level if API fails)
         // CRITICAL: Check if eligibility actually exists (not just 0/0)
@@ -265,9 +272,14 @@ export default function ConsumerCatalogPage() {
           setDynamicEligibility({})
         }
         
-        // Also store dynamic consumed eligibility
+        // Also store dynamic consumed eligibility and per-subcategory consumed
         if (consumed && consumed.consumed) {
           setDynamicConsumedEligibility(consumed.consumed || {})
+        }
+        if (consumed && (consumed as any).consumedBySubcategory) {
+          setConsumedBySubcategory((consumed as any).consumedBySubcategory || {})
+        } else {
+          setConsumedBySubcategory({})
         }
         
         // Store eligibility status for UI rendering
@@ -568,35 +580,67 @@ export default function ConsumerCatalogPage() {
     }, 0)
   }
 
+  // Per-subcategory helpers (for display and enforcement per product)
+  const getEligibilityForSubcategory = (subcategoryId: string): number => {
+    const e = eligibilityBySubcategory[subcategoryId]
+    return e?.quantity ?? 0
+  }
+  const getConsumedForSubcategory = (subcategoryId: string): number => {
+    return consumedBySubcategory[subcategoryId] ?? 0
+  }
+  const getRemainingForSubcategory = (subcategoryId: string): number => {
+    return Math.max(0, getEligibilityForSubcategory(subcategoryId) - getConsumedForSubcategory(subcategoryId))
+  }
+  const getTotalQuantityForSubcategory = (subcategoryId: string): number => {
+    return Object.entries(cart).reduce((total, [uniformId, cartItem]) => {
+      const uniform = uniforms.find(u => u.id === uniformId) as any
+      if (uniform?.primarySubcategoryId === subcategoryId) {
+        return total + cartItem.quantity
+      }
+      return total
+    }, 0)
+  }
+
   const updateQuantity = (uniformId: string, size: string, delta: number) => {
-    const uniform = uniforms.find(u => u.id === uniformId)
+    const uniform = uniforms.find(u => u.id === uniformId) as any
     if (!uniform) return
 
     const currentQuantity = cart[uniformId]?.quantity || 0
     const newQuantity = currentQuantity + delta
-    const eligibility = getEligibilityForCategory(uniform.category)
-    
-    // Calculate total quantity for this category AFTER the change
-    const totalForCategory = getTotalQuantityForCategory(uniform.category)
-    const otherItemsQuantity = totalForCategory - currentQuantity
+    const subcategoryId = uniform?.primarySubcategoryId
+    const subcategoryName = uniform?.primarySubcategoryName || uniform?.category
+
+    // Use per-subcategory eligibility when product has primarySubcategoryId; else fallback to category
+    const eligibility = subcategoryId
+      ? getEligibilityForSubcategory(subcategoryId)
+      : getEligibilityForCategory(uniform.category)
+    const remainingAfterConsumed = subcategoryId
+      ? getRemainingForSubcategory(subcategoryId)
+      : getRemainingForCategory(uniform.category)
+    const totalForPool = subcategoryId
+      ? getTotalQuantityForSubcategory(subcategoryId)
+      : getTotalQuantityForCategory(uniform.category)
+    const otherItemsQuantity = totalForPool - currentQuantity
     const totalAfterChange = newQuantity + otherItemsQuantity
 
     // Prevent negative quantities
     if (newQuantity < 0) return
-    
-    // Check eligibility limit - allow exceeding if personal payments are enabled
-    if (totalAfterChange > eligibility) {
+
+    // Check eligibility limit (remaining after past orders) - allow exceeding if personal payments are enabled
+    if (totalAfterChange > remainingAfterConsumed) {
       console.log('Catalog - Eligibility exceeded:', {
+        subcategoryId: subcategoryId || null,
         category: uniform.category,
         totalAfterChange,
-        eligibility,
+        remainingAfterConsumed,
         allowPersonalPayments: company?.allowPersonalPayments,
         company: company ? 'loaded' : 'not loaded'
       })
-      
+
       if (!company?.allowPersonalPayments) {
-        const remaining = Math.max(0, eligibility - otherItemsQuantity)
-        alert(`You can only order up to ${eligibility} ${uniform.category}(s) total. You have already selected ${otherItemsQuantity} other ${uniform.category}(s). Maximum allowed for this item: ${remaining}.\n\nPersonal payment orders are not enabled for your company.`)
+        const remaining = Math.max(0, remainingAfterConsumed - otherItemsQuantity)
+        const label = subcategoryName || uniform.category
+        alert(`You can only order up to ${remainingAfterConsumed} ${label}(s) total (remaining after previous orders). You have already selected ${otherItemsQuantity} other ${label}(s). Maximum allowed for this item: ${remaining}.\n\nPersonal payment orders are not enabled for your company.`)
         return
       }
       // Personal payments are enabled - allow adding beyond eligibility
@@ -633,46 +677,50 @@ export default function ConsumerCatalogPage() {
       return
     }
     
-    // Calculate category totals
-    const categoryTotals: Record<string, number> = {}
+    // Check by subcategory first (per-product eligibility), then by category for products without subcategory
+    const exceededSubcategories: Array<{ name: string; requested: number; eligible: number }> = []
+    const subcategoryTotals: Record<string, number> = {}
     Object.entries(cart).forEach(([uniformId, item]) => {
-      const uniform = uniforms.find(u => u.id === uniformId)
-      if (uniform) {
-        categoryTotals[uniform.category] = (categoryTotals[uniform.category] || 0) + item.quantity
+      const uniform = uniforms.find(u => u.id === uniformId) as any
+      if (uniform?.primarySubcategoryId) {
+        subcategoryTotals[uniform.primarySubcategoryId] = (subcategoryTotals[uniform.primarySubcategoryId] || 0) + item.quantity
+      } else if (uniform?.category) {
+        subcategoryTotals[`category:${uniform.category}`] = (subcategoryTotals[`category:${uniform.category}`] || 0) + item.quantity
       }
     })
-    
-    // Check if any category exceeds eligibility
-    const exceededCategories: Array<{ category: string; requested: number; eligible: number }> = []
-    for (const [category, total] of Object.entries(categoryTotals)) {
-      const eligibility = getEligibilityForCategory(category)
-      if (total > eligibility) {
-        exceededCategories.push({ category, requested: total, eligible: eligibility })
+    for (const [key, total] of Object.entries(subcategoryTotals)) {
+      const remaining = key.startsWith('category:')
+        ? getRemainingForCategory(key.replace('category:', ''))
+        : getRemainingForSubcategory(key)
+      if (total > remaining) {
+        const name = key.startsWith('category:') ? key.replace('category:', '') : (uniforms.find(u => (u as any).primarySubcategoryId === key) as any)?.primarySubcategoryName || key
+        exceededSubcategories.push({ name, requested: total, eligible: remaining })
       }
     }
     
-    // If eligibility is exceeded, check if personal payments are allowed
-    if (exceededCategories.length > 0) {
+    // If eligibility is exceeded (cart > remaining after past orders), check if personal payments are allowed
+    if (exceededSubcategories.length > 0) {
       if (!company?.allowPersonalPayments) {
-        const errorMsg = exceededCategories.map(
-          e => `${e.category}: ${e.requested} requested, ${e.eligible} eligible`
+        const errorMsg = exceededSubcategories.map(
+          e => `${e.name}: ${e.requested} requested, ${e.eligible} remaining`
         ).join('\n')
         alert(`Error: Your cart exceeds eligibility limits:\n${errorMsg}\n\nPersonal payment orders are not enabled for your company. Please adjust your order.`)
         return
       }
       // Personal payments are allowed - proceed to review page where personal payment will be calculated
     }
-    
-    // Navigate to order confirmation
+
+    // Build order data with subcategoryId per item (for per-subcategory consumed tracking)
     const orderData = {
       items: Object.entries(cart).map(([uniformId, item]) => {
-        const uniform = uniforms.find(u => u.id === uniformId)
+        const uniform = uniforms.find(u => u.id === uniformId) as any
         return {
           uniformId,
           uniformName: uniform?.name || '',
           size: item.size,
           quantity: item.quantity,
-          price: uniform?.price || 0
+          price: uniform?.price || 0,
+          ...(uniform?.primarySubcategoryId && { subcategoryId: uniform.primarySubcategoryId })
         }
       })
     }
@@ -885,107 +933,113 @@ export default function ConsumerCatalogPage() {
                 </div>
                 <h3 className="font-bold text-slate-900 text-lg">Your Eligibility, Order new by selecting from below Catalog items</h3>
               </div>
-              {/* CRITICAL FIX: Dynamically render ALL categories, not just legacy 4 */}
-              {/* Get all categories with eligibility > 0 AND have at least one product visible */}
+              {/* Show eligibility per product/subcategory when available; fallback to category-level */}
               {(() => {
-                // Combine legacy and dynamic eligibility
-                const allEligibility = { ...totalEligibility, ...dynamicEligibility }
-                const allConsumed = { ...consumedEligibility, ...dynamicConsumedEligibility }
-                
-                // Get unique categories from visible products (after gender filtering)
-                const visibleCategories = new Set(
-                  filteredUniforms.map(u => u.category?.toLowerCase().trim()).filter(Boolean)
-                )
-                
-                // Get all categories that have eligibility > 0 AND have at least one visible product
-                const eligibleCategories = Object.keys(allEligibility).filter(cat => {
-                  const total = allEligibility[cat] || 0
-                  if (total <= 0) return false
-                  
-                  // Only show categories that have at least one product visible after gender filter
-                  const normalizedCat = cat.toLowerCase().trim()
-                  // Handle singular/plural and belt/accessory variations
-                  const categoryMatches = visibleCategories.has(normalizedCat) ||
-                    // Handle accessory/accessories/belt variations
-                    (normalizedCat === 'accessory' && (visibleCategories.has('belt') || visibleCategories.has('accessories'))) ||
-                    (normalizedCat === 'accessories' && (visibleCategories.has('accessory') || visibleCategories.has('belt'))) ||
-                    (normalizedCat === 'belt' && (visibleCategories.has('accessory') || visibleCategories.has('accessories'))) ||
-                    // Handle other common singular/plural variations
-                    (normalizedCat === 'shirts' && visibleCategories.has('shirt')) ||
-                    (normalizedCat === 'pants' && visibleCategories.has('pant')) ||
-                    (normalizedCat === 'shoes' && visibleCategories.has('shoe')) ||
-                    (normalizedCat === 'jackets' && visibleCategories.has('jacket'))
-                  return categoryMatches
-                })
-                
-                // Sort: legacy categories first (shirt, pant, shoe, jacket, accessory), then others alphabetically
-                const legacyOrder = ['shirt', 'pant', 'shoe', 'jacket', 'accessory']
-                eligibleCategories.sort((a, b) => {
-                  const aIndex = legacyOrder.indexOf(a)
-                  const bIndex = legacyOrder.indexOf(b)
-                  if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex
-                  if (aIndex !== -1) return -1
-                  if (bIndex !== -1) return 1
-                  return a.localeCompare(b)
-                })
-                
-                // Capitalize category name for display (fix common misspellings)
-                const capitalizeCategory = (cat: string) => {
-                  if (cat === 'pant') return 'Pants'
-                  if (cat === 'accessory' || cat === 'accessorys') return 'Accessories'
-                  return cat.charAt(0).toUpperCase() + cat.slice(1) + (cat.endsWith('s') ? '' : 's')
-                }
-                
-                return (
-                  // UI FIX 1: Single row layout with compact cards - use flexbox for better control
-                  <div className="flex flex-wrap gap-2 sm:gap-3 text-xs">
-                    {eligibleCategories.map((category) => {
-                      const total = allEligibility[category] || 0
-                      const consumed = allConsumed[category] || 0
+                type SummaryItem = { key: string; label: string; total: number; consumed: number; remaining: number; cycleMonths?: number }
+                const cycleDurationsBySub = (eligibilityResponse as any)?.cycleDurationsBySubcategory || {}
+                let summaryItems: SummaryItem[] = []
+
+                // Prefer per-subcategory (product-level) eligibility when we have it
+                if (Object.keys(eligibilityBySubcategory).length > 0) {
+                  const visibleSubcategoryIds = new Set(
+                    filteredUniforms.map((u: any) => u.primarySubcategoryId).filter(Boolean)
+                  )
+                  summaryItems = Object.entries(eligibilityBySubcategory)
+                    .filter(([subcatId]) => visibleSubcategoryIds.has(subcatId))
+                    .map(([subcatId, e]) => {
+                      const name = (filteredUniforms.find((u: any) => u.primarySubcategoryId === subcatId) as any)?.primarySubcategoryName || subcatId
+                      const consumed = consumedBySubcategory[subcatId] ?? 0
+                      const total = e?.quantity ?? 0
                       const remaining = Math.max(0, total - consumed)
-                      const categoryDisplayName = capitalizeCategory(category)
-                      
-                      // UI FIX 2: Show hover info for ALL categories consistently
-                      // Try to get cycle info for legacy categories, but also try for non-legacy if cycle duration exists
-                      const isLegacyCategory = legacyOrder.includes(category)
+                      return {
+                        key: subcatId,
+                        label: name,
+                        total,
+                        consumed,
+                        remaining,
+                        cycleMonths: e?.cycleMonths ?? cycleDurationsBySub[subcatId]
+                      }
+                    })
+                  summaryItems.sort((a, b) => a.label.localeCompare(b.label))
+                }
+
+                // Fallback: category-level eligibility (unchanged internal logic)
+                if (summaryItems.length === 0) {
+                  const allEligibility = { ...totalEligibility, ...dynamicEligibility }
+                  const allConsumed = { ...consumedEligibility, ...dynamicConsumedEligibility }
+                  const visibleCategories = new Set(
+                    filteredUniforms.map(u => u.category?.toLowerCase().trim()).filter(Boolean)
+                  )
+                  const eligibleCategories = Object.keys(allEligibility).filter(cat => {
+                    const total = allEligibility[cat] || 0
+                    if (total <= 0) return false
+                    const normalizedCat = cat.toLowerCase().trim()
+                    const categoryMatches = visibleCategories.has(normalizedCat) ||
+                      (normalizedCat === 'accessory' && (visibleCategories.has('belt') || visibleCategories.has('accessories'))) ||
+                      (normalizedCat === 'accessories' && (visibleCategories.has('accessory') || visibleCategories.has('belt'))) ||
+                      (normalizedCat === 'belt' && (visibleCategories.has('accessory') || visibleCategories.has('accessories'))) ||
+                      (normalizedCat === 'shirts' && visibleCategories.has('shirt')) ||
+                      (normalizedCat === 'pants' && visibleCategories.has('pant')) ||
+                      (normalizedCat === 'shoes' && visibleCategories.has('shoe')) ||
+                      (normalizedCat === 'jackets' && visibleCategories.has('jacket'))
+                    return categoryMatches
+                  })
+                  const legacyOrder = ['shirt', 'pant', 'shoe', 'jacket', 'accessory']
+                  eligibleCategories.sort((a, b) => {
+                    const aIndex = legacyOrder.indexOf(a)
+                    const bIndex = legacyOrder.indexOf(b)
+                    if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex
+                    if (aIndex !== -1) return -1
+                    if (bIndex !== -1) return 1
+                    return a.localeCompare(b)
+                  })
+                  const capitalizeCategory = (cat: string) => {
+                    if (cat === 'pant') return 'Pants'
+                    if (cat === 'accessory' || cat === 'accessorys') return 'Accessories'
+                    return cat.charAt(0).toUpperCase() + cat.slice(1) + (cat.endsWith('s') ? '' : 's')
+                  }
+                  summaryItems = eligibleCategories.map(category => {
+                    const total = allEligibility[category] || 0
+                    const consumed = allConsumed[category] || 0
+                    const remaining = Math.max(0, total - consumed)
+                    return {
+                      key: category,
+                      label: capitalizeCategory(category),
+                      total,
+                      consumed,
+                      remaining,
+                      cycleMonths: cycleDurations[category] ?? (eligibilityResponse?.cycleDurations?.[category])
+                    }
+                  })
+                }
+
+                return (
+                  <div className="flex flex-wrap gap-2 sm:gap-3 text-xs">
+                    {summaryItems.map((item) => {
+                      const total = item.total
+                      const consumed = item.consumed
+                      const remaining = item.remaining
+                      const categoryDisplayName = item.label
+                      const cycleMonths = item.cycleMonths
                       let cycleInfo = null
-                      
-                      // Get cycle duration - try from merged cycleDurations first, then from eligibility response
-                      const categoryCycleDuration = cycleDurations[category] 
-                        || (eligibilityResponse?.cycleDurations?.[category]) 
-                        || null
-                      
-                      // Try to generate cycle info if we have a cycle duration
-                      if (categoryCycleDuration) {
-                        if (isLegacyCategory) {
-                          // Legacy categories use the cycle utility functions
-                          try {
-                            cycleInfo = getCycleInfo(category as 'shirt' | 'pant' | 'shoe' | 'jacket')
-                          } catch (e) {
-                            // Cycle info not available for this category
-                          }
-                        } else {
-                          // For non-legacy categories, try to generate cycle info using the cycle duration
-                          // This ensures consistent hover display across all categories
-                          try {
-                            const cycleDates = getCurrentCycleDates(category, dateOfJoining, categoryCycleDuration)
-                            const nextCycleStart = getNextCycleStartDate(category, dateOfJoining, categoryCycleDuration)
-                            const daysRemaining = getDaysRemainingInCycle(category, dateOfJoining, categoryCycleDuration)
-                            cycleInfo = { cycleDates, nextCycleStart, daysRemaining }
-                          } catch (e) {
-                            // If cycle functions don't support this category, cycleInfo remains null
-                          }
+                      if (cycleMonths != null) {
+                        try {
+                          const cycleDates = getCurrentCycleDates('shirt', dateOfJoining, cycleMonths)
+                          const nextCycleStart = getNextCycleStartDate('shirt', dateOfJoining, cycleMonths)
+                          const daysRemaining = getDaysRemainingInCycle('shirt', dateOfJoining, cycleMonths)
+                          cycleInfo = { cycleDates, nextCycleStart, daysRemaining }
+                        } catch (e) {
+                          // ignore
                         }
                       }
-                      
+
                       return (
-                        <div 
-                          key={category}
+                        <div
+                          key={item.key}
                           className="relative flex-shrink-0"
-                          onMouseEnter={() => setHoveredItemType(category)}
+                          onMouseEnter={() => setHoveredItemType(item.key)}
                           onMouseLeave={() => setHoveredItemType(null)}
                         >
-                          {/* UI FIX 1: Compact card design - reduced padding and font sizes */}
                           <div className="bg-white/80 backdrop-blur-sm rounded-lg p-2.5 border border-slate-200/50 cursor-pointer hover-lift transition-smooth shadow-modern min-w-[100px]">
                             <div className="font-semibold text-slate-900 mb-1 text-xs">{categoryDisplayName}</div>
                             <div className="text-slate-700">
@@ -998,7 +1052,7 @@ export default function ConsumerCatalogPage() {
                             </div>
                           </div>
                           {/* UI FIX 2: Show hover tooltip for ALL categories */}
-                          {hoveredItemType === category && (
+                          {hoveredItemType === item.key && (
                             <div className="absolute z-[9999] left-1/2 -translate-x-1/2 top-full mt-2 w-64 bg-gray-900 text-white rounded-lg shadow-2xl p-4 pointer-events-none tooltip-overlay">
                               <div className="text-sm font-semibold mb-2 pb-2 border-b border-gray-700">
                                 {categoryDisplayName} Information
@@ -1006,9 +1060,10 @@ export default function ConsumerCatalogPage() {
                               <div className="text-xs space-y-1">
                                 {/* UI FIX 2: Consistent hover display for ALL categories - same structure and fields */}
                                 {cycleInfo ? (
-                                  // Categories with full cycle info (legacy or computed)
                                   <>
-                                    <div>Cycle Duration: <span className="font-semibold">{categoryCycleDuration || cycleDurations[category]} months</span></div>
+                                    {cycleMonths != null && (
+                                      <div>Cycle Duration: <span className="font-semibold">{cycleMonths} months</span></div>
+                                    )}
                                     <div>Total Eligibility: <span className="font-semibold">{total}</span></div>
                                     <div>Remaining: <span className="font-semibold">{remaining}</span></div>
                                     {consumed > 0 && (
@@ -1038,10 +1093,9 @@ export default function ConsumerCatalogPage() {
                                     )}
                                   </>
                                 ) : (
-                                  // Categories without cycle info - show consistent eligibility info
                                   <>
-                                    {categoryCycleDuration && (
-                                      <div>Cycle Duration: <span className="font-semibold">{categoryCycleDuration} months</span></div>
+                                    {cycleMonths != null && (
+                                      <div>Cycle Duration: <span className="font-semibold">{cycleMonths} months</span></div>
                                     )}
                                     <div>Total Eligibility: <span className="font-semibold">{total}</span></div>
                                     <div>Remaining: <span className="font-semibold">{remaining}</span></div>
@@ -1138,23 +1192,21 @@ export default function ConsumerCatalogPage() {
         {filteredUniforms.length > 0 && (
           <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
             {filteredUniforms.map((uniform) => {
+            const u = uniform as any
             const selectedSize = selectedSizes[uniform.id] || uniform.sizes[0]
             const cartItem = cart[uniform.id]
             const currentQuantity = cartItem?.quantity || 0
-            const eligibility = getEligibilityForCategory(uniform.category)
-            
-            // CRITICAL DEBUG: Log eligibility lookup for belt/accessory products
-            if (uniform.category === 'accessory' || uniform.category === 'belt' || uniform.name?.toLowerCase().includes('belt')) {
-              console.log(`[BELT DEBUG] Product: "${uniform.name}", category: "${uniform.category}", eligibility returned: ${eligibility}`)
-            }
-            
-            const totalForCategory = getTotalQuantityForCategory(uniform.category)
+            const subcategoryId = u?.primarySubcategoryId
+            const eligibility = subcategoryId ? getEligibilityForSubcategory(subcategoryId) : getEligibilityForCategory(uniform.category)
+            const totalForCategory = subcategoryId ? getTotalQuantityForSubcategory(subcategoryId) : getTotalQuantityForCategory(uniform.category)
+            const remainingAfterConsumed = subcategoryId ? getRemainingForSubcategory(subcategoryId) : getRemainingForCategory(uniform.category)
             const otherItemsQuantity = totalForCategory - currentQuantity
-            const maxAllowed = Math.max(0, eligibility - otherItemsQuantity)
-            // Allow adding more if personal payments are enabled, otherwise restrict to eligibility
-            const canAddMore = company?.allowPersonalPayments 
-              ? true // No limit when personal payments are enabled
-              : (currentQuantity < maxAllowed && totalForCategory < eligibility)
+            const maxAllowed = Math.max(0, remainingAfterConsumed - otherItemsQuantity)
+            const canAddMore = company?.allowPersonalPayments
+              ? true
+              : (currentQuantity < maxAllowed && totalForCategory < remainingAfterConsumed)
+            const eligibilityLabel = u?.primarySubcategoryName || uniform.category
+            const remaining = remainingAfterConsumed
 
             return (
               <div key={uniform.id} className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow">
@@ -1182,20 +1234,20 @@ export default function ConsumerCatalogPage() {
                     <h3 className="font-semibold text-gray-900 text-lg">{uniform.name}</h3>
                   </div>
                   
-                  {/* View Size Chart Link */}
-                  {sizeCharts[uniform.id] && (
+                  {/* Size Guide link – only when product has Size chart available = Yes */}
+                  {(uniform as any).sizeChartAvailable !== false && (
                     <button
                       onClick={() => {
                         setSizeChartModal({
                           isOpen: true,
-                          imageUrl: sizeCharts[uniform.id].imageUrl,
+                          imageUrl: sizeCharts[uniform.id]?.imageUrl ?? '',
                           productName: uniform.name,
                         })
                       }}
                       className="mb-3 text-sm text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 transition-colors"
                     >
                       <Ruler className="h-4 w-4" />
-                      <span>View Size Chart</span>
+                      <span>Size Guide</span>
                     </button>
                   )}
                   
@@ -1258,10 +1310,7 @@ export default function ConsumerCatalogPage() {
                     </div>
                     {eligibility > 0 && (
                       <p className="text-xs text-gray-500 mt-1">
-                        {company?.allowPersonalPayments 
-                          ? `You can order up to ${Math.max(0, eligibility - totalForCategory)} ${uniform.category}(s)`
-                          : `You can order up to ${Math.max(0, eligibility - totalForCategory)} ${uniform.category}(s)`
-                        }
+                        You can order up to {remaining} {eligibilityLabel}(s)
                       </p>
                     )}
                     {company?.allowPersonalPayments && totalForCategory >= eligibility && currentQuantity > 0 && (

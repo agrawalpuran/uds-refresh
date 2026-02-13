@@ -13,13 +13,20 @@ import mongoose from 'mongoose'
 import DesignationSubcategoryEligibility from '@/lib/models/DesignationSubcategoryEligibility'
 import Subcategory from '@/lib/models/Subcategory'
 import Category from '@/lib/models/Category'
+import ProductCategory from '@/lib/models/ProductCategory'
 import Employee from '@/lib/models/Employee'
 import Company from '@/lib/models/Company'
 import { validateAndGetCompanyId } from '@/lib/utils/api-auth'
 import { decrypt } from '@/lib/utils/encryption'
+import { normalizeCategoryName } from '@/lib/db/category-helpers'
 
 // Force dynamic rendering for serverless functions
 export const dynamic = 'force-dynamic'
+
+/** Escape special regex characters so designationId can be used in a case-insensitive match */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -66,10 +73,11 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    // Get all active designation-subcategory eligibilities - use string IDs
+    // Get all active designation-subcategory eligibilities - case-insensitive designation match
+    const designationTrimmed = designationId.trim()
     const eligibilities = await DesignationSubcategoryEligibility.find({
       companyId: company.id,
-      designationId: designationId.trim(),
+      designationId: { $regex: new RegExp(`^${escapeRegex(designationTrimmed)}$`, 'i') },
       gender: gender === 'unisex' ? { $in: ['male', 'female', 'unisex'] } : gender,
       status: 'active'
     }).lean()
@@ -97,11 +105,22 @@ export async function POST(request: NextRequest) {
       .select('id name parentCategoryId')
       .lean()
     
-    // Manually fetch parent categories
+    // Manually fetch parent categories (Category first, then ProductCategory for missing IDs)
     const uniqueParentCategoryIds = [...new Set(subcategories.map((s: any) => s.parentCategoryId).filter(Boolean))]
-    const parentCategories = await Category.find({ id: { $in: uniqueParentCategoryIds } })
+    let parentCategories = await Category.find({ id: { $in: uniqueParentCategoryIds } })
       .select('id name')
       .lean()
+    const foundIds = new Set(parentCategories.map((c: any) => c.id))
+    const missingIds = uniqueParentCategoryIds.filter((id: string) => !foundIds.has(id))
+    if (missingIds.length > 0) {
+      const productCategories = await ProductCategory.find({
+        id: { $in: missingIds },
+        companyId: company.id
+      })
+        .select('id name')
+        .lean()
+      parentCategories = [...parentCategories, ...productCategories]
+    }
     const parentCategoryMap = new Map(parentCategories.map((c: any) => [c.id, c]))
     
     // Create a map: subcategoryId -> subcategory data with parent category - use string IDs
@@ -125,10 +144,10 @@ export async function POST(request: NextRequest) {
       
       if (subcat && subcat.parentCategory) {
         const parentCategory = subcat.parentCategory
-        const categoryName = parentCategory.name?.toLowerCase() || ''
-        
-        // Map category name to legacy format (shirt, pant, shoe, jacket)
-        const categoryKey = mapCategoryNameToLegacy(categoryName)
+        const rawCategoryName = parentCategory.name?.toLowerCase() || ''
+        const categoryName = normalizeCategoryName(rawCategoryName)
+        // Map to legacy Employee.eligibility keys only (shirt, pant, shoe, jacket)
+        const categoryKey = mapNormalizedToLegacy(categoryName)
         
         if (categoryKey) {
           if (!categoryEligibility[categoryKey]) {
@@ -189,9 +208,10 @@ export async function POST(request: NextRequest) {
         // Use string ID to find employee
         const employee = await Employee.findOne({ id: emp.id || emp.employeeId })
         if (!employee) {
-          return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+          console.warn(`Refresh: employee not found (id: ${emp.id || emp.employeeId}), skipping`)
+          continue
         }
-        if (employee) {
+        {
           // Reset eligibility to defaults
           employee.eligibility = {
             shirt: 0,
@@ -241,7 +261,6 @@ export async function POST(request: NextRequest) {
     
   } catch (error: any) {
     console.error('Error refreshing employee eligibility:', error)
-    console.error('Error refreshing employee eligibility:', error)
     const errorMessage = error?.message || error?.toString() || 'Internal server error'
     
     // Return 400 for validation/input errors
@@ -284,24 +303,15 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Map category name to legacy format (shirt, pant, shoe, jacket)
+ * Map normalized category name to legacy Employee.eligibility keys (shirt, pant, shoe, jacket).
+ * Uses same normalization as category-helpers; only legacy keys are written to Employee.
  */
-function mapCategoryNameToLegacy(categoryName: string): string | null {
-  if (!categoryName) return null
-  
-  const lower = categoryName.toLowerCase().trim()
-  
-  // Direct matches
-  if (lower === 'shirt' || lower === 'shirts') return 'shirt'
-  if (lower === 'pant' || lower === 'pants' || lower === 'trouser' || lower === 'trousers') return 'pant'
-  if (lower === 'shoe' || lower === 'shoes') return 'shoe'
-  if (lower === 'jacket' || lower === 'jackets' || lower === 'blazer' || lower === 'blazers') return 'jacket'
-  
-  // Partial matches
-  if (lower.includes('shirt')) return 'shirt'
-  if (lower.includes('pant') || lower.includes('trouser')) return 'pant'
-  if (lower.includes('shoe')) return 'shoe'
-  if (lower.includes('jacket') || lower.includes('blazer')) return 'jacket'
-  
+function mapNormalizedToLegacy(normalizedName: string): string | null {
+  if (!normalizedName) return null
+  const lower = normalizedName.toLowerCase().trim()
+  if (lower === 'shirt') return 'shirt'
+  if (lower === 'pant' || lower === 'trouser') return 'pant'
+  if (lower === 'shoe') return 'shoe'
+  if (lower === 'jacket' || lower === 'blazer') return 'jacket'
   return null
 }

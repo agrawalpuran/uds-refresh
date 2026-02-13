@@ -1137,19 +1137,21 @@ export async function getOrdersByLocation(locationId: string): Promise<any[]> {
 }
 
 export async function getConsumedEligibility(employeeId: string): Promise<{
+  consumed?: Record<string, number>
+  consumedBySubcategory?: Record<string, number>
   shirt: number
   pant: number
   shoe: number
   jacket: number
 }> {
-  if (!employeeId) return { shirt: 0, pant: 0, shoe: 0, jacket: 0 }
+  if (!employeeId) return { consumed: {}, consumedBySubcategory: {}, shirt: 0, pant: 0, shoe: 0, jacket: 0 }
   try {
-    return await fetchAPI<{ shirt: number; pant: number; shoe: number; jacket: number }>(
+    return await fetchAPI<{ consumed?: Record<string, number>; consumedBySubcategory?: Record<string, number>; shirt: number; pant: number; shoe: number; jacket: number }>(
       `/orders?employeeId=${employeeId}&consumedEligibility=true`
     )
   } catch (error) {
     console.error('Error fetching consumed eligibility:', error)
-    return { shirt: 0, pant: 0, shoe: 0, jacket: 0 }
+    return { consumed: {}, consumedBySubcategory: {}, shirt: 0, pant: 0, shoe: 0, jacket: 0 }
   }
 }
 
@@ -1161,6 +1163,7 @@ export async function createOrder(orderData: {
     size: string
     quantity: number
     price: number
+    subcategoryId?: string
   }>
   deliveryAddress: string
   estimatedDeliveryTime: string
@@ -2690,7 +2693,8 @@ export async function deleteProductSubcategoryMapping(mappingId: string): Promis
 export async function getDesignationSubcategoryEligibilities(
   companyId: string,
   designationId?: string,
-  subCategoryId?: string
+  subCategoryId?: string,
+  skipCache?: boolean
 ): Promise<any[]> {
   try {
     const { getUserEmail } = await import('@/lib/utils/auth-storage')
@@ -2702,9 +2706,11 @@ export async function getDesignationSubcategoryEligibilities(
     if (designationId) url += `&designationId=${encodeURIComponent(designationId)}`
     if (subCategoryId) url += `&subCategoryId=${subCategoryId}`
     if (userEmail) url += `&userEmail=${encodeURIComponent(userEmail)}`
+    if (skipCache) url += `&_=${Date.now()}`
     
     const result = await fetchAPI<{ success: boolean; eligibilities: any[] }>(url, {
-      headers: userEmail ? { 'X-User-Email': userEmail } : undefined
+      headers: userEmail ? { 'X-User-Email': userEmail } : undefined,
+      ...(skipCache && { cache: 'no-store' as RequestCache })
     })
     return result?.eligibilities || []
   } catch (error) {
@@ -2757,7 +2763,8 @@ export async function updateDesignationSubcategoryEligibility(
   quantity?: number,
   renewalFrequency?: number,
   renewalUnit?: 'months' | 'years',
-  status?: 'active' | 'inactive'
+  status?: 'active' | 'inactive',
+  subCategoryId?: string
 ): Promise<any> {
   try {
     const { getUserEmail } = await import('@/lib/utils/auth-storage')
@@ -2765,13 +2772,15 @@ export async function updateDesignationSubcategoryEligibility(
     const userEmail = getUserEmail('company')
     
     // CRITICAL FIX: fetchAPI already prepends /api, so use '/designation-subcategory-eligibilities' not '/api/designation-subcategory-eligibilities'
+    // Send subCategoryId so API can target the correct record when duplicate eligibility ids exist
     const result = await fetchAPI<{ success: boolean; eligibility: any }>(
       '/designation-subcategory-eligibilities',
       {
         method: 'PUT',
         headers: userEmail ? { 'X-User-Email': userEmail } : undefined,
         body: JSON.stringify({
-          eligibilityId,
+          eligibilityId: eligibilityId != null ? String(eligibilityId) : undefined,
+          subCategoryId: subCategoryId != null && subCategoryId !== '' ? String(subCategoryId) : undefined,
           quantity,
           renewalFrequency,
           renewalUnit,
@@ -2780,6 +2789,9 @@ export async function updateDesignationSubcategoryEligibility(
         })
       }
     )
+    if (result == null) {
+      throw new Error('Eligibility not found. The record may have been deleted or the ID may be invalid.')
+    }
     return result?.eligibility
   } catch (error) {
     console.error('Error updating designation-subcategory eligibility:', error)

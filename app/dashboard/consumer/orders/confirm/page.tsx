@@ -149,7 +149,7 @@ export default function OrderConfirmationPage() {
           }
         }
 
-        // Prepare order items with prices
+        // Prepare order items with prices and subcategoryId (for per-subcategory eligibility tracking)
         const orderItems = orderData.items.map((item: any) => {
           const uniform = companyProducts.find((u: any) => u.id === item.uniformId)
           return {
@@ -158,6 +158,8 @@ export default function OrderConfirmationPage() {
             size: item.size,
             quantity: item.quantity,
             price: uniform?.price || 0,
+            ...(item.subcategoryId && { subcategoryId: item.subcategoryId }),
+            ...(uniform?.primarySubcategoryId && !item.subcategoryId && { subcategoryId: uniform.primarySubcategoryId }),
           }
         })
 

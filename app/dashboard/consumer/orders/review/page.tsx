@@ -71,7 +71,7 @@ export default function OrderReviewPage() {
               })(),
               getCompanyById(companyId),
               getConsumedEligibility(employeeId),
-              fetch(`/api/employees/${employeeId}/eligibility`).then(res => res.ok ? res.json() : null).catch(() => null)
+              fetch(`/api/employees/${employeeId}/eligibility`, { cache: 'no-store' }).then(res => res.ok ? res.json() : null).catch(() => null)
             ])
             setCompanyProducts(products)
             setCompany(companyData)

@@ -49,6 +49,8 @@ export default function DesignationEligibilityPage() {
   const [formData, setFormData] = useState({
     designation: '',
     gender: 'male' as 'male' | 'female',
+    /** When editing: the actual stored gender (e.g. 'unisex'). Used so we update the same records we loaded. */
+    originalGender: undefined as 'male' | 'female' | 'unisex' | undefined,
     selectedSubcategories: [] as string[], // Array of subcategory IDs
     subcategoryQuantities: {} as Record<string, SubcategoryEligibilityForm>, // subcategoryId -> { quantity }
     refreshEligibility: false, // Refresh eligibility for all employees with this designation
@@ -286,9 +288,9 @@ export default function DesignationEligibilityPage() {
 
       await Promise.all(promises)
       
-      // Reload eligibilities
-      const refreshedEligibilities = await getDesignationSubcategoryEligibilities(companyId)
-        setEligibilities(refreshedEligibilities)
+      // Reload eligibilities (skip cache so we see the updated list)
+      const refreshedEligibilities = await getDesignationSubcategoryEligibilities(companyId, undefined, undefined, true)
+      setEligibilities(refreshedEligibilities)
       
       // If refreshEligibility was checked, trigger refresh
       if (formData.refreshEligibility) {
@@ -300,20 +302,23 @@ export default function DesignationEligibilityPage() {
             formData.gender
           )
           if (refreshResult.success) {
-            alert(`✅ Eligibility refreshed successfully! Updated ${refreshResult.employeesUpdated} employee(s).`)
+            alert(`✅ Eligibility rules saved. Employee eligibility records updated for ${refreshResult.employeesUpdated} employee(s).`)
           } else {
-            alert(`⚠️ Refresh completed with warnings: ${refreshResult.message}`)
+            alert(`⚠️ Eligibility rules saved. Refresh: ${refreshResult.message}`)
           }
         } catch (error: any) {
           console.error('Error refreshing eligibility:', error)
-          alert(`⚠️ Eligibility saved, but refresh failed: ${error.message || 'Unknown error'}`)
+          alert(`⚠️ Eligibility rules saved, but refresh failed: ${error.message || 'Unknown error'}`)
         }
+      } else {
+        alert('✅ Eligibility rules saved. New limits apply when employees view the catalog or place orders.')
       }
       
       // Reset form
       setFormData({
         designation: '',
         gender: 'male',
+        originalGender: undefined,
         selectedSubcategories: [],
         subcategoryQuantities: {},
         refreshEligibility: false,
@@ -359,6 +364,7 @@ export default function DesignationEligibilityPage() {
     setFormData({
       designation: eligibility.designationId,
       gender: eligibility.gender === 'unisex' ? 'male' : (eligibility.gender || 'male'),
+      originalGender: eligibility.gender || 'unisex', // Use stored gender so we update the same records
       selectedSubcategories,
       subcategoryQuantities,
       refreshEligibility: false, // Default to false when editing
@@ -397,9 +403,10 @@ export default function DesignationEligibilityPage() {
     }
 
     try {
-      // Find all existing eligibilities for this designation and gender
+      // Use stored gender when editing so we match the same records we loaded (e.g. 'unisex' not 'male')
+      const storedGender = formData.originalGender ?? formData.gender
       const existingEligibilities = eligibilities.filter(
-        (e: any) => e.designationId === formData.designation && e.gender === formData.gender
+        (e: any) => e.designationId === formData.designation && e.gender === storedGender
       )
       
       // Get IDs of subcategories that should exist
@@ -416,24 +423,26 @@ export default function DesignationEligibilityPage() {
         )
         
         if (existing) {
-          // Update existing
-          // CRITICAL FIX: Use id field (string ID) instead of _id (ObjectId)
-          const existingId = existing.id || existing._id
-          if (!existingId) {
+          // Update existing: send id + subCategoryId so API updates the correct record (handles duplicate ids in DB)
+          const rawId = existing.id ?? existing._id
+          if (rawId == null || rawId === '') {
             console.error('Cannot update: eligibility missing id field', existing)
             continue
           }
+          const existingIdStr = String(rawId)
+          const subCatId = existing.subcategory?.id ?? existing.subCategoryId ?? subcategoryId
           promises.push(
             updateDesignationSubcategoryEligibility(
-              existingId,
+              existingIdStr,
               quantity,
               renewalFrequency, // Use user-entered frequency
               'months', // Renewal unit (always months for now)
-              'active'
+              'active',
+              subCatId
             )
           )
         } else {
-          // Create new
+          // Create new (use storedGender so we don't create duplicate group when form shows male but data is unisex)
           promises.push(
             createDesignationSubcategoryEligibility(
               companyId,
@@ -442,7 +451,7 @@ export default function DesignationEligibilityPage() {
               quantity,
               renewalFrequency, // Use user-entered frequency
               'months', // Renewal unit (always months for now)
-              formData.gender
+              storedGender as 'male' | 'female' | 'unisex'
             )
           )
         }
@@ -459,30 +468,51 @@ export default function DesignationEligibilityPage() {
         }
       }
       
-      await Promise.all(promises)
+      const results = await Promise.all(promises)
       
-      // Reload eligibilities
-      const refreshedEligibilities = await getDesignationSubcategoryEligibilities(companyId)
-      setEligibilities(refreshedEligibilities)
+      // Build map of just-saved eligibility by id+subCategoryId (so duplicate ids don't overwrite each other)
+      const updatedFromServer = results.filter((r: any) => r && typeof r === 'object' && (r.id != null || r._id != null))
+      const byIdAndSub = new Map<string, any>()
+      updatedFromServer.forEach((e: any) => {
+        const id = e.id != null ? String(e.id) : String(e._id)
+        const subId = e.subCategoryId ?? e.subcategory?.id ?? ''
+        byIdAndSub.set(`${id}|${subId}`, e)
+      })
       
-      // If refreshEligibility was checked, trigger refresh
+      // Refetch full list, then overwrite with our just-saved values so we never show stale GET data
+      const refreshedEligibilities = await getDesignationSubcategoryEligibilities(companyId, undefined, undefined, true)
+      const merged = refreshedEligibilities.map((e: any) => {
+        const id = e.id != null ? String(e.id) : (e._id != null ? String(e._id) : null)
+        const subId = e.subCategoryId ?? e.subcategory?.id ?? ''
+        const key = id ? `${id}|${subId}` : null
+        const justSaved = key ? byIdAndSub.get(key) : null
+        if (justSaved) {
+          return { ...e, quantity: justSaved.quantity, renewalFrequency: justSaved.renewalFrequency, renewalUnit: justSaved.renewalUnit ?? e.renewalUnit }
+        }
+        return e
+      })
+      setEligibilities(merged)
+      
+      // If refreshEligibility was checked, trigger refresh (use storedGender so we refresh the same group we updated)
       if (formData.refreshEligibility) {
         try {
           console.log('🔄 Refreshing employee eligibility...')
           const refreshResult = await refreshEmployeeEligibilityForDesignation(
             companyId,
             formData.designation,
-            formData.gender
+            storedGender as 'male' | 'female' | 'unisex'
           )
           if (refreshResult.success) {
-            alert(`✅ Eligibility refreshed successfully! Updated ${refreshResult.employeesUpdated} employee(s).`)
+            alert(`✅ Eligibility rules saved. Employee eligibility records updated for ${refreshResult.employeesUpdated} employee(s).`)
           } else {
-            alert(`⚠️ Refresh completed with warnings: ${refreshResult.message}`)
+            alert(`⚠️ Eligibility rules saved. Refresh: ${refreshResult.message}`)
           }
         } catch (error: any) {
           console.error('Error refreshing eligibility:', error)
-          alert(`⚠️ Eligibility updated, but refresh failed: ${error.message || 'Unknown error'}`)
+          alert(`⚠️ Eligibility rules saved, but refresh failed: ${error.message || 'Unknown error'}`)
         }
+      } else {
+        alert('✅ Eligibility rules saved. New limits apply when employees view the catalog or place orders.')
       }
       
       // Reset form
@@ -490,6 +520,7 @@ export default function DesignationEligibilityPage() {
       setFormData({
         designation: '',
         gender: 'male',
+        originalGender: undefined,
         selectedSubcategories: [],
         subcategoryQuantities: {},
         refreshEligibility: false,
@@ -536,6 +567,7 @@ export default function DesignationEligibilityPage() {
     setFormData({
       designation: '',
       gender: 'male',
+      originalGender: undefined,
       selectedSubcategories: [],
       subcategoryQuantities: {},
       refreshEligibility: false,
