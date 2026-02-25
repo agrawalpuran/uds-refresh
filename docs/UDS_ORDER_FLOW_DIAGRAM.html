@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UDS – Order to Invoice Flow</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 900px;
+      margin: 24px auto;
+      padding: 0 16px;
+      background: #f8f9fa;
+      color: #1a1a1a;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 8px; color: #0d47a1; }
+    .subtitle { color: #555; margin-bottom: 24px; font-size: 0.95rem; }
+    .mermaid { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin: 16px 0; }
+    .step-list { background: #fff; padding: 16px 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-top: 24px; }
+    .step-list h2 { font-size: 1.1rem; margin: 0 0 12px 0; color: #0d47a1; }
+    .step-list ol { margin: 0; padding-left: 20px; line-height: 1.7; color: #333; }
+  </style>
+</head>
+<body>
+  <h1>UDS – Order to Invoice Flow</h1>
+  <p class="subtitle">From employee order → Location Admin → Company Admin → Vendor → GRN → Invoice → Payment (multiple companies, multiple vendors)</p>
+
+  <div class="mermaid">
+flowchart LR
+    A[Employee\nOrders] --> B[Location Admin\nApprove]
+    B --> C[Company Admin\nApprove]
+    C --> D[Vendor\nFulfil]
+    D --> E[GRN\nGoods Receipt]
+    E --> F[Invoice\nCompany Approve]
+    F --> G[Payment]
+  </div>
+
+  <div class="step-list">
+    <h2>Steps (easy to follow)</h2>
+    <ol>
+      <li><strong>Employee</strong> – Places order from catalog, confirms address and submits.</li>
+      <li><strong>Location Admin</strong> – Sees order in Approvals, approves or rejects. Company Admin is notified.</li>
+      <li><strong>Company Admin</strong> – Sees order in Approvals, approves. Order status becomes “Awaiting fulfilment”. Vendor(s) are notified.</li>
+      <li><strong>Vendor</strong> – Receives order (indent), ships items, creates GRN (Goods Receipt Note).</li>
+      <li><strong>Company Admin</strong> – Approves GRN. Relevant parties are notified.</li>
+      <li><strong>Vendor</strong> – Raises Invoice. Company Admin approves invoice. Payment follows.</li>
+    </ol>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'neutral',
+      flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+    });
+  </script>
+</body>
+</html>
