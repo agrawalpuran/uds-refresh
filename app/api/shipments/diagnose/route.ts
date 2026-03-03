@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import Shipment from '@/lib/models/Shipment'
 import ShipmentApiLog from '@/lib/models/ShipmentApiLog'
@@ -17,6 +18,8 @@ import { createProvider } from '@/lib/providers/ProviderFactory'
 export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const orderId = searchParams.get('orderId')
 

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import {
   getVendorShippingRoutingById,
   updateVendorShippingRouting,
@@ -91,6 +92,8 @@ export async function PUT(
   { params }: { params: Promise<{ routingId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Handle both Promise and direct params (Next.js 13+ vs 15+)
     const resolvedParams = await params
     const { routingId } = resolvedParams
@@ -187,6 +190,8 @@ export async function DELETE(
   { params }: { params: Promise<{ routingId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Handle both Promise and direct params (Next.js 13+ vs 15+)
     const resolvedParams = await params
     const { routingId } = resolvedParams

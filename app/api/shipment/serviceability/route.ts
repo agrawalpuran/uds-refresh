@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import ShipmentServiceProvider from '@/lib/models/ShipmentServiceProvider'
 import { getProviderInstance } from '@/lib/providers/ProviderFactory'
@@ -20,6 +21,8 @@ import { getProviderInstance } from '@/lib/providers/ProviderFactory'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {

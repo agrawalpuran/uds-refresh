@@ -15,6 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import { 
   rejectEntity,
@@ -99,6 +100,8 @@ export async function POST(request: NextRequest) {
   }
   
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Step 1: Authenticate user
     const userContext = getUserContext(request)
     

@@ -14,6 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import {
   getEventConfigForCompany,
   updateEventConfig,
@@ -28,6 +29,8 @@ export async function GET(
   { params }: { params: Promise<{ companyId: string; eventCode: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { companyId, eventCode } = await params
 
     if (!companyId || !eventCode) {
@@ -122,6 +125,8 @@ export async function PATCH(
   { params }: { params: Promise<{ companyId: string; eventCode: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { companyId, eventCode } = await params
     const body = await request.json()
 

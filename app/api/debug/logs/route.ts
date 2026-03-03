@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 
 // Simple endpoint to check if debug API is accessible
 
@@ -6,7 +7,8 @@ import { NextResponse } from 'next/server'
 export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {
-
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   return NextResponse.json({ 
     message: 'Debug API is accessible',
     timestamp: new Date().toISOString()

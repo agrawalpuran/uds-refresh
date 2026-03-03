@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getShipmentServiceProviderById, getProviderWithAuth } from '@/lib/db/shipping-config-access'
 import { getProviderInstance } from '@/lib/providers/ProviderFactory'
 import '@/lib/models/ShipmentServiceProvider'
@@ -16,6 +17,8 @@ export async function GET(
   { params }: { params: Promise<{ providerId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Handle both Promise and direct params (Next.js 15 compatibility)
     const resolvedParams = await params
     const { providerId } = resolvedParams

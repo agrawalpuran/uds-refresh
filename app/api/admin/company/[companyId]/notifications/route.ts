@@ -14,6 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import {
   getCompanyNotificationConfig,
   getAllEventConfigsForCompany,
@@ -28,6 +29,8 @@ export async function GET(
   { params }: { params: Promise<{ companyId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { companyId } = await params
 
     if (!companyId) {
@@ -69,6 +72,8 @@ export async function PUT(
   { params }: { params: Promise<{ companyId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { companyId } = await params
     const body = await request.json()
 
@@ -129,6 +134,8 @@ export async function DELETE(
   { params }: { params: Promise<{ companyId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { companyId } = await params
 
     if (!companyId) {

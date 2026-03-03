@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import {
   getShipmentPackageById,
@@ -19,6 +20,8 @@ export async function GET(
   { params }: { params: Promise<{ packageId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const resolvedParams = await params
     const { packageId } = resolvedParams
 
@@ -192,6 +195,8 @@ export async function DELETE(
   { params }: { params: Promise<{ packageId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const resolvedParams = await params
     const { packageId } = resolvedParams
 

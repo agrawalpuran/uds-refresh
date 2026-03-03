@@ -1,5 +1,5 @@
-
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getSystemShippingConfig, updateSystemShippingConfig } from '@/lib/db/shipping-config-access'
 // Ensure models are registered
 import '@/lib/models/SystemShippingConfig'
@@ -14,6 +14,8 @@ export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const config = await getSystemShippingConfig()
     return NextResponse.json(config)
   } catch (error: any) {
@@ -59,6 +61,8 @@ export async function GET() {
  */
 export async function PUT(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {

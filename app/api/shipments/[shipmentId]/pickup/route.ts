@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import Shipment from '@/lib/models/Shipment'
 import ShipmentPickup from '@/lib/models/ShipmentPickup'
@@ -17,6 +18,8 @@ export async function GET(
   { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { shipmentId } = await params
 
     await connectDB()
@@ -28,9 +31,9 @@ export async function GET(
         { error: `Shipment ${shipmentId} not found` },
         { status: 404 }
       )
+    }
 
     // Get latest pickup record
-    }
     const latestPickup = await ShipmentPickup.findOne({ shipmentId })
       .sort({ createdAt: -1 })
       .lean()

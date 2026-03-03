@@ -168,6 +168,8 @@ export class ShiprocketProvider implements LogisticsProvider {
       // Normalize URL to avoid double slashes
       const baseUrl = this.config.apiBaseUrl.replace(/\/+$/, '')
       const loginUrl = `${baseUrl}/v1/external/auth/login`
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 15000)
       const response = await fetch(loginUrl, {
         method: 'POST',
         headers: {
@@ -177,7 +179,9 @@ export class ShiprocketProvider implements LogisticsProvider {
           email: this.config.email,
           password: this.config.password,
         }),
+        signal: controller.signal,
       })
+      clearTimeout(timeout)
 
       if (!response.ok) {
         const errorText = await response.text()
@@ -279,11 +283,15 @@ export class ShiprocketProvider implements LogisticsProvider {
       }
     }
     
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30000)
     const response = await fetch(url, {
       method,
       headers,
       body: requestBody,
+      signal: controller.signal,
     })
+    clearTimeout(timeout)
 
     if (!response.ok) {
       const errorText = await response.text()

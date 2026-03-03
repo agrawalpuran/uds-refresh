@@ -1,7 +1,7 @@
 'use client'
 
 import DashboardLayout from '@/components/DashboardLayout'
-import { ArrowLeft, Package, Truck, MapPin, Calendar, User, Mail, FileText, X } from 'lucide-react'
+import { ArrowLeft, Package, Truck, MapPin, Calendar, User, Mail, FileText, X, Scissors } from 'lucide-react'
 import { useRouter, useParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
 
@@ -30,41 +30,40 @@ export default function OrderDetailsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [courierNames, setCourierNames] = useState<Map<string, string>>(new Map())
+  const [mtmMeasurements, setMtmMeasurements] = useState<Record<string, any[]>>({})
 
   useEffect(() => {
+    let cancelled = false
     if (orderId) {
-      loadOrderDetails()
-    }
-  }, [orderId])
+      const loadOrderDetails = async () => {
+        try {
+          setLoading(true)
+          setError(null)
 
-  const loadOrderDetails = async () => {
-    try {
-      setLoading(true)
-      setError(null)
+          // Get vendor ID for authorization
+          const { getVendorId, getAuthData } = typeof window !== 'undefined'
+            ? await import('@/lib/utils/auth-storage')
+            : { getVendorId: () => null, getAuthData: () => null }
 
-      // Get vendor ID for authorization
-      const { getVendorId, getAuthData } = typeof window !== 'undefined'
-        ? await import('@/lib/utils/auth-storage')
-        : { getVendorId: () => null, getAuthData: () => null }
+          // SECURITY FIX: No localStorage fallback
+          const storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
 
-      // SECURITY FIX: No localStorage fallback
-      const storedVendorId = getVendorId() || getAuthData('vendor')?.vendorId || null
+          if (!storedVendorId) {
+            throw new Error('Vendor ID not found. Please log in again.')
+          }
 
-      if (!storedVendorId) {
-        throw new Error('Vendor ID not found. Please log in again.')
-      }
+          // Fetch order details (now returns all PRs for the PO)
+          const response = await fetch(`/api/vendor/orders/${orderId}?vendorId=${storedVendorId}`)
+          
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }))
+            throw new Error(errorData.error || 'Failed to load order details')
+          }
 
-      // Fetch order details (now returns all PRs for the PO)
-      const response = await fetch(`/api/vendor/orders/${orderId}?vendorId=${storedVendorId}`)
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: `HTTP ${response.status}` }))
-        throw new Error(errorData.error || 'Failed to load order details')
-      }
-
-      const data = await response.json()
-      setPONumber(data.poNumber)
-      setPODate(data.poDate ? new Date(data.poDate) : null)
+          const data = await response.json()
+          if (cancelled) return
+          setPONumber(data.poNumber)
+          setPODate(data.poDate ? new Date(data.poDate) : null)
       
       // Fetch courier names for all unique courier codes
       const courierCodes = new Set<string>()
@@ -91,74 +90,107 @@ export default function OrderDetailsPage() {
           console.warn('Failed to fetch courier names:', err)
         }
       }
+      if (cancelled) return
       setCourierNames(courierNamesMap)
       
-      // Fetch employee addresses for each PR
-      const prsWithEmployeeData = await Promise.all(
-        (data.prs || []).map(async (pr: any) => {
-          const employeeId = pr.employeeId 
-            ? (typeof pr.employeeId === 'object' ? pr.employeeId.id : pr.employeeId)
-            : pr.employeeIdNum || null
-          
-          let employeeAddress = null
-          let employeeEmail = pr.employeeEmail || 'N/A'
-          let employeeFullName = pr.employeeName || 'N/A'
-          
-          // Fetch employee to get their personal address - use forShipment=true to get decrypted data
-          if (employeeId) {
-            try {
-              const employeeRes = await fetch(`/api/employees?employeeId=${employeeId}&forShipment=true`)
-              if (employeeRes.ok) {
-                const employeeData = await employeeRes.json()
-                const employee = Array.isArray(employeeData) ? employeeData[0] : employeeData
-                
-                if (employee) {
-                  // Employee data is now decrypted (name, email, address)
-                  // Use employee's embedded address fields
-                  if (employee.address_line_1 || employee.address) {
-                    employeeAddress = {
-                      address_line_1: employee.address_line_1 || employee.address?.address_line_1 || '',
-                      address_line_2: employee.address_line_2 || employee.address?.address_line_2 || '',
-                      address_line_3: employee.address_line_3 || employee.address?.address_line_3 || '',
-                      city: employee.city || employee.address?.city || '',
-                      state: employee.state || employee.address?.state || '',
-                      pincode: employee.pincode || employee.address?.pincode || '',
-                      country: employee.country || employee.address?.country || 'India',
-                    }
-                  }
-                  
-                  // Get decrypted employee email and name
-                  if (employee.email) employeeEmail = employee.email
-                  if (employee.firstName && employee.lastName) {
-                    employeeFullName = `${employee.firstName} ${employee.lastName}`.trim()
-                  } else if (employee.firstName) {
-                    employeeFullName = employee.firstName
-                  }
-                }
-              }
-            } catch (err) {
-              console.warn(`Failed to fetch employee ${employeeId}:`, err)
-              // Continue with order's shipping address as fallback
+      // Batch-fetch unique employees (deduplicate IDs to avoid redundant requests)
+      const prsList: any[] = data.prs || []
+      const employeeIdToPr = new Map<string, any[]>()
+      for (const pr of prsList) {
+        const eid = pr.employeeId
+          ? (typeof pr.employeeId === 'object' ? pr.employeeId.id : pr.employeeId)
+          : pr.employeeIdNum || null
+        if (eid) {
+          if (!employeeIdToPr.has(eid)) employeeIdToPr.set(eid, [])
+          employeeIdToPr.get(eid)!.push(pr)
+        }
+      }
+
+      const uniqueEmpIds = [...employeeIdToPr.keys()]
+      const empDataMap = new Map<string, any>()
+      if (uniqueEmpIds.length > 0) {
+        const empResults = await Promise.all(
+          uniqueEmpIds.map(eid =>
+            fetch(`/api/employees?employeeId=${eid}&forShipment=true`)
+              .then(r => r.ok ? r.json() : null)
+              .catch(() => null)
+          )
+        )
+        uniqueEmpIds.forEach((eid, i) => {
+          const raw = empResults[i]
+          empDataMap.set(eid, Array.isArray(raw) ? raw[0] : raw)
+        })
+      }
+      if (cancelled) return
+
+      const prsWithEmployeeData = prsList.map((pr: any) => {
+        const employeeId = pr.employeeId
+          ? (typeof pr.employeeId === 'object' ? pr.employeeId.id : pr.employeeId)
+          : pr.employeeIdNum || null
+        let employeeAddress = null
+        let employeeEmail = pr.employeeEmail || 'N/A'
+        let employeeFullName = pr.employeeName || 'N/A'
+
+        const employee = employeeId ? empDataMap.get(employeeId) : null
+        if (employee) {
+          if (employee.address_line_1 || employee.address) {
+            employeeAddress = {
+              address_line_1: employee.address_line_1 || employee.address?.address_line_1 || '',
+              address_line_2: employee.address_line_2 || employee.address?.address_line_2 || '',
+              address_line_3: employee.address_line_3 || employee.address?.address_line_3 || '',
+              city: employee.city || employee.address?.city || '',
+              state: employee.state || employee.address?.state || '',
+              pincode: employee.pincode || employee.address?.pincode || '',
+              country: employee.country || employee.address?.country || 'India',
             }
           }
-          
-          return {
-            ...pr,
-            employeeAddress,
-            employeeEmail,
-            employeeFullName,
+          if (employee.email) employeeEmail = employee.email
+          if (employee.firstName && employee.lastName) {
+            employeeFullName = `${employee.firstName} ${employee.lastName}`.trim()
+          } else if (employee.firstName) {
+            employeeFullName = employee.firstName
           }
-        })
-      )
-      
+        }
+
+        return { ...pr, employeeAddress, employeeEmail, employeeFullName }
+      })
+      if (cancelled) return
       setPRs(prsWithEmployeeData)
-    } catch (err: any) {
-      console.error('Error loading order details:', err)
-      setError(err.message || 'Failed to load order details')
-    } finally {
-      setLoading(false)
+
+      // Fetch MTM measurements in parallel (not sequentially)
+      const mtmPrs = prsWithEmployeeData.filter((pr: any) => {
+        const prId = pr._id || pr.id
+        return prId && pr.items?.some((item: any) => item.fit_type === 'MTM')
+      })
+      const mtmMap: Record<string, any[]> = {}
+      if (mtmPrs.length > 0) {
+        const mtmResults = await Promise.all(
+          mtmPrs.map((pr: any) => {
+            const prId = pr._id || pr.id
+            return fetch(`/api/mtm/order-measurements?orderId=${prId}`)
+              .then(r => r.ok ? r.json() : null)
+              .catch(() => null)
+          })
+        )
+        mtmPrs.forEach((pr: any, i: number) => {
+          const prId = pr._id || pr.id
+          const d = mtmResults[i]
+          if (d) mtmMap[prId] = Array.isArray(d) ? d : d.measurements || []
+        })
+      }
+      if (cancelled) return
+      setMtmMeasurements(mtmMap)
+        } catch (err: any) {
+          console.error('Error loading order details:', err)
+          setError(err.message || 'Failed to load order details')
+        } finally {
+          if (!cancelled) setLoading(false)
+        }
+      }
+      loadOrderDetails()
     }
-  }
+    return () => { cancelled = true }
+  }, [orderId])
 
   const formatDate = (date: Date | string | null) => {
     if (!date) return 'N/A'
@@ -351,16 +383,47 @@ export default function OrderDetailsPage() {
                   </div>
                   <div className="space-y-1">
                     {pr.items && pr.items.length > 0 ? (
-                      pr.items.map((item: any, itemIndex: number) => (
-                        <div key={itemIndex} className="flex justify-between items-center text-xs py-0.5">
-                          <span className="text-gray-700 flex-1">
-                            {item.uniformName || 'Product'}
-                            {item.size && ` (Size: ${item.size})`}
-                            <span className="text-gray-500"> x {item.quantity}</span>
-                          </span>
-                          <span className="text-gray-900 font-medium ml-2">₹{(item.price * item.quantity).toFixed(2)}</span>
-                        </div>
-                      ))
+                      pr.items.map((item: any, itemIndex: number) => {
+                        const prId = pr._id || pr.id
+                        const itemMTM = item.fit_type === 'MTM'
+                          ? mtmMeasurements[prId]?.find((m: any) => m.item_index === itemIndex)
+                          : null
+
+                        return (
+                          <div key={itemIndex} className="text-xs py-0.5">
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-700 flex-1">
+                                {item.uniformName || 'Product'}
+                                {item.fit_type === 'MTM' ? (
+                                  <span className="inline-flex items-center ml-1.5 text-[9px] px-1 py-0.5 gap-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded font-medium">
+                                    <Scissors className="h-2 w-2" />
+                                    MTM
+                                  </span>
+                                ) : (
+                                  item.size && ` (Size: ${item.size})`
+                                )}
+                                <span className="text-gray-500"> x {item.quantity}</span>
+                              </span>
+                              <span className="text-gray-900 font-medium ml-2">₹{(item.price * item.quantity).toFixed(2)}</span>
+                            </div>
+                            {itemMTM && itemMTM.measurements && (
+                              <div className="mt-1 ml-2 p-1.5 bg-violet-50 rounded border border-violet-100">
+                                <p className="text-[10px] font-medium text-violet-700 mb-0.5">Measurements:</p>
+                                <div className="flex flex-wrap gap-x-3 gap-y-0">
+                                  {itemMTM.measurements.map((m: any, mi: number) => (
+                                    <span key={mi} className="text-[10px] text-gray-600">
+                                      {m.label || m.key}: <span className="font-medium">{m.value}{m.unit}</span>
+                                    </span>
+                                  ))}
+                                </div>
+                                {itemMTM.special_instructions && (
+                                  <p className="text-[10px] text-gray-500 mt-0.5 italic">Note: {itemMTM.special_instructions}</p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })
                     ) : (
                       <p className="text-xs text-gray-500 italic">No items found</p>
                     )}

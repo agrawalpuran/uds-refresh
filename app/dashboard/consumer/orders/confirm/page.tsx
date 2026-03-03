@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
-import { CheckCircle, MapPin, Clock, Package, AlertCircle } from 'lucide-react'
+import { CheckCircle, MapPin, Clock, Package, AlertCircle, Scissors } from 'lucide-react'
 import { getProductsForDesignation, getEmployeeByEmail, getCompanyById, createOrder, getVendorByEmail, isCompanyAdmin, getLocationByAdminEmail, getBranchByAdminEmail } from '@/lib/data-mongodb'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -23,6 +23,7 @@ export default function OrderConfirmationPage() {
   
   // Get current employee from localStorage
   useEffect(() => {
+    let cancelled = false
     if (typeof window !== 'undefined') {
       const loadData = async () => {
         try {
@@ -31,6 +32,7 @@ export default function OrderConfirmationPage() {
           const { getUserEmail } = await import('@/lib/utils/auth-storage')
           const userEmail = getUserEmail('consumer')
           if (!userEmail) {
+            if (cancelled) return
             setLoading(false)
             return
           }
@@ -39,12 +41,14 @@ export default function OrderConfirmationPage() {
           const vendor = await getVendorByEmail(userEmail)
           if (vendor) {
             console.error('Order Confirm - Email belongs to vendor, redirecting...')
+            if (cancelled) return
             window.location.href = '/dashboard/vendor'
             return
           }
           
           const employee = await getEmployeeByEmail(userEmail)
           if (employee) {
+            if (cancelled) return
             setCurrentEmployee(employee)
             // Get only products linked to this company
             // Ensure companyId is a string (handle populated objects)
@@ -73,18 +77,21 @@ export default function OrderConfirmationPage() {
               })(),
               getCompanyById(companyId)
             ])
+            if (cancelled) return
             setCompanyProducts(products)
             setCompany(companyData)
           }
         } catch (error) {
           console.error('Error loading employee data:', error)
         } finally {
+          if (cancelled) return
           setLoading(false)
         }
       }
       
       loadData()
     }
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -152,14 +159,23 @@ export default function OrderConfirmationPage() {
         // Prepare order items with prices and subcategoryId (for per-subcategory eligibility tracking)
         const orderItems = orderData.items.map((item: any) => {
           const uniform = companyProducts.find((u: any) => u.id === item.uniformId)
+          const basePrice = uniform?.price || 0
+          const finalPrice = item.fit_type === 'MTM' && item.price > 0 ? item.price : basePrice
           return {
             uniformId: item.uniformId,
             uniformName: item.uniformName,
             size: item.size,
             quantity: item.quantity,
-            price: uniform?.price || 0,
+            price: finalPrice,
             ...(item.subcategoryId && { subcategoryId: item.subcategoryId }),
             ...(uniform?.primarySubcategoryId && !item.subcategoryId && { subcategoryId: uniform.primarySubcategoryId }),
+            ...(item.fit_type === 'MTM' && {
+              fit_type: 'MTM',
+              mtm_measurements: item.mtm_measurements,
+              mtm_specification_id: item.mtm_specification_id,
+              mtm_instructions: item.mtm_instructions,
+              mtm_price_premium: item.mtm_price_premium || 0,
+            }),
           }
         })
 
@@ -186,6 +202,38 @@ export default function OrderConfirmationPage() {
           setSavedOrderId(savedOrder.parentOrderId)
         } else if (savedOrder?.id) {
           setSavedOrderId(savedOrder.id)
+        }
+
+        // Save MTM measurements for any MTM items in parallel
+        const orderId = savedOrder?.parentOrderId || savedOrder?.id
+        if (orderId) {
+          const mtmItems = orderData.items.filter((item: any) => item.fit_type === 'MTM' && item.mtm_measurements)
+          if (mtmItems.length > 0) {
+            await Promise.allSettled(
+              mtmItems.map((item: any) => {
+                const itemIndex = orderData.items.indexOf(item)
+                return fetch('/api/mtm/order-measurements', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    order_id: orderId,
+                    item_index: itemIndex,
+                    product_id: item.uniformId,
+                    mtm_specification_id: item.mtm_specification_id || '',
+                    measurements: Object.entries(item.mtm_measurements).map(([key, val]: [string, any]) => ({
+                      key,
+                      label: key.replace(/_/g, ' '),
+                      value: val.value,
+                      unit: val.unit,
+                    })),
+                    special_instructions: item.mtm_instructions || '',
+                  }),
+                }).catch(mtmError => {
+                  console.error('Error saving MTM measurements for item', itemIndex, mtmError)
+                })
+              })
+            )
+          }
         }
 
         // Clear the pending order from sessionStorage after successful save
@@ -455,11 +503,35 @@ export default function OrderConfirmationPage() {
             </h2>
             <div className="space-y-3">
               {orderItems.map((item: any, idx: number) => (
-                <div key={idx} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
-                  <div>
-                    <p className="font-medium text-gray-900">{item.uniformName}</p>
-                    <p className="text-sm text-gray-600">Size: {item.size} × Quantity: {item.quantity}</p>
+                <div key={idx} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-gray-900 flex items-center gap-2">
+                        {item.uniformName}
+                        {item.fit_type === 'MTM' && (
+                          <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 gap-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded font-medium">
+                            <Scissors className="h-2.5 w-2.5" />
+                            Custom Fit
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        {item.fit_type === 'MTM' ? 'Fit: Custom (MTM)' : `Size: ${item.size}`} × Quantity: {item.quantity}
+                      </p>
+                    </div>
                   </div>
+                  {item.fit_type === 'MTM' && item.mtm_measurements && (
+                    <div className="mt-2 pt-2 border-t border-gray-200">
+                      <p className="text-xs font-medium text-violet-700 mb-1">Measurements:</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+                        {Object.entries(item.mtm_measurements).map(([key, val]: [string, any]) => (
+                          <span key={key} className="text-xs text-gray-600">
+                            {key.replace(/_/g, ' ')}: <span className="font-medium">{val.value}{val.unit}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

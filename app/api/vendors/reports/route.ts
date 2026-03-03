@@ -1,5 +1,5 @@
-
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { 
   getVendorReports, 
   getVendorReportsForCompany,
@@ -27,6 +27,8 @@ function parseDateParam(dateStr: string | null): Date | null {
 
 export async function GET(request: NextRequest) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
     
     const searchParams = request.nextUrl.searchParams

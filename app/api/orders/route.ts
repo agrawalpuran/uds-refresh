@@ -1,5 +1,6 @@
 
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { 
   getAllOrders, 
   getOrdersByCompany, 
@@ -24,6 +25,8 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const companyId = searchParams.get('companyId')
     const employeeId = searchParams.get('employeeId')
@@ -136,7 +139,10 @@ export async function GET(request: Request) {
     }
 
     if (companyId) {
-      const orders = await getOrdersByCompany(companyId)
+      const page = searchParams.get('page')
+      const pageSize = searchParams.get('pageSize')
+      const pagination = page ? { page: parseInt(page, 10) || 1, pageSize: Math.min(parseInt(pageSize || '50', 10), 200) } : undefined
+      const orders = await getOrdersByCompany(companyId, pagination)
       return NextResponse.json(orders)
     }
 
@@ -172,6 +178,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     let body: any = null
     // Parse JSON body with error handling
     try {
@@ -247,6 +255,40 @@ export async function POST(request: Request) {
         }
         
         throw error
+      }
+    }
+
+    // MTM pre-validation: if any items have fit_type=MTM, validate company MTM flag and measurements
+    const mtmItems = (body.items || []).filter((i: any) => i.fit_type === 'MTM')
+    if (mtmItems.length > 0) {
+      const { isCompanyMTMEnabled } = await import('@/lib/db/mtm-data-access')
+      // Resolve companyId from employee (it's set later in createOrder, but we can check via employeeId)
+      const { default: Employee } = await import('@/lib/models/Employee')
+      const { default: connectDB } = await import('@/lib/db/mongodb')
+      await connectDB()
+      const emp = await Employee.findOne({
+        $or: [{ employeeId: body.employeeId }, { id: body.employeeId }]
+      }).select('companyId').lean()
+      if (emp) {
+        const cid = typeof (emp as any).companyId === 'object'
+          ? String((emp as any).companyId)
+          : String((emp as any).companyId || '')
+        const mtmEnabled = await isCompanyMTMEnabled(cid)
+        if (!mtmEnabled) {
+          return NextResponse.json({
+            error: 'Made-to-Measure ordering is not enabled for your company.',
+            type: 'validation_error'
+          }, { status: 400 })
+        }
+      }
+
+      for (const item of mtmItems) {
+        if (!item.mtm_measurements || Object.keys(item.mtm_measurements).length === 0) {
+          return NextResponse.json({
+            error: `Measurements are required for MTM item "${item.uniformName}".`,
+            type: 'validation_error'
+          }, { status: 400 })
+        }
       }
     }
 

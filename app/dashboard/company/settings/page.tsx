@@ -22,6 +22,7 @@ export default function CompanySettingsPage() {
   const [enableEmployeeOrder, setEnableEmployeeOrder] = useState<boolean>(false)
   const [allowLocationAdminViewFeedback, setAllowLocationAdminViewFeedback] = useState<boolean>(false)
   const [allowEligibilityConsumptionReset, setAllowEligibilityConsumptionReset] = useState<boolean>(false)
+  const [enableMTM, setEnableMTM] = useState<boolean>(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [accessDenied, setAccessDenied] = useState(false)
@@ -82,7 +83,7 @@ export default function CompanySettingsPage() {
             setEnableEmployeeOrder(companyDetails.enableEmployeeOrder === true)
             setAllowLocationAdminViewFeedback(companyDetails.allowLocationAdminViewFeedback === true)
             setAllowEligibilityConsumptionReset(companyDetails.allowEligibilityConsumptionReset === true)
-            console.log('[Settings] Set allowLocationAdminViewFeedback to:', companyDetails.allowLocationAdminViewFeedback === true)
+            setEnableMTM(companyDetails.enable_mtm === true)
           }
         } catch (error) {
           console.error('Error loading settings:', error)
@@ -119,6 +120,7 @@ export default function CompanySettingsPage() {
         enableEmployeeOrder,
         allowLocationAdminViewFeedback,
         allowEligibilityConsumptionReset,
+        enable_mtm: enableMTM,
       })
       
       // Log the result
@@ -190,6 +192,9 @@ export default function CompanySettingsPage() {
           const reloadedResetValue = companyDetails.allowEligibilityConsumptionReset === true
           console.log('[Settings] Setting allowEligibilityConsumptionReset from reloaded company to:', reloadedResetValue)
           setAllowEligibilityConsumptionReset(reloadedResetValue)
+        }
+        if (companyDetails.enable_mtm !== undefined) {
+          setEnableMTM(companyDetails.enable_mtm === true)
         }
       }
       
@@ -525,6 +530,30 @@ export default function CompanySettingsPage() {
                       <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
                       <span className="ml-3 text-sm font-medium text-gray-700">
                         {allowEligibilityConsumptionReset ? 'Reset Enabled' : 'Reset Disabled'}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Enable Made-to-Measure (MTM) Setting */}
+            <div className="border-b pb-6">
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">Enable Made-to-Measure (MTM)</h3>
+                  <p className="text-sm text-gray-600 mb-4">Allow employees to order custom-fit garments with body measurements alongside standard size orders. When enabled, you can configure measurement templates, assign them to products, and manage vendor MTM capabilities from the <a href="/dashboard/company/mtm/specifications" className="text-blue-600 hover:underline">MTM Management</a> pages.</p>
+                  <div className="flex items-center space-x-3">
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enableMTM}
+                        onChange={(e) => setEnableMTM(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+                      <span className="ml-3 text-sm font-medium text-gray-700">
+                        {enableMTM ? 'MTM Enabled' : 'MTM Disabled'}
                       </span>
                     </label>
                   </div>

@@ -1,5 +1,6 @@
 
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { 
   getAllProducts, 
   getProductsByCompany, 
@@ -18,6 +19,8 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const companyId = searchParams.get('companyId')
     const productId = searchParams.get('productId')
@@ -108,6 +111,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let productData: any
     try {
@@ -187,6 +192,8 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let productData: any
     try {
@@ -275,6 +282,8 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const productId = searchParams.get('productId')
     

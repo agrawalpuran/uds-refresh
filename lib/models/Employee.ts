@@ -1,5 +1,5 @@
 import mongoose, { Schema, Document } from 'mongoose'
-import { encrypt, decrypt } from '../utils/encryption'
+import { encrypt, decrypt, hashEmail } from '../utils/encryption'
 
 export interface IEmployee extends Document {
   id: string
@@ -10,6 +10,7 @@ export interface IEmployee extends Document {
   gender: 'male' | 'female'
   location: string
   email: string
+  emailHash?: string
   mobile: string
   shirtSize: string
   pantSize: string
@@ -104,7 +105,12 @@ const EmployeeSchema = new Schema<IEmployee>(
       type: String,
       required: true,
       unique: true,
-      // Note: unique: true automatically creates an index, so index: true is redundant
+    },
+    emailHash: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
     },
     mobile: {
       type: String,
@@ -244,22 +250,21 @@ EmployeeSchema.index({ companyId: 1, locationId: 1 }) // For company-location em
 
 // Encrypt sensitive fields before saving
 EmployeeSchema.pre('save', function (next) {
+  // Auto-compute emailHash from plaintext email before encryption
+  if (this.email && typeof this.email === 'string' && !this.email.includes(':')) {
+    this.emailHash = hashEmail(this.email)
+  }
+
   // Encrypt sensitive PII fields
   const sensitiveFields: (keyof IEmployee)[] = ['email', 'mobile', 'firstName', 'lastName', 'designation']
-  // Address fields are encrypted separately below
   
   for (const field of sensitiveFields) {
     if (this[field] && typeof this[field] === 'string') {
-      // Only encrypt if not already encrypted (doesn't contain ':')
       let value = this[field] as string
       if (value && !value.includes(':')) {
-        // CRITICAL FIX: Normalize email before encryption to ensure login matching works
-        // Email must be trimmed and lowercased to match login normalization
         if (field === 'email') {
           value = value.trim().toLowerCase()
-        }
-        // Normalize other fields (trim whitespace) for consistency
-        else {
+        } else {
           value = value.trim()
         }
         this[field] = encrypt(value) as any

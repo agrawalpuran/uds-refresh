@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
-import { ShoppingCart, MapPin, Package, ArrowRight, CheckCircle, Clock } from 'lucide-react'
+import { ShoppingCart, MapPin, Package, ArrowRight, CheckCircle, Clock, Scissors } from 'lucide-react'
 import { getProductsForDesignation, getEmployeeByEmail, getCompanyById, getConsumedEligibility, getVendorByEmail } from '@/lib/data-mongodb'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -33,6 +33,7 @@ export default function OrderReviewPage() {
   
   // Get current employee from localStorage
   useEffect(() => {
+    let cancelled = false
     if (typeof window !== 'undefined') {
       const loadData = async () => {
         try {
@@ -41,6 +42,7 @@ export default function OrderReviewPage() {
           const { getUserEmail } = await import('@/lib/utils/auth-storage')
           const userEmail = getUserEmail('consumer')
           if (!userEmail) {
+            if (cancelled) return
             setLoading(false)
             return
           }
@@ -49,12 +51,14 @@ export default function OrderReviewPage() {
           const vendor = await getVendorByEmail(userEmail)
           if (vendor) {
             console.error('Order Review - Email belongs to vendor, redirecting...')
+            if (cancelled) return
             window.location.href = '/dashboard/vendor'
             return
           }
           
           const employee = await getEmployeeByEmail(userEmail)
           if (employee) {
+            if (cancelled) return
             setCurrentEmployee(employee)
             // Ensure companyId is a string (handle populated objects)
             const companyId = typeof employee.companyId === 'object' && employee.companyId?.id 
@@ -73,6 +77,7 @@ export default function OrderReviewPage() {
               getConsumedEligibility(employeeId),
               fetch(`/api/employees/${employeeId}/eligibility`, { cache: 'no-store' }).then(res => res.ok ? res.json() : null).catch(() => null)
             ])
+            if (cancelled) return
             setCompanyProducts(products)
             setCompany(companyData)
             setConsumedEligibility(consumed)
@@ -120,12 +125,14 @@ export default function OrderReviewPage() {
         } catch (error) {
           console.error('Error loading employee data:', error)
         } finally {
+          if (cancelled) return
           setLoading(false)
         }
       }
       
       loadData()
     }
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -155,7 +162,8 @@ export default function OrderReviewPage() {
     // Calculate total
     const total = orderData.items.reduce((sum: number, item: any) => {
       const uniform = companyProducts.find(u => u.id === item.uniformId)
-      return sum + (uniform?.price || item.price || 0) * item.quantity
+      const price = item.fit_type === 'MTM' && item.price > 0 ? item.price : (uniform?.price || item.price || 0)
+      return sum + price * item.quantity
     }, 0)
     
     // Calculate personal payment amount if eligibility is exceeded
@@ -195,7 +203,7 @@ export default function OrderReviewPage() {
           for (const item of exceededItems) {
             const uniform = companyProducts.find(u => u.id === item.uniformId)
             if (uniform && itemsProcessed < exceededQuantity) {
-              const itemPrice = uniform.price || item.price || 0
+              const itemPrice = item.fit_type === 'MTM' && item.price > 0 ? item.price : (uniform.price || item.price || 0)
               const quantityToCharge = Math.min(item.quantity, exceededQuantity - itemsProcessed)
               personalPaymentAmount += itemPrice * quantityToCharge
               itemsProcessed += quantityToCharge
@@ -269,10 +277,11 @@ export default function OrderReviewPage() {
     )
   }
 
-  // Calculate order total
+  // Calculate order total (use item.price for MTM since it includes the premium)
   const orderTotal = orderData.items.reduce((sum: number, item: any) => {
     const uniform = companyProducts.find(u => u.id === item.uniformId)
-    return sum + (uniform?.price || item.price || 0) * item.quantity
+    const price = item.fit_type === 'MTM' && item.price > 0 ? item.price : (uniform?.price || item.price || 0)
+    return sum + price * item.quantity
   }, 0)
   
   // CRITICAL FIX: Use same eligibility logic as catalog/dashboard pages
@@ -428,7 +437,7 @@ export default function OrderReviewPage() {
         for (const item of exceededItems) {
           const uniform = companyProducts.find(u => u.id === item.uniformId)
           if (uniform && itemsProcessed < exceededQuantity) {
-            const itemPrice = uniform.price || item.price || 0
+            const itemPrice = item.fit_type === 'MTM' && item.price > 0 ? item.price : (uniform.price || item.price || 0)
             const quantityToCharge = Math.min(item.quantity, exceededQuantity - itemsProcessed)
             personalPaymentAmount += itemPrice * quantityToCharge
             itemsProcessed += quantityToCharge
@@ -445,10 +454,11 @@ export default function OrderReviewPage() {
   // Get order items with product details
   const orderItems = orderData.items.map((item: any) => {
     const uniform = companyProducts.find(u => u.id === item.uniformId)
+    const unitPrice = item.fit_type === 'MTM' && item.price > 0 ? item.price : (uniform?.price || 0)
     return {
       ...item,
       uniform,
-      itemTotal: (uniform?.price || 0) * item.quantity
+      itemTotal: unitPrice * item.quantity
     }
   }).filter((item: any) => item.uniform !== undefined)
 
@@ -533,13 +543,31 @@ export default function OrderReviewPage() {
                 <div key={idx} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex-1">
-                      <p className="font-medium text-gray-900">{item.uniformName}</p>
-                      <p className="text-sm text-gray-600">Size: {item.size} × Quantity: {item.quantity}</p>
+                      <p className="font-medium text-gray-900 flex items-center gap-2">
+                        {item.uniformName}
+                        {item.fit_type === 'MTM' && (
+                          <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 gap-0.5 bg-violet-50 text-violet-700 border border-violet-200 rounded font-medium">
+                            <Scissors className="h-2.5 w-2.5" />
+                            Custom Fit
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-sm text-gray-600">
+                        {item.fit_type === 'MTM' ? 'Fit: Custom (MTM)' : `Size: ${item.size}`} × Quantity: {item.quantity}
+                      </p>
                       {item.uniform && (
                         <p className="text-sm text-gray-500 mt-1">Category: <span className="capitalize">{item.uniform.category}</span></p>
                       )}
                       {company?.showPrices && item.uniform && (
-                        <p className="text-sm text-gray-500 mt-1">Price: ₹{item.uniform.price.toFixed(2)} each</p>
+                        item.fit_type === 'MTM' && item.mtm_price_premium > 0 ? (
+                          <div className="text-sm text-gray-500 mt-1">
+                            <p>Base Price: ₹{item.uniform.price.toFixed(2)}</p>
+                            <p className="text-violet-600">MTM Premium: +₹{Number(item.mtm_price_premium).toFixed(2)}</p>
+                            <p className="font-medium text-gray-700">Total: ₹{(item.uniform.price + Number(item.mtm_price_premium)).toFixed(2)} each</p>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-500 mt-1">Price: ₹{item.uniform.price.toFixed(2)} each</p>
+                        )
                       )}
                     </div>
                     {company?.showPrices && (
@@ -548,6 +576,22 @@ export default function OrderReviewPage() {
                       </div>
                     )}
                   </div>
+                  {/* MTM Measurements Summary */}
+                  {item.fit_type === 'MTM' && item.mtm_measurements && (
+                    <div className="mt-2 pt-2 border-t border-gray-200">
+                      <p className="text-xs font-medium text-violet-700 mb-1">Measurements Provided:</p>
+                      <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+                        {Object.entries(item.mtm_measurements).map(([key, val]: [string, any]) => (
+                          <span key={key} className="text-xs text-gray-600">
+                            {key.replace(/_/g, ' ')}: <span className="font-medium">{val.value}{val.unit}</span>
+                          </span>
+                        ))}
+                      </div>
+                      {item.mtm_instructions && (
+                        <p className="text-xs text-gray-500 mt-1 italic">Note: {item.mtm_instructions}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

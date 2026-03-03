@@ -22,6 +22,8 @@ export interface ICompany extends Document {
   // DEPRECATED: Old flag names (kept for backward compatibility, will be removed in future)
   enable_site_admin_approval?: boolean // @deprecated Use enable_site_admin_pr_approval instead
   require_company_admin_approval?: boolean // @deprecated Use require_company_admin_po_approval instead
+  // Made-to-Measure (MTM) Configuration
+  enable_mtm?: boolean // Enables Made-to-Measure ordering alongside standard size orders
   // Shipping Configuration
   shipmentRequestMode?: 'MANUAL' | 'AUTOMATIC' // Shipment request mode (company-level, default: MANUAL)
   adminId?: string // String ID reference to Employee (alphanumeric)
@@ -115,6 +117,12 @@ const CompanySchema = new Schema<ICompany>(
     allow_multi_pr_po: {
       type: Boolean,
       default: true, // Default: true - allows grouping multiple PRs into one PO
+      required: false,
+    },
+    // Made-to-Measure (MTM) Configuration
+    enable_mtm: {
+      type: Boolean,
+      default: false, // Default: false - MTM disabled by default for backward compatibility
       required: false,
     },
     // Shipping Configuration

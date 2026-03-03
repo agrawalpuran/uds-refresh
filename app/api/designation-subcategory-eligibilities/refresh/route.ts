@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import mongoose from 'mongoose'
 import DesignationSubcategoryEligibility from '@/lib/models/DesignationSubcategoryEligibility'

@@ -1,5 +1,5 @@
-
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getVendorWiseInventoryForCompany, isCompanyAdmin } from '@/lib/db/data-access'
 import '@/lib/models/VendorInventory' // Ensure model is registered
 
@@ -8,6 +8,8 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const companyId = searchParams.get('companyId')
     const email = searchParams.get('email')
@@ -74,6 +76,8 @@ export async function GET(request: Request) {
 // Explicitly disable POST, PUT, DELETE methods for read-only endpoint
 export async function POST() {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
   } catch (error: any) {
     console.error('[API] Error in POST handler:', error)
@@ -146,6 +150,8 @@ export async function PUT() {
 
 export async function DELETE() {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
   } catch (error: any) {
     console.error('[API] Error in DELETE handler:', error)

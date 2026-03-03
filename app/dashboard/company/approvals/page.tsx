@@ -851,12 +851,24 @@ export default function CompanyApprovalsPage() {
                                                 </span>
                                               </div>
                                               <p className="text-sm text-gray-600">
-                                                Size: {item.size} × Quantity: {item.quantity}
+                                                {item.fit_type === 'MTM' ? 'Fit: Custom (MTM)' : `Size: ${item.size}`} × Quantity: {item.quantity}
                                               </p>
+                                              {item.fit_type === 'MTM' && (
+                                                <p className="text-xs text-violet-600 mt-0.5">
+                                                  {item.mtm_price_premium > 0
+                                                    ? `Includes MTM premium: +₹${Number(item.mtm_price_premium).toFixed(2)}`
+                                                    : 'Price includes MTM premium'}
+                                                </p>
+                                              )}
                                             </div>
-                                            <p className="font-semibold text-gray-900">
-                                              ₹{(item.price * item.quantity).toFixed(2)}
-                                            </p>
+                                            <div className="text-right">
+                                              <p className="font-semibold text-gray-900">
+                                                ₹{(item.price * item.quantity).toFixed(2)}
+                                              </p>
+                                              {item.fit_type === 'MTM' && item.mtm_price_premium > 0 && (
+                                                <p className="text-[10px] text-gray-400">₹{(item.price - item.mtm_price_premium).toFixed(2)} + ₹{Number(item.mtm_price_premium).toFixed(2)}</p>
+                                              )}
+                                            </div>
                                           </div>
                                         ))}
                                       </div>
@@ -877,12 +889,24 @@ export default function CompanyApprovalsPage() {
                                             )}
                                           </div>
                                           <p className="text-sm text-gray-600">
-                                            Size: {item.size} × Quantity: {item.quantity}
+                                            {item.fit_type === 'MTM' ? 'Fit: Custom (MTM)' : `Size: ${item.size}`} × Quantity: {item.quantity}
                                           </p>
+                                          {item.fit_type === 'MTM' && (
+                                            <p className="text-xs text-violet-600 mt-0.5">
+                                              {item.mtm_price_premium > 0
+                                                ? `Includes MTM premium: +₹${Number(item.mtm_price_premium).toFixed(2)}`
+                                                : 'Price includes MTM premium'}
+                                            </p>
+                                          )}
                                         </div>
-                                        <p className="font-semibold text-gray-900">
-                                          ₹{(item.price * item.quantity).toFixed(2)}
-                                        </p>
+                                        <div className="text-right">
+                                          <p className="font-semibold text-gray-900">
+                                            ₹{(item.price * item.quantity).toFixed(2)}
+                                          </p>
+                                          {item.fit_type === 'MTM' && item.mtm_price_premium > 0 && (
+                                            <p className="text-[10px] text-gray-400">₹{(item.price - item.mtm_price_premium).toFixed(2)} + ₹{Number(item.mtm_price_premium).toFixed(2)}</p>
+                                          )}
+                                        </div>
                                       </div>
                                     ))}
                                   </div>
@@ -1058,12 +1082,24 @@ export default function CompanyApprovalsPage() {
                                               </span>
                                             </div>
                                             <p className="text-sm text-gray-600">
-                                              Size: {item.size} × Quantity: {item.quantity}
+                                              {item.fit_type === 'MTM' ? 'Fit: Custom (MTM)' : `Size: ${item.size}`} × Quantity: {item.quantity}
                                             </p>
+                                            {item.fit_type === 'MTM' && (
+                                              <p className="text-xs text-violet-600 mt-0.5">
+                                                {item.mtm_price_premium > 0
+                                                  ? `Includes MTM premium: +₹${Number(item.mtm_price_premium).toFixed(2)}`
+                                                  : 'Price includes MTM premium'}
+                                              </p>
+                                            )}
                                           </div>
-                                          <p className="font-semibold text-gray-900">
-                                            ₹{(item.price * item.quantity).toFixed(2)}
-                                          </p>
+                                          <div className="text-right">
+                                            <p className="font-semibold text-gray-900">
+                                              ₹{(item.price * item.quantity).toFixed(2)}
+                                            </p>
+                                            {item.fit_type === 'MTM' && item.mtm_price_premium > 0 && (
+                                              <p className="text-[10px] text-gray-400">₹{(item.price - item.mtm_price_premium).toFixed(2)} + ₹{Number(item.mtm_price_premium).toFixed(2)}</p>
+                                            )}
+                                          </div>
                                         </div>
                                       ))}
                                     </div>
@@ -1083,12 +1119,24 @@ export default function CompanyApprovalsPage() {
                                           )}
                                         </div>
                                         <p className="text-sm text-gray-600">
-                                          Size: {item.size} × Quantity: {item.quantity}
+                                          {item.fit_type === 'MTM' ? 'Fit: Custom (MTM)' : `Size: ${item.size}`} × Quantity: {item.quantity}
                                         </p>
+                                        {item.fit_type === 'MTM' && (
+                                          <p className="text-xs text-violet-600 mt-0.5">
+                                            {item.mtm_price_premium > 0
+                                              ? `Includes MTM premium: +₹${Number(item.mtm_price_premium).toFixed(2)}`
+                                              : 'Price includes MTM premium'}
+                                          </p>
+                                        )}
                                       </div>
-                                      <p className="font-semibold text-gray-900">
-                                        ₹{(item.price * item.quantity).toFixed(2)}
-                                      </p>
+                                      <div className="text-right">
+                                        <p className="font-semibold text-gray-900">
+                                          ₹{(item.price * item.quantity).toFixed(2)}
+                                        </p>
+                                        {item.fit_type === 'MTM' && item.mtm_price_premium > 0 && (
+                                          <p className="text-[10px] text-gray-400">₹{(item.price - item.mtm_price_premium).toFixed(2)} + ₹{Number(item.mtm_price_premium).toFixed(2)}</p>
+                                        )}
+                                      </div>
                                     </div>
                                   ))}
                                 </div>
@@ -1294,64 +1342,68 @@ export default function CompanyApprovalsPage() {
               </button>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="poNumber" className="block text-sm font-medium text-gray-700 mb-1">
-                  PO Number <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  id="poNumber"
-                  value={poNumber}
-                  onChange={(e) => setPoNumber(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Enter PO number"
-                  required
-                />
+            <form onSubmit={(e) => { e.preventDefault(); handleCreatePO() }}>
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="poNumber" className="block text-sm font-medium text-gray-700 mb-1">
+                    PO Number <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="poNumber"
+                    value={poNumber}
+                    onChange={(e) => setPoNumber(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Enter PO number"
+                    autoFocus
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="poDate" className="block text-sm font-medium text-gray-700 mb-1">
+                    PO Date <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    id="poDate"
+                    value={poDate || new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setPoDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-sm text-blue-800">
+                    <strong>Note:</strong> This will create Purchase Order(s) for {selectedOrders.size} selected PR{selectedOrders.size !== 1 ? 's' : ''} and automatically trigger vendor fulfilment.
+                    {selectedOrders.size > 1 && ' One PO will be created per vendor.'}
+                  </p>
+                </div>
               </div>
 
-              <div>
-                <label htmlFor="poDate" className="block text-sm font-medium text-gray-700 mb-1">
-                  PO Date <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  id="poDate"
-                  value={poDate || new Date().toISOString().split('T')[0]}
-                  onChange={(e) => setPoDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
+              <div className="mt-6 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPOModal(false)
+                    setPoNumber('')
+                    setPoDate('')
+                  }}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                  disabled={creatingPO}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingPO || !poNumber.trim() || !poDate}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {creatingPO ? 'Creating...' : 'Create PO'}
+                </button>
               </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <p className="text-sm text-blue-800">
-                  <strong>Note:</strong> This will create Purchase Order(s) for {selectedOrders.size} selected PR{selectedOrders.size !== 1 ? 's' : ''} and automatically trigger vendor fulfilment.
-                  {selectedOrders.size > 1 && ' One PO will be created per vendor.'}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowPOModal(false)
-                  setPoNumber('')
-                  setPoDate('')
-                }}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                disabled={creatingPO}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreatePO}
-                disabled={creatingPO || !poNumber.trim() || !poDate}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-              >
-                {creatingPO ? 'Creating...' : 'Create PO'}
-              </button>
-            </div>
+            </form>
           </div>
         </div>
       )}

@@ -2,7 +2,7 @@
 
 import DashboardLayout from '@/components/DashboardLayout'
 import { Search, CheckCircle, XCircle, Package, Truck, Warehouse, MapPin, Building2 } from 'lucide-react'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { getAllOrders, getOrdersByVendor, updateOrderStatus, getCompaniesByVendor } from '@/lib/data-mongodb'
 // Employee names are now pre-masked by the backend
@@ -242,6 +242,8 @@ export default function VendorOrdersPage() {
     visible: false,
   })
 
+  const cancelledRef = useRef(false)
+
   const loadOrders = async () => {
     try {
       setLoading(true)
@@ -258,6 +260,7 @@ export default function VendorOrdersPage() {
       if (storedVendorId) {
         // Load only orders for this vendor
         const vendorOrders = await getOrdersByVendor(storedVendorId)
+        if (cancelledRef.current) return
         console.log('Loaded vendor orders:', vendorOrders.length)
         console.log('Order statuses:', vendorOrders.map((o: any) => ({ id: o.id, status: o.status, vendorName: o.vendorName })))
         setAllOrders(vendorOrders) // Store all orders
@@ -267,17 +270,19 @@ export default function VendorOrdersPage() {
         try {
           setCompaniesLoading(true)
           const vendorCompanies = await getCompaniesByVendor(storedVendorId)
+          if (cancelledRef.current) return
           console.log('[Orders] Loaded companies for vendor:', vendorCompanies.length)
           setCompanies(vendorCompanies)
         } catch (companyError) {
           console.error('[Orders] Error loading companies:', companyError)
         } finally {
-          setCompaniesLoading(false)
+          if (!cancelledRef.current) setCompaniesLoading(false)
         }
       } else {
         // Fallback: get all orders if no vendor ID (shouldn't happen in production)
         console.warn('No vendor ID found, loading all orders')
         const fetchedOrders = await getAllOrders()
+        if (cancelledRef.current) return
         setAllOrders(fetchedOrders)
         setOrders(fetchedOrders)
         setCompaniesLoading(false)
@@ -285,15 +290,17 @@ export default function VendorOrdersPage() {
     } catch (error) {
       console.error('Error loading orders:', error)
     } finally {
-      setLoading(false)
+      if (!cancelledRef.current) setLoading(false)
     }
   }
 
   useEffect(() => {
+    cancelledRef.current = false
     loadOrders()
     loadWarehouses()
     loadManualCouriers()
     loadPackages()
+    return () => { cancelledRef.current = true }
   }, [])
 
   // Load provider couriers when we have dispatched/delivered orders so courier code (e.g. "6") resolves to name on the list
@@ -348,12 +355,13 @@ export default function VendorOrdersPage() {
       const response = await fetch('/api/shipping/packages?activeOnly=true')
       if (response.ok) {
         const data = await response.json()
+        if (cancelledRef.current) return
         setPackages(data.packages || [])
       }
     } catch (error) {
       console.error('Error loading packages:', error)
     } finally {
-      setLoadingPackages(false)
+      if (!cancelledRef.current) setLoadingPackages(false)
     }
   }
 
@@ -494,6 +502,7 @@ export default function VendorOrdersPage() {
       const response = await fetch('/api/superadmin/manual-courier-providers?isActive=true')
       if (response.ok) {
         const data = await response.json()
+        if (cancelledRef.current) return
         setManualCouriers((data.couriers || []).map((c: any) => ({
           courierCode: c.courierCode,
           courierName: c.courierName,
@@ -502,7 +511,7 @@ export default function VendorOrdersPage() {
     } catch (error) {
       console.error('Error loading manual couriers:', error)
     } finally {
-      setLoadingCouriers(false)
+      if (!cancelledRef.current) setLoadingCouriers(false)
     }
   }
 
@@ -586,6 +595,7 @@ export default function VendorOrdersPage() {
             if (!a.isPrimary && b.isPrimary) return 1
             return a.warehouseName.localeCompare(b.warehouseName)
           })
+          if (cancelledRef.current) return
           setWarehouses(activeWarehouses)
 
           // Auto-select primary warehouse or first warehouse
@@ -601,7 +611,7 @@ export default function VendorOrdersPage() {
     } catch (error) {
       console.error('Error loading warehouses:', error)
     } finally {
-      setLoadingWarehouses(false)
+      if (!cancelledRef.current) setLoadingWarehouses(false)
     }
   }
 
@@ -922,10 +932,32 @@ export default function VendorOrdersPage() {
         // Load manual couriers
         await loadManualCouriers()
         
-        // Fetch employee addresses for each PR
-        // CRITICAL: Use employee's personal address, NOT branch/location address
-        const prsData = await Promise.all(prsUnderPO.map(async (pr) => {
-          // Get employee ID from order
+        // Batch-fetch unique employees to avoid N+1 requests
+        const uniqueEmpIds = [...new Set(
+          prsUnderPO.map(pr => {
+            const eid = pr.employeeId
+              ? (typeof pr.employeeId === 'object' ? pr.employeeId.id : pr.employeeId)
+              : pr.employeeIdNum || null
+            return eid
+          }).filter(Boolean) as string[]
+        )]
+
+        const empDataMap = new Map<string, any>()
+        if (uniqueEmpIds.length > 0) {
+          const empResults = await Promise.all(
+            uniqueEmpIds.map(eid =>
+              fetch(`/api/employees?employeeId=${eid}&forShipment=true`)
+                .then(r => r.ok ? r.json() : null)
+                .catch(() => null)
+            )
+          )
+          uniqueEmpIds.forEach((eid, i) => {
+            const raw = empResults[i]
+            empDataMap.set(eid, Array.isArray(raw) ? raw[0] : raw)
+          })
+        }
+
+        const prsData = prsUnderPO.map((pr) => {
           const employeeId = pr.employeeId 
             ? (typeof pr.employeeId === 'object' ? pr.employeeId.id : pr.employeeId)
             : pr.employeeIdNum || null
@@ -934,62 +966,42 @@ export default function VendorOrdersPage() {
           let employeeEmail = 'N/A'
           let employeeName = pr.employeeName || 'N/A'
           
-          // Fetch employee to get their personal address
-          // Use forShipment=true to get decrypted data for shipment creation
-          if (employeeId) {
-            try {
-              const employeeRes = await fetch(`/api/employees?employeeId=${employeeId}&forShipment=true`)
-              if (employeeRes.ok) {
-                const employeeData = await employeeRes.json()
-                const employee = Array.isArray(employeeData) ? employeeData[0] : employeeData
-                
-                if (employee) {
-                  // Employee data is now decrypted (name, email, address)
-                  employeeEmail = employee.email || 'N/A'
-                  
-                  // Use decrypted employee name (firstName + lastName)
-                  if (employee.firstName || employee.lastName) {
-                    employeeName = [employee.firstName, employee.lastName].filter(Boolean).join(' ') || 'N/A'
-                  }
-                  
-                  // Use employee's personal address fields (decrypted by API)
-                  if (employee.address_line_1) {
-                    employeeAddress = {
-                      line1: employee.address_line_1 || '',
-                      line2: employee.address_line_2 || '',
-                      line3: employee.address_line_3 || '',
-                      city: employee.city || '',
-                      state: employee.state || '',
-                      pincode: employee.pincode || '',
-                      country: employee.country || 'India',
-                    }
-                  } else if (employee.address?.address_line_1) {
-                    // Fallback to address object if available
-                    employeeAddress = {
-                      line1: employee.address.address_line_1 || '',
-                      line2: employee.address.address_line_2 || '',
-                      line3: employee.address.address_line_3 || '',
-                      city: employee.address.city || '',
-                      state: employee.address.state || '',
-                      pincode: employee.address.pincode || '',
-                      country: employee.address.country || 'India',
-                    }
-                  }
-                }
+          const employee = employeeId ? empDataMap.get(employeeId) : null
+          if (employee) {
+            employeeEmail = employee.email || 'N/A'
+            if (employee.firstName || employee.lastName) {
+              employeeName = [employee.firstName, employee.lastName].filter(Boolean).join(' ') || 'N/A'
+            }
+            if (employee.address_line_1) {
+              employeeAddress = {
+                line1: employee.address_line_1 || '',
+                line2: employee.address_line_2 || '',
+                line3: employee.address_line_3 || '',
+                city: employee.city || '',
+                state: employee.state || '',
+                pincode: employee.pincode || '',
+                country: employee.country || 'India',
               }
-            } catch (error) {
-              console.error(`Error fetching employee ${employeeId} address:`, error)
+            } else if (employee.address?.address_line_1) {
+              employeeAddress = {
+                line1: employee.address.address_line_1 || '',
+                line2: employee.address.address_line_2 || '',
+                line3: employee.address.address_line_3 || '',
+                city: employee.address.city || '',
+                state: employee.address.state || '',
+                pincode: employee.address.pincode || '',
+                country: employee.address.country || 'India',
+              }
             }
           }
           
-          // If employee address is not available, mark as invalid
           if (!employeeAddress || !employeeAddress.line1 || employeeAddress.line1 === 'N/A') {
             return {
               prId: pr.id,
               prNumber: pr.prNumber || `PR-${pr.id}`,
               employeeName,
               employeeEmail,
-              deliveryAddress: null, // Mark as invalid
+              deliveryAddress: null,
               hasValidAddress: false,
               modeOfTransport: 'COURIER' as const,
               courierServiceProvider: '',
@@ -1010,7 +1022,7 @@ export default function VendorOrdersPage() {
             dispatchedDate: new Date().toISOString().split('T')[0],
             shipmentNumber: '',
           }
-        }))
+        })
         
         // Set manual shipment form
         setManualShipmentForm({

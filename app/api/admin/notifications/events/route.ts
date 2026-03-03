@@ -5,12 +5,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import NotificationEvent from '@/lib/models/NotificationEvent'
 
 // GET - List all notification events
 export async function GET() {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
     
     const events = await NotificationEvent.find()
@@ -41,6 +44,8 @@ export async function GET() {
 // POST - Create new notification event
 export async function POST(request: NextRequest) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
     
     const body = await request.json()

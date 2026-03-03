@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import {
   getVendorWarehouses,
   createVendorWarehouse,
@@ -35,6 +36,8 @@ function getVendorIdFromRequest(request: Request): string | null {
 export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const vendorId = getVendorIdFromRequest(request)
     
     if (!vendorId) {
@@ -110,6 +113,8 @@ export async function GET(request: Request) {
  */
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {

@@ -9,6 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import NotificationTemplate from '@/lib/models/NotificationTemplate'
 import NotificationEvent from '@/lib/models/NotificationEvent'
@@ -30,6 +31,8 @@ export async function GET(
   { params }: RouteParams
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
 
     const { templateId } = await params
@@ -92,6 +95,8 @@ export async function PUT(
   { params }: RouteParams
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
 
     const { templateId } = await params
@@ -277,6 +282,8 @@ export async function DELETE(
   { params }: RouteParams
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
 
     const { templateId } = await params

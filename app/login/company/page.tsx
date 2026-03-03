@@ -5,195 +5,95 @@ import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 import OTPVerification from '@/components/OTPVerification'
 import { useRouter } from 'next/navigation'
-import { getCompanyByAdminEmail } from '@/lib/data-mongodb'
+import { signIn } from 'next-auth/react'
 
-/**
- * Company Admin Login Page
- * 
- * Clean, rewritten login flow with:
- * - Consistent email normalization (trim + lowercase)
- * - Proper error handling
- * - Clear authentication flow
- * - No breaking changes to other login flows
- */
 export default function CompanyLogin() {
   const [email, setEmail] = useState('')
   const [showOTP, setShowOTP] = useState(false)
+  const [maskedPhone, setMaskedPhone] = useState('')
   const [error, setError] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
-  /**
-   * Normalize email input: trim whitespace and convert to lowercase
-   * This ensures consistent comparison regardless of user input format
-   */
-  const normalizeEmail = (emailInput: string): string => {
-    if (!emailInput) return ''
-    return emailInput.trim().toLowerCase()
-  }
-
-  /**
-   * Validate email format
-   */
-  const isValidEmail = (emailInput: string): boolean => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    return emailRegex.test(emailInput)
-  }
-
-  /**
-   * Handle form submission - verify admin status before showing OTP
-   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    
-    if (!email) {
-      setError('Please enter your email address')
-      return
-    }
 
-    // Normalize email
-    const normalizedEmail = normalizeEmail(email)
-    
-    // Validate email format
-    if (!isValidEmail(normalizedEmail)) {
-      setError('Please enter a valid email address')
+    if (!email) {
+      setError('Please enter your admin email')
       return
     }
 
     setLoading(true)
 
     try {
-      // Verify this email is authorized as a company admin
-      console.log(`[CompanyLogin] ========================================`)
-      console.log(`[CompanyLogin] 🔍 STEP 1: Starting admin verification`)
-      console.log(`[CompanyLogin] Input email: "${email}"`)
-      console.log(`[CompanyLogin] Normalized email: "${normalizedEmail}"`)
-      console.log(`[CompanyLogin] Calling getCompanyByAdminEmail(${normalizedEmail})...`)
-      
-      const startTime = Date.now()
-      const company = await getCompanyByAdminEmail(normalizedEmail)
-      const duration = Date.now() - startTime
-      
-      console.log(`[CompanyLogin] ⏱️ API call completed in ${duration}ms`)
-      console.log(`[CompanyLogin] API response:`, company ? {
-        id: company.id,
-        name: company.name,
-        hasCompanyId: !!company.id
-      } : 'null')
-      
-      if (!company) {
-        console.error(`[CompanyLogin] ❌ STEP 1 FAILED: No company returned`)
-        console.error(`[CompanyLogin] This means the email is not authorized as a company admin`)
-        console.error(`[CompanyLogin] ========================================`)
-        setError('Access denied: This email is not authorized as a company admin. Please contact your super admin to be assigned as a company administrator.')
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), portalType: 'company' }),
+      })
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.error || 'Unable to send OTP. Please try again.')
         setLoading(false)
         return
       }
 
-      console.log(`[CompanyLogin] ✅ STEP 1 SUCCESS: Admin verified`)
-      console.log(`[CompanyLogin] Company ID: ${company.id}`)
-      console.log(`[CompanyLogin] Company Name: ${company.name}`)
-      console.log(`[CompanyLogin] ========================================`)
-      
-      // Update email state with normalized value
-      setEmail(normalizedEmail)
+      setMaskedPhone(data.maskedPhone || '')
       setShowOTP(true)
-    } catch (error: any) {
-      console.error(`[CompanyLogin] ❌ STEP 1 ERROR: Exception caught`)
-      console.error(`[CompanyLogin] Error type: ${error?.constructor?.name || typeof error}`)
-      console.error(`[CompanyLogin] Error message: ${error?.message || 'Unknown error'}`)
-      console.error(`[CompanyLogin] Error stack:`, error?.stack)
-      console.error(`[CompanyLogin] Full error object:`, error)
-      console.error(`[CompanyLogin] ========================================`)
-      setError(error.message || 'Error verifying admin status. Please try again.')
+    } catch (err: any) {
+      console.error('Error sending OTP:', err)
+      setError('An error occurred. Please try again.')
     } finally {
       setLoading(false)
     }
   }
 
-  /**
-   * Handle OTP verification - final authentication step
-   */
   const handleOTPVerify = async (otp: string) => {
-    setError('')
-    setLoading(true)
-
     try {
-      // Normalize email (defensive - should already be normalized)
-      const normalizedEmail = normalizeEmail(email)
-      
-      // Re-verify admin status before allowing login (security check)
-      console.log(`[CompanyLogin] Re-verifying admin status before login: ${normalizedEmail}`)
-      const company = await getCompanyByAdminEmail(normalizedEmail)
-      
-      if (!company) {
-        setError('Access denied: This email is not authorized as a company admin.')
+      const result = await signIn('credentials', {
+        email: email.trim().toLowerCase(),
+        otp,
+        redirect: false,
+      })
+
+      if (result?.error) {
+        setError('Verification failed. Please try again.')
         setShowOTP(false)
-        setLoading(false)
         return
       }
 
-      console.log(`[CompanyLogin] ✅ Login authorized for company: ${company.id} (${company.name})`)
-
-      // Set authentication data using tab-specific storage
-      const { setAuthData } = await import('@/lib/utils/auth-storage')
-      setAuthData('company', {
-        userEmail: normalizedEmail,
-        companyId: company.id
-      })
-
-      // CRITICAL SECURITY FIX: Clear any stale localStorage auth data
-      // This prevents cross-tab/cross-user session contamination
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('companyId')
-        localStorage.removeItem('vendorId')
-      }
-      
-      sessionStorage.setItem('currentActorType', 'company')
-
-      console.log(`[CompanyLogin] ✅ Authentication data set, redirecting to dashboard...`)
-
-      // Redirect to company dashboard
-      setTimeout(() => {
+      if (result?.ok) {
         router.push('/dashboard/company')
-      }, 500)
-    } catch (error: any) {
-      console.error('[CompanyLogin] Error during login verification:', error)
-      setError(error.message || 'Error verifying admin status. Please try again.')
+      }
+    } catch (err: any) {
+      console.error('Login error:', err)
+      setError('An error occurred during login. Please try again.')
       setShowOTP(false)
-      setLoading(false)
     }
   }
 
-  /**
-   * Handle OTP resend
-   */
   const handleResendOTP = () => {
     alert('OTP resent! Use 123456 for demo')
   }
 
-  /**
-   * Handle back to login (from OTP screen)
-   */
-  const handleBackToLogin = () => {
-    setShowOTP(false)
-    setError('')
-    setEmail('')
-  }
-
-  // OTP Verification Screen
   if (showOTP) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-purple-50 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
           <button
-            onClick={handleBackToLogin}
+            onClick={() => { setShowOTP(false); setError('') }}
             className="inline-flex items-center text-gray-600 hover:text-gray-900 mb-4"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to login
           </button>
+          {maskedPhone && (
+            <p className="text-sm text-gray-500 mb-2 text-center">
+              OTP sent to <span className="font-medium">{maskedPhone}</span>
+            </p>
+          )}
           <OTPVerification
             emailOrPhone={email}
             onVerify={handleOTPVerify}
@@ -209,7 +109,6 @@ export default function CompanyLogin() {
     )
   }
 
-  // Login Form Screen
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-purple-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
@@ -263,7 +162,7 @@ export default function CompanyLogin() {
 
           <div className="mt-6 text-center">
             <Link href="/" className="text-gray-600 hover:text-gray-900 text-sm">
-              ← Back to home
+              &larr; Back to home
             </Link>
           </div>
         </div>

@@ -113,6 +113,51 @@ import {
   resolveEmployeeLocationAdmin,
 } from '../services/NotificationRecipientResolver'
 
+import { TTLCache } from '../utils/cache'
+
+// =============================================================================
+// TRANSACTION HELPER
+// =============================================================================
+// MongoDB Atlas supports transactions natively. Standalone/local dev may not
+// (requires replica set). The helper gracefully falls back to no-transaction
+// if the replica set is unavailable, logging a warning.
+let _txnSupported: boolean | null = null
+
+async function withTransaction<T>(
+  fn: (session: mongoose.ClientSession) => Promise<T>
+): Promise<T> {
+  const conn = mongoose.connection
+  if (_txnSupported === false) {
+    // Previous attempt showed no replica set — run without a session
+    return fn(null as any)
+  }
+
+  const session = await conn.startSession()
+  try {
+    let result: T
+    await session.withTransaction(async () => {
+      result = await fn(session)
+    })
+    _txnSupported = true
+    return result!
+  } catch (err: any) {
+    if (
+      _txnSupported === null &&
+      (err.message?.includes('Transaction numbers') ||
+       err.message?.includes('not a replica set') ||
+       err.codeName === 'NotAReplicaSet' ||
+       err.code === 263)
+    ) {
+      console.warn('[withTransaction] Replica set not available — falling back to non-transactional writes. Data integrity for multi-doc writes is NOT guaranteed.')
+      _txnSupported = false
+      return fn(null as any)
+    }
+    throw err
+  } finally {
+    session.endSession()
+  }
+}
+
 // Ensure Branch model is registered
 if (!mongoose.models.Branch) {
   require('../models/Branch')
@@ -121,6 +166,81 @@ if (!mongoose.models.Branch) {
 // Ensure Category model is registered (required by Subcategory and other models)
 if (!mongoose.models.Category) {
   require('../models/Category')
+}
+
+// =============================================================================
+// IN-MEMORY TTL CACHES (hot-path lookup results)
+// =============================================================================
+const adminCache = new TTLCache<boolean>({ ttlMs: 30_000, maxSize: 500 })
+const companyByAdminCache = new TTLCache<any>({ ttlMs: 60_000, maxSize: 200 })
+const locationByAdminCache = new TTLCache<any>({ ttlMs: 60_000, maxSize: 200 })
+const branchByAdminCache = new TTLCache<any>({ ttlMs: 60_000, maxSize: 200 })
+const employeeByEmailCache = new TTLCache<any>({ ttlMs: 30_000, maxSize: 500 })
+
+/**
+ * O(1) employee lookup by email using the emailHash index.
+ * Results are cached in `employeeByEmailCache` (30 s TTL) to avoid
+ * repeated DB hits for the same email within a short window.
+ * Falls back to O(n) decrypt scan only if emailHash is not populated (pre-migration records).
+ * After running `npm run migrate-email-hash`, this function should never hit the fallback.
+ */
+async function findEmployeeByEmailHashFast(email: string): Promise<any | null> {
+  const normalizedEmail = email.trim().toLowerCase()
+
+  // Check cache first
+  const cached = employeeByEmailCache.get(normalizedEmail)
+  if (cached !== undefined) return cached
+
+  const { hashEmail } = require('../utils/encryption')
+  const { decrypt } = require('../utils/encryption')
+  const hash = hashEmail(normalizedEmail)
+
+  // O(1) lookup via indexed emailHash field
+  let employee = await Employee.findOne({ emailHash: hash }).lean()
+  if (employee) {
+    employeeByEmailCache.set(normalizedEmail, employee)
+    return employee
+  }
+
+  // Fallback: try encrypted email direct match (only works for same-session encryptions)
+  const { encrypt } = require('../utils/encryption')
+  try {
+    const encrypted = encrypt(normalizedEmail)
+    employee = await Employee.findOne({ email: encrypted }).lean()
+    if (employee) {
+      employeeByEmailCache.set(normalizedEmail, employee)
+      return employee
+    }
+  } catch {}
+
+  // Fallback: try plaintext match (legacy unencrypted records)
+  employee = await Employee.findOne({ email: normalizedEmail }).lean()
+  if (employee) {
+    employeeByEmailCache.set(normalizedEmail, employee)
+    return employee
+  }
+
+  // Last resort: O(n) decrypt scan for records without emailHash (pre-migration)
+  const unmigrated = await Employee.countDocuments({ emailHash: { $exists: false } })
+  if (unmigrated > 0) {
+    console.warn(`[findEmployeeByEmailHashFast] ${unmigrated} employees missing emailHash - using O(n) fallback. Run: npm run migrate-email-hash`)
+    const allEmployees = await Employee.find({ emailHash: { $exists: false } }).lean()
+    for (const emp of allEmployees) {
+      if (emp.email && typeof emp.email === 'string') {
+        try {
+          const decryptedEmail = emp.email.includes(':') ? decrypt(emp.email) : emp.email
+          if (decryptedEmail && decryptedEmail.trim().toLowerCase() === normalizedEmail) {
+            employeeByEmailCache.set(normalizedEmail, emp)
+            return emp
+          }
+        } catch { continue }
+      }
+    }
+  }
+
+  // Cache the miss too so we don't re-query for the same unknown email
+  employeeByEmailCache.set(normalizedEmail, null)
+  return null
 }
 
 /**
@@ -1301,20 +1421,15 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
     }
   }
   
-  // 🔍 DIAGNOSTIC: If query returned 0, try individual queries
+  // DIAGNOSTIC: If query returned 0, try batch fallback
   if (products.length === 0 && productStringIds.length > 0) {
-    console.log(`[getProductsByVendor] 🔍 DIAGNOSTIC: Query returned 0. Trying individual queries by string id...`)
-    for (const productIdStr of productStringIds) {
-      try {
-        const individualProduct = await Uniform.findOne({ id: productIdStr }).lean()
-        if (individualProduct) {
-          console.log(`[getProductsByVendor] ✅ Individual query by id(${productIdStr}) found product: ${individualProduct.id} (${individualProduct.name})`)
-        } else {
-          console.log(`[getProductsByVendor] ❌ Individual query by id(${productIdStr}) returned null`)
-        }
-      } catch (err: any) {
-        console.error(`[getProductsByVendor] ❌ Error in individual query by id(${productIdStr}):`, err.message)
-      }
+    console.log(`[getProductsByVendor] DIAGNOSTIC: Query returned 0. Trying batch query by string ids...`)
+    const fallbackProducts = await Uniform.find({ id: { $in: productStringIds } }).lean()
+    for (const fp of fallbackProducts) {
+      console.log(`[getProductsByVendor] Batch fallback found: ${fp.id} (${fp.name})`)
+    }
+    if (fallbackProducts.length === 0) {
+      console.log(`[getProductsByVendor] Batch fallback also returned 0`)
     }
   }
   
@@ -1418,31 +1533,16 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
         }
         
         if (products.length === 0) {
-          // Fallback: Query individually
-          console.log(`[getProductsByVendor] ⚠️ Query by $in failed, trying individual queries...`)
-          const directProducts: any[] = []
-          for (const numericId of numericIds) {
-            try {
-              const directProduct = await Uniform.findOne({ id: numericId }).lean()
-              if (directProduct) {
-                // Verify id matches productStringIds
-                const pIdStr = typeof directProduct.id === 'string' ? directProduct.id : String(directProduct.id || '')
-                if (productStringIds.includes(pIdStr)) {
-                  directProducts.push(directProduct)
-                  console.log(`[getProductsByVendor] ✅ Found product by string id: ${numericId}`)
-                } else {
-                  console.warn(`[getProductsByVendor] ⚠️ Product ${numericId} found but doesn't match ProductVendor links`)
-                }
-              } else {
-                console.log(`[getProductsByVendor] ❌ Product not found by string id: ${numericId}`)
-              }
-            } catch (err: any) {
-              console.error(`[getProductsByVendor] ❌ Error querying product ${numericId}:`, err.message)
-            }
-          }
-          if (directProducts.length > 0) {
-            products = directProducts
-            console.log(`[getProductsByVendor] ✅ Using ${directProducts.length} products from individual queries`)
+          // Fallback: Batch query by numericIds
+          console.log(`[getProductsByVendor] Query by $in failed, trying batch fallback with numericIds...`)
+          const directProducts = await Uniform.find({ id: { $in: numericIds } }).lean()
+          const filtered = directProducts.filter((dp: any) => {
+            const pIdStr = typeof dp.id === 'string' ? dp.id : String(dp.id || '')
+            return productStringIds.includes(pIdStr)
+          })
+          if (filtered.length > 0) {
+            products = filtered
+            console.log(`[getProductsByVendor] Using ${filtered.length} products from batch fallback`)
           }
         }
       }
@@ -1512,19 +1612,11 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
     // CRITICAL: If we have ProductVendor links but products aren't found, this indicates a data inconsistency
     // Try to find these products by querying the Uniform collection directly
     if (missingProductIds.length > 0 && productVendorLinks.length > 0) {
-      console.log(`[getProductsByVendor] 🔍 Attempting to find missing products by direct query...`)
-      for (const missingIdStr of missingProductIds) {
-        // Try querying by string id
-        try {
-          const foundProduct = await Uniform.findOne({ id: missingIdStr }).lean()
-          if (foundProduct) {
-            console.log(`[getProductsByVendor] ✅ Found missing product by string id: ${foundProduct.id} (${foundProduct.name}, SKU: ${foundProduct.sku})`)
-            products.push(foundProduct)
-            continue
-          }
-        } catch (err: any) {
-          console.log(`[getProductsByVendor] Query by string id failed for ${missingIdStr}:`, err.message)
-        }
+      console.log(`[getProductsByVendor] Attempting to find ${missingProductIds.length} missing products by batch query...`)
+      const foundMissing = await Uniform.find({ id: { $in: missingProductIds } }).lean()
+      for (const fp of foundMissing) {
+        console.log(`[getProductsByVendor] Found missing product: ${fp.id} (${fp.name})`)
+        products.push(fp)
       }
     }
   }
@@ -2930,7 +3022,7 @@ export async function createLocation(locationData: {
 export async function getLocationsByCompany(companyId: string): Promise<any[]> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId })
+  const company = await Company.findOne({ id: companyId }).select('id name').lean()
   if (!company) {
     return []
   }
@@ -2940,56 +3032,47 @@ export async function getLocationsByCompany(companyId: string): Promise<any[]> {
     .sort({ name: 1 })
     .lean()
   
-  // Manually fetch admin info for each location using string IDs
-  const locationsWithAdmin = await Promise.all(locations.map(async (location: any) => {
-    const locationObj = toPlainObject(location)
-    
-    // Manually fetch company info
-    if (locationObj.companyId && typeof locationObj.companyId === 'string') {
-      const companyInfo = await Company.findOne({ id: locationObj.companyId })
-        .select('id name')
-        .lean()
-      if (companyInfo) {
-        locationObj.companyId = toPlainObject(companyInfo)
-      }
-    }
-    
-    // Manually fetch admin info using string ID
-    if (locationObj.adminId && typeof locationObj.adminId === 'string') {
-      const admin = await Employee.findOne({ 
+  // Batch-fetch all admin employees instead of N+1 per location
+  const adminIds = locations.map((loc: any) => loc.adminId).filter(Boolean)
+  const adminEmployees = adminIds.length > 0
+    ? await Employee.find({
         $or: [
-          { id: locationObj.adminId },
-          { employeeId: locationObj.adminId }
+          { id: { $in: adminIds } },
+          { employeeId: { $in: adminIds } }
         ]
       }).select('id employeeId firstName lastName email designation').lean()
-      
-      if (admin) {
-        // CRITICAL: Decrypt sensitive fields since we used .lean() which bypasses Mongoose hooks
-        const { decrypt } = require('../utils/encryption')
-        const decryptedAdmin: any = { ...admin }
-        const sensitiveFields = ['firstName', 'lastName', 'email', 'designation']
-        
-        for (const field of sensitiveFields) {
-          if (decryptedAdmin[field] && typeof decryptedAdmin[field] === 'string' && decryptedAdmin[field].includes(':')) {
-            try {
-              decryptedAdmin[field] = decrypt(decryptedAdmin[field])
-            } catch (error) {
-              // If decryption fails, keep original value
-              console.warn(`[getLocationsByCompany] Failed to decrypt admin ${field}:`, error)
-            }
-          }
+    : []
+
+  const { decrypt } = require('../utils/encryption')
+  const adminMap = new Map<string, any>()
+  for (const admin of adminEmployees) {
+    const decryptedAdmin: any = { ...admin }
+    const sensitiveFields = ['firstName', 'lastName', 'email', 'designation']
+    for (const field of sensitiveFields) {
+      if (decryptedAdmin[field] && typeof decryptedAdmin[field] === 'string' && decryptedAdmin[field].includes(':')) {
+        try {
+          decryptedAdmin[field] = decrypt(decryptedAdmin[field])
+        } catch (error) {
+          console.warn(`[getLocationsByCompany] Failed to decrypt admin ${field}:`, error)
         }
-        
-        locationObj.adminId = toPlainObject(decryptedAdmin)
-      } else {
-        locationObj.adminId = null
       }
-    } else if (!locationObj.adminId) {
+    }
+    const plain = toPlainObject(decryptedAdmin)
+    adminMap.set(plain.id, plain)
+    if (plain.employeeId) adminMap.set(plain.employeeId, plain)
+  }
+
+  const companyInfo = toPlainObject(company)
+  const locationsWithAdmin = locations.map((location: any) => {
+    const locationObj = toPlainObject(location)
+    locationObj.companyId = companyInfo
+    if (locationObj.adminId && typeof locationObj.adminId === 'string') {
+      locationObj.adminId = adminMap.get(locationObj.adminId) || null
+    } else {
       locationObj.adminId = null
     }
-    
     return locationObj
-  }))
+  })
   
   return locationsWithAdmin
 }
@@ -3293,46 +3376,42 @@ export async function getAllLocations(): Promise<any[]> {
     .sort({ companyId: 1, name: 1 })
     .lean()
   
-  // Manually fetch admin info for each location using string IDs
-  const locationsWithAdmin = await Promise.all(locations.map(async (location: any) => {
+  // Batch-fetch companies and admins to avoid N+1 queries
+  const companyIds = [...new Set(locations.map((l: any) => l.companyId).filter((id: any) => id && typeof id === 'string'))]
+  const adminIds = [...new Set(locations.map((l: any) => l.adminId).filter((id: any) => id && typeof id === 'string'))]
+
+  const [companies, admins] = await Promise.all([
+    companyIds.length > 0 ? Company.find({ id: { $in: companyIds } }).select('id name').lean() : Promise.resolve([]),
+    adminIds.length > 0 ? Employee.find({ $or: [{ id: { $in: adminIds } }, { employeeId: { $in: adminIds } }] }).select('id employeeId firstName lastName email designation').lean() : Promise.resolve([])
+  ])
+
+  const companyMap = new Map(companies.map((c: any) => [c.id, c]))
+  const adminMap = new Map<string, any>()
+  for (const a of admins) {
+    if (a.id) adminMap.set(a.id, a)
+    if (a.employeeId && a.employeeId !== a.id) adminMap.set(a.employeeId, a)
+  }
+
+  const { decrypt } = require('../utils/encryption')
+  const sensitiveAdminFields = ['firstName', 'lastName', 'email', 'designation']
+
+  const locationsWithAdmin = locations.map((location: any) => {
     const locationObj = toPlainObject(location)
-    
-    // Manually fetch company info
+
     if (locationObj.companyId && typeof locationObj.companyId === 'string') {
-      const companyInfo = await Company.findOne({ id: locationObj.companyId })
-        .select('id name')
-        .lean()
-      if (companyInfo) {
-        locationObj.companyId = toPlainObject(companyInfo)
-      }
+      const companyInfo = companyMap.get(locationObj.companyId)
+      if (companyInfo) locationObj.companyId = toPlainObject(companyInfo)
     }
-    
-    // Manually fetch admin info using string ID
+
     if (locationObj.adminId && typeof locationObj.adminId === 'string') {
-      const admin = await Employee.findOne({ 
-        $or: [
-          { id: locationObj.adminId },
-          { employeeId: locationObj.adminId }
-        ]
-      }).select('id employeeId firstName lastName email designation').lean()
-      
+      const admin = adminMap.get(locationObj.adminId)
       if (admin) {
-        // CRITICAL: Decrypt sensitive fields since we used .lean() which bypasses Mongoose hooks
-        const { decrypt } = require('../utils/encryption')
         const decryptedAdmin: any = { ...admin }
-        const sensitiveFields = ['firstName', 'lastName', 'email', 'designation']
-        
-        for (const field of sensitiveFields) {
+        for (const field of sensitiveAdminFields) {
           if (decryptedAdmin[field] && typeof decryptedAdmin[field] === 'string' && decryptedAdmin[field].includes(':')) {
-            try {
-              decryptedAdmin[field] = decrypt(decryptedAdmin[field])
-            } catch (error) {
-              // If decryption fails, keep original value
-              console.warn(`[getLocationsByCompany] Failed to decrypt admin ${field}:`, error)
-            }
+            try { decryptedAdmin[field] = decrypt(decryptedAdmin[field]) } catch {}
           }
         }
-        
         locationObj.adminId = toPlainObject(decryptedAdmin)
       } else {
         locationObj.adminId = null
@@ -3340,9 +3419,9 @@ export async function getAllLocations(): Promise<any[]> {
     } else if (!locationObj.adminId) {
       locationObj.adminId = null
     }
-    
+
     return locationObj
-  }))
+  })
   
   return locationsWithAdmin
 }
@@ -3350,7 +3429,7 @@ export async function getAllLocations(): Promise<any[]> {
 export async function getCompanyById(companyId: string | number): Promise<any | null> {
   await connectDB()
   
-  const selectFields = 'id name logo website primaryColor secondaryColor showPrices allowPersonalPayments allowPersonalAddressDelivery enableEmployeeOrder allowLocationAdminViewFeedback allowEligibilityConsumptionReset enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po enable_site_admin_approval require_company_admin_approval adminId createdAt updatedAt'
+  const selectFields = 'id name logo website primaryColor secondaryColor showPrices allowPersonalPayments allowPersonalAddressDelivery enableEmployeeOrder allowLocationAdminViewFeedback allowEligibilityConsumptionReset enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po enable_site_admin_approval require_company_admin_approval enable_mtm shipmentRequestMode adminId createdAt updatedAt'
   
   let company = null
   const companyIdStr = String(companyId)
@@ -3369,7 +3448,6 @@ export async function getCompanyById(companyId: string | number): Promise<any | 
     
     if (company) {
       console.log(`[getCompanyById] ✅ Found company by ObjectId: ${company.id} (${company.name})`)
-      return toPlainObject(company)
     }
   }
   
@@ -3400,7 +3478,28 @@ export async function getCompanyById(companyId: string | number): Promise<any | 
       .lean()
   }
   
-  return company ? toPlainObject(company) : null
+  if (!company) return null
+  
+  const result = toPlainObject(company)
+  
+  // Guarantee enable_mtm is included by reading directly from raw MongoDB if missing
+  if (result && result.enable_mtm === undefined) {
+    const db = mongoose.connection.db
+    if (db) {
+      const companyIdStr = String(companyId)
+      const rawDoc = await db.collection('companies').findOne({ id: companyIdStr })
+      if (rawDoc && rawDoc.enable_mtm !== undefined) {
+        result.enable_mtm = Boolean(rawDoc.enable_mtm)
+      } else if (!rawDoc && numericCompanyId !== null) {
+        const rawDoc2 = await db.collection('companies').findOne({ id: String(numericCompanyId) })
+        if (rawDoc2 && rawDoc2.enable_mtm !== undefined) {
+          result.enable_mtm = Boolean(rawDoc2.enable_mtm)
+        }
+      }
+    }
+  }
+  
+  return result
 }
 
 export async function updateCompanySettings(
@@ -3422,6 +3521,8 @@ export async function updateCompanySettings(
     allow_multi_pr_po?: boolean
     // Shipping Configuration
     shipmentRequestMode?: 'MANUAL' | 'AUTOMATIC'
+    // Made-to-Measure (MTM)
+    enable_mtm?: boolean
   }
 ): Promise<any> {
   await connectDB()
@@ -3528,7 +3629,15 @@ export async function updateCompanySettings(
     company.set('allow_multi_pr_po', boolValue)
   }
   
-  // Shipping Configuration
+  // Made-to-Measure (MTM) Configuration
+  if (settings.enable_mtm !== undefined) {
+    const boolValue = Boolean(settings.enable_mtm)
+    company.enable_mtm = boolValue
+    company.markModified('enable_mtm')
+    company.set('enable_mtm', boolValue)
+  }
+
+    // Shipping Configuration
   if (settings.shipmentRequestMode !== undefined) {
     if (settings.shipmentRequestMode !== 'MANUAL' && settings.shipmentRequestMode !== 'AUTOMATIC') {
       throw new Error('shipmentRequestMode must be either MANUAL or AUTOMATIC')
@@ -3576,6 +3685,7 @@ export async function updateCompanySettings(
             }),
             ...(settings.allow_multi_pr_po !== undefined && { allow_multi_pr_po: settings.allow_multi_pr_po }),
             ...(settings.shipmentRequestMode !== undefined && { shipmentRequestMode: settings.shipmentRequestMode }),
+            ...(settings.enable_mtm !== undefined && { enable_mtm: settings.enable_mtm }),
           }
         }
       )
@@ -3588,6 +3698,27 @@ export async function updateCompanySettings(
     }
   }
   
+  // Guarantee persistence of enable_mtm with direct MongoDB write (bypasses Mongoose entirely)
+  if (settings.enable_mtm !== undefined) {
+    const mtmDb = mongoose.connection.db
+    if (mtmDb) {
+      const mtmQueryId = !isNaN(numericId) && isFinite(numericId) ? String(numericId) : companyId
+      const mtmResult = await mtmDb.collection('companies').updateOne(
+        { id: mtmQueryId },
+        { $set: { enable_mtm: Boolean(settings.enable_mtm) } }
+      )
+      console.log(`[updateCompanySettings] Direct MongoDB $set enable_mtm=${settings.enable_mtm} on company ${mtmQueryId}, matched=${mtmResult.matchedCount}, modified=${mtmResult.modifiedCount}`)
+      if (mtmResult.matchedCount === 0) {
+        // Try with original companyId string
+        const mtmRetry = await mtmDb.collection('companies').updateOne(
+          { id: companyId },
+          { $set: { enable_mtm: Boolean(settings.enable_mtm) } }
+        )
+        console.log(`[updateCompanySettings] Retry direct MongoDB $set enable_mtm with original ID ${companyId}, matched=${mtmRetry.matchedCount}, modified=${mtmRetry.modifiedCount}`)
+      }
+    }
+  }
+
   // Verify the save by checking the database directly using raw MongoDB query
   const db = mongoose.connection.db
   let rawDbValue: boolean | null = null
@@ -3596,7 +3727,7 @@ export async function updateCompanySettings(
     const queryId = !isNaN(numericId) && isFinite(numericId) ? String(numericId) : companyId
     const rawCompany = await db.collection('companies').findOne({ id: queryId })
     rawDbValue = rawCompany?.enableEmployeeOrder !== undefined ? Boolean(rawCompany.enableEmployeeOrder) : null
-    console.log(`[updateCompanySettings] Raw DB value after save - enableEmployeeOrder=${rawDbValue}, type=${typeof rawDbValue}, exists=${rawCompany?.enableEmployeeOrder !== undefined}`)
+    console.log(`[updateCompanySettings] Raw DB value after save - enableEmployeeOrder=${rawDbValue}, enable_mtm=${rawCompany?.enable_mtm}, type_mtm=${typeof rawCompany?.enable_mtm}`)
   }
   
   console.log(`[updateCompanySettings] After save - company.enableEmployeeOrder=${company.enableEmployeeOrder}`)
@@ -3606,13 +3737,14 @@ export async function updateCompanySettings(
   // Use the same ID format we used to find the company
   let updatedDoc = null
   const queryId = !isNaN(numericId) && isFinite(numericId) ? String(numericId) : companyId
+  const companySelectFields = 'id name logo website primaryColor secondaryColor showPrices allowPersonalPayments allowPersonalAddressDelivery enableEmployeeOrder allowLocationAdminViewFeedback allowEligibilityConsumptionReset enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po enable_mtm shipmentRequestMode adminId createdAt updatedAt'
   updatedDoc = await Company.findOne({ id: queryId })
-    .select('id name logo website primaryColor secondaryColor showPrices allowPersonalPayments allowPersonalAddressDelivery enableEmployeeOrder allowLocationAdminViewFeedback allowEligibilityConsumptionReset enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po adminId createdAt updatedAt')
+    .select(companySelectFields)
   
   // If not found, try with original companyId
   if (!updatedDoc) {
     updatedDoc = await Company.findOne({ id: companyId })
-      .select('id name logo website primaryColor secondaryColor showPrices allowPersonalPayments allowPersonalAddressDelivery enableEmployeeOrder allowLocationAdminViewFeedback allowEligibilityConsumptionReset enable_pr_po_workflow enable_site_admin_pr_approval require_company_admin_po_approval allow_multi_pr_po adminId createdAt updatedAt')
+      .select(companySelectFields)
   }
   
   if (!updatedDoc) {
@@ -3661,16 +3793,36 @@ export async function getAllBranches(): Promise<any[]> {
   const locations = await Location.find({ status: 'active' })
     .lean()
   
-  // Manually populate company and admin info
+  // Batch-fetch all companies and admins instead of N+1 per location
+  const companyIds = [...new Set(locations.map((loc: any) => loc.companyId).filter(Boolean))]
+  const adminIds = locations.map((loc: any) => loc.adminId).filter(Boolean)
+
+  const [companies, adminEmployees] = await Promise.all([
+    companyIds.length > 0
+      ? Company.find({ id: { $in: companyIds } }).select('id name').lean()
+      : [],
+    adminIds.length > 0
+      ? Employee.find({
+          $or: [
+            { id: { $in: adminIds } },
+            { employeeId: { $in: adminIds } }
+          ]
+        }).select('id employeeId firstName lastName email designation').lean()
+      : []
+  ])
+
+  const companyMap = new Map(companies.map((c: any) => [c.id, toPlainObject(c)]))
+  const adminMap = new Map<string, any>()
+  for (const admin of adminEmployees) {
+    const a = toPlainObject(admin)
+    adminMap.set(a.id, a)
+    if (a.employeeId) adminMap.set(a.employeeId, a)
+  }
+
   const result = []
   for (const loc of locations) {
-    const company = await Company.findOne({ id: loc.companyId }).select('id name').lean()
-    let admin = null
-    if (loc.adminId) {
-      admin = await Employee.findOne({ 
-        $or: [{ id: loc.adminId }, { employeeId: loc.adminId }] 
-      }).select('id employeeId firstName lastName email designation').lean()
-    }
+    const company = loc.companyId ? companyMap.get(loc.companyId) : null
+    const admin = loc.adminId ? (adminMap.get(loc.adminId) || null) : null
     result.push(toPlainObject({
       ...loc,
       companyId: company || loc.companyId,
@@ -3706,7 +3858,7 @@ export async function getBranchById(branchId: string): Promise<any | null> {
 export async function getBranchesByCompany(companyId: string): Promise<any[]> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId })
+  const company = await Company.findOne({ id: companyId }).select('id name').lean()
   if (!company) return []
 
   // Use Location model - query by company's string ID
@@ -3715,15 +3867,26 @@ export async function getBranchesByCompany(companyId: string): Promise<any[]> {
     status: 'active'
   }).lean()
 
-  // Manually populate company and admin info
+  // Batch-fetch all admin employees in one query instead of N+1
+  const adminIds = locations.map((loc: any) => loc.adminId).filter(Boolean)
+  const adminEmployees = adminIds.length > 0
+    ? await Employee.find({
+        $or: [
+          { id: { $in: adminIds } },
+          { employeeId: { $in: adminIds } }
+        ]
+      }).select('id employeeId firstName lastName email designation').lean()
+    : []
+  const adminMap = new Map<string, any>()
+  for (const admin of adminEmployees) {
+    const a = toPlainObject(admin)
+    adminMap.set(a.id, a)
+    if (a.employeeId) adminMap.set(a.employeeId, a)
+  }
+
   const result = []
   for (const loc of locations) {
-    let admin = null
-    if (loc.adminId) {
-      admin = await Employee.findOne({ 
-        $or: [{ id: loc.adminId }, { employeeId: loc.adminId }] 
-      }).select('id employeeId firstName lastName email designation').lean()
-    }
+    const admin = loc.adminId ? (adminMap.get(loc.adminId) || null) : null
     result.push(toPlainObject({
       ...loc,
       companyId: { id: company.id, name: company.name },
@@ -4173,6 +4336,10 @@ export async function addCompanyAdmin(companyId: string, employeeId: string, can
   console.log(`[addCompanyAdmin] ✅ Verified admin record exists with employeeId: ${verifyRecord.employeeId}`)
   
   console.log(`Successfully added employee ${employeeId} (${employeeStringId}) as admin for company ${companyId} (canApproveOrders: ${canApproveOrders})`)
+
+  // Invalidate caches -- the employee's admin status and company-by-admin result changed
+  adminCache.clear()
+  companyByAdminCache.clear()
 }
 
 export async function removeCompanyAdmin(companyId: string, employeeId: string): Promise<void> {
@@ -4250,6 +4417,10 @@ export async function removeCompanyAdmin(companyId: string, employeeId: string):
   }
   
   console.log(`[removeCompanyAdmin] ✅ Successfully removed admin: company=${companyStringId}, employee=${employeeStringId}`)
+
+  // Invalidate caches
+  adminCache.clear()
+  companyByAdminCache.clear()
 }
 
 export async function updateCompanyAdminPrivileges(companyId: string, employeeId: string, canApproveOrders: boolean): Promise<void> {
@@ -4300,6 +4471,9 @@ export async function updateCompanyAdminPrivileges(companyId: string, employeeId
   await admin.save()
   
   console.log(`[updateCompanyAdminPrivileges] ✅ Successfully updated admin privileges for ${employeeStringId} in company ${companyStringId}`)
+
+  // Invalidate admin cache (approval privilege changed)
+  adminCache.clear()
 }
 
 export async function getCompanyAdmins(companyId: string): Promise<any[]> {
@@ -4323,36 +4497,32 @@ export async function getCompanyAdmins(companyId: string): Promise<any[]> {
     })))
   }
   
-  // Manually fetch employee data using string IDs
-  const validAdmins = []
+  // Batch-fetch all employee data to avoid N+1 queries
   const { decrypt } = require('../utils/encryption')
-  
+  const employeeIds = admins
+    .map((a: any) => typeof a.employeeId === 'string' ? a.employeeId : String(a.employeeId || ''))
+    .filter(Boolean)
+
+  const employeeDocs = employeeIds.length > 0
+    ? await Employee.find({ $or: [{ id: { $in: employeeIds } }, { employeeId: { $in: employeeIds } }] })
+        .select('id employeeId firstName lastName email companyName')
+        .lean()
+    : []
+
+  const employeeMap = new Map<string, any>()
+  for (const emp of employeeDocs) {
+    if (emp.id) employeeMap.set(emp.id, emp)
+    if (emp.employeeId && emp.employeeId !== emp.id) employeeMap.set(emp.employeeId, emp)
+  }
+
+  const validAdmins = []
   for (const admin of admins) {
-    if (!admin.employeeId) {
-      console.log(`[getCompanyAdmins] Admin has null employeeId, skipping:`, admin._id)
-      continue
-    }
-    
-    // CRITICAL: employeeId is stored as STRING ID (e.g., "300021"), not ObjectId
-    const employeeIdStr = typeof admin.employeeId === 'string' 
-      ? admin.employeeId 
-      : String(admin.employeeId)
-    
-    console.log(`[getCompanyAdmins] Looking up employee by string ID: ${employeeIdStr}`)
-    
-    // Find employee using string ID field (not _id)
-    const employee = await Employee.findOne({ 
-      $or: [
-        { id: employeeIdStr },
-        { employeeId: employeeIdStr }
-      ]
-    })
-      .select('id employeeId firstName lastName email companyName')
-      .lean()
-    
+    if (!admin.employeeId) continue
+
+    const employeeIdStr = typeof admin.employeeId === 'string' ? admin.employeeId : String(admin.employeeId)
+    const employee = employeeMap.get(employeeIdStr)
+
     if (employee) {
-      console.log(`[getCompanyAdmins] ✅ Found employee: ${employee.employeeId || employee.id}`)
-      // Attach employee data to admin object
       ;(admin as any).employeeData = {
         _id: employee._id,
         id: employee.id,
@@ -4362,12 +4532,8 @@ export async function getCompanyAdmins(companyId: string): Promise<any[]> {
         email: employee.email,
         companyName: employee.companyName
       }
-      validAdmins.push(admin)
-    } else {
-      console.log(`[getCompanyAdmins] ⚠️ Employee not found for ID: ${employeeIdStr}`)
-      // Still include admin record but without employee data
-      validAdmins.push(admin)
     }
+    validAdmins.push(admin)
   }
   
   console.log(`[getCompanyAdmins] Valid admins after filtering: ${validAdmins.length}`)
@@ -4414,45 +4580,17 @@ export async function getCompanyAdmins(companyId: string): Promise<any[]> {
 }
 
 export async function isCompanyAdmin(email: string, companyId: string): Promise<boolean> {
+  const cacheKey = `${email.trim().toLowerCase()}|${companyId}`
+  const cached = adminCache.get(cacheKey)
+  if (cached !== undefined) return cached
+
   await connectDB()
   
-  // Since email is encrypted, we need to find employee by decrypting
-  const { encrypt, decrypt } = require('../utils/encryption')
-  // Normalize email: trim and lowercase (same as login flow)
-  const normalizedEmail = email.trim().toLowerCase()
-  let encryptedEmail: string
-  
-  try {
-    encryptedEmail = encrypt(normalizedEmail)
-  } catch (error) {
-    console.warn('[isCompanyAdmin] Encryption failed:', error)
-    encryptedEmail = ''
-  }
-  
-  // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
-  
-  // If not found, try decryption matching
-  if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
-    for (const emp of allEmployees) {
-      if (emp.email && typeof emp.email === 'string') {
-        try {
-          const decryptedEmail = decrypt(emp.email)
-          // Normalize both for comparison (case-insensitive)
-          if (decryptedEmail && decryptedEmail.trim().toLowerCase() === normalizedEmail) {
-            employee = emp
-            break
-          }
-        } catch (error) {
-          continue
-        }
-      }
-    }
-  }
+  const employee = await findEmployeeByEmailHashFast(email)
   
   if (!employee) {
-    console.warn('[isCompanyAdmin] Employee not found for email:', normalizedEmail)
+    console.warn('[isCompanyAdmin] Employee not found for email:', email)
+    adminCache.set(cacheKey, false)
     return false
   }
   
@@ -4461,11 +4599,9 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
   let company = null
   
   if (isObjectId) {
-    // Look up by _id if it's an ObjectId
     const { ObjectId } = require('mongodb')
     company = await Company.findOne({ _id: new ObjectId(companyId) })
   } else {
-    // Look up by numeric/string id
     const numericId = Number(companyId)
     if (!isNaN(numericId) && isFinite(numericId)) {
       company = await Company.findOne({ id: numericId })
@@ -4477,29 +4613,26 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
   
   if (!company) {
     console.warn('[isCompanyAdmin] Company not found:', companyId)
+    adminCache.set(cacheKey, false)
     return false
   }
   
-  // Use raw MongoDB collection for reliable lookup
   const db = mongoose.connection.db
   if (!db) {
     console.error('[isCompanyAdmin] Database connection not available')
     return false
   }
   
-  // Use string IDs for lookup
   const employeeIdStr = employee.id || employee.employeeId || ''
   const companyIdStr = company.id || ''
   
   console.log('[isCompanyAdmin] Looking up admin record:', {
-    email: normalizedEmail,
+    email: email,
     companyIdString: companyIdStr,
     employeeId: employeeIdStr,
     companyName: company.name
   })
   
-  // CRITICAL FIX: CompanyAdmin.companyId is stored as STRING ID, not ObjectId
-  // Use company.id (string) instead of companyObjectId for CompanyAdmin queries
   const CompanyAdmin = require('../models/CompanyAdmin').default
   let admin = await CompanyAdmin.findOne({
     companyId: company.id,
@@ -4507,90 +4640,35 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
   }).lean()
   
   if (admin) {
-    console.log('[isCompanyAdmin] ✅ Found admin via CompanyAdmin model:', {
-      adminId: admin._id?.toString(),
-      employeeId: admin.employeeId?.toString(),
-      companyId: admin.companyId?.toString()
-    })
+    adminCache.set(cacheKey, true)
     return true
   }
   
-  console.log('[isCompanyAdmin] Not found via CompanyAdmin model, trying raw MongoDB query...')
-  
-  // CRITICAL FIX: CompanyAdmin.companyId is stored as STRING ID, not ObjectId
-  // Use company.id (string) for raw MongoDB query as well
   const adminRecord = await db.collection('companyadmins').findOne({
     companyId: company.id,
     employeeId: employee.id || employee.employeeId
   })
   
   if (adminRecord) {
-    console.log('[isCompanyAdmin] ✅ Found admin via raw MongoDB query:', {
-      adminId: adminRecord._id?.toString(),
-      employeeId: adminRecord.employeeId?.toString(),
-      companyId: adminRecord.companyId?.toString()
-    })
+    adminCache.set(cacheKey, true)
     return true
   }
   
-  // Additional fallback: Get all admins for this company and check employeeId
-  // CRITICAL FIX: CompanyAdmin.companyId is stored as STRING ID, not ObjectId
-  // Use company.id (string) for query
   const allCompanyAdmins = await db.collection('companyadmins').find({
     companyId: company.id
   }).toArray()
   
-  console.log('[isCompanyAdmin] Total admins for company:', allCompanyAdmins.length)
-  
-  if (allCompanyAdmins.length > 0) {
-    console.log('[isCompanyAdmin] Sample admin record:', {
-      firstAdmin: {
-        employeeId: allCompanyAdmins[0].employeeId?.toString(),
-        companyId: allCompanyAdmins[0].companyId?.toString()
-      },
-      searchingFor: {
-        employeeId: employeeIdStr,
-        companyId: companyIdStr
-      }
-    })
-  }
-  
-  console.log('[isCompanyAdmin] Matching by string IDs:', {
-    employeeId: employeeIdStr,
-    companyId: companyIdStr
-  })
-  
-  // Match by string IDs
   admin = allCompanyAdmins.find((a: any) => {
     if (!a.employeeId || !a.companyId) return false
-    
     const aEmployeeIdStr = String(a.employeeId || '')
     const aCompanyIdStr = String(a.companyId || '')
-    
-    // String ID comparison
-    if (aEmployeeIdStr === employeeIdStr && aCompanyIdStr === companyIdStr) {
-      console.log('[isCompanyAdmin] ✅ Found admin via string ID comparison:', {
-        employeeId: aEmployeeIdStr,
-        companyId: aCompanyIdStr
-      })
-      return true
-    }
-    
-    return false
+    return aEmployeeIdStr === employeeIdStr && aCompanyIdStr === companyIdStr
   })
   
   const isAdmin = !!admin
-  console.log('[isCompanyAdmin] Final result:', {
-    email: normalizedEmail,
-    companyIdString: companyIdStr,
-    employeeId: employeeIdStr,
-    foundAdmin: !!admin,
-    isAdmin,
-    allCompanyAdminsCount: allCompanyAdmins.length
-  })
+  adminCache.set(cacheKey, isAdmin)
   
   if (!isAdmin) {
-    // Log all admins for this company to help debug
     console.log('[isCompanyAdmin] Admins for this company:', allCompanyAdmins.map((a: any) => ({
       employeeId: String(a.employeeId || ''),
       matchesEmployee: String(a.employeeId || '') === employeeIdStr,
@@ -4604,37 +4682,7 @@ export async function isCompanyAdmin(email: string, companyId: string): Promise<
 export async function canApproveOrders(email: string, companyId: string): Promise<boolean> {
   await connectDB()
   
-  // Since email is encrypted, we need to find employee by decrypting
-  const { encrypt, decrypt } = require('../utils/encryption')
-  const trimmedEmail = email.trim()
-  let encryptedEmail: string
-  
-  try {
-    encryptedEmail = encrypt(trimmedEmail)
-  } catch (error) {
-    encryptedEmail = ''
-  }
-  
-  // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
-  
-  // If not found, try decryption matching
-  if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
-    for (const emp of allEmployees) {
-      if (emp.email && typeof emp.email === 'string') {
-        try {
-          const decryptedEmail = decrypt(emp.email)
-          if (decryptedEmail.toLowerCase() === trimmedEmail.toLowerCase()) {
-            employee = emp
-            break
-          }
-        } catch (error) {
-          continue
-        }
-      }
-    }
-  }
+  const employee = await findEmployeeByEmailHashFast(email)
   
   if (!employee) {
     return false
@@ -4698,37 +4746,7 @@ export async function canApproveOrders(email: string, companyId: string): Promis
 export async function isBranchAdmin(email: string, branchId: string): Promise<boolean> {
   await connectDB()
   
-  // Find employee by email (handle encryption)
-  const { encrypt, decrypt } = require('../utils/encryption')
-  const trimmedEmail = email.trim()
-  let encryptedEmail: string
-  
-  try {
-    encryptedEmail = encrypt(trimmedEmail)
-  } catch (error) {
-    encryptedEmail = ''
-  }
-  
-  // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
-  
-  // If not found, try decryption matching
-  if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
-    for (const emp of allEmployees) {
-      if (emp.email && typeof emp.email === 'string') {
-        try {
-          const decryptedEmail = decrypt(emp.email)
-          if (decryptedEmail.toLowerCase() === trimmedEmail.toLowerCase()) {
-            employee = emp
-            break
-          }
-        } catch (error) {
-          continue
-        }
-      }
-    }
-  }
+  const employee = await findEmployeeByEmailHashFast(email)
   
   if (!employee) {
     return false
@@ -4793,34 +4811,33 @@ export async function getBranchByAdminEmployeeId(employeeId: string): Promise<an
  * @returns Branch object if employee is a Branch Admin, null otherwise
  */
 export async function getBranchByAdminEmail(email: string): Promise<any | null> {
-  console.log(`[getBranchByAdminEmail] Looking up branch for email: ${email}`)
+  if (!email) return null
+  
+  const normalizedEmail = email.trim().toLowerCase()
+
+  // Check cache
+  const cached = branchByAdminCache.get(normalizedEmail)
+  if (cached !== undefined) return cached
+
   await connectDB()
   
-  if (!email) {
-    console.log(`[getBranchByAdminEmail] ❌ Email is empty`)
-    return null
-  }
-  
-  // Find employee by email
-  const employee = await getEmployeeByEmail(email.trim().toLowerCase())
+  const employee = await getEmployeeByEmail(normalizedEmail)
   
   if (!employee) {
-    console.log(`[getBranchByAdminEmail] ❌ Employee not found for email: ${email}`)
+    branchByAdminCache.set(normalizedEmail, null)
     return null
   }
   
-  console.log(`[getBranchByAdminEmail] ✅ Employee found: ${employee.id} (${employee.firstName} ${employee.lastName})`)
-  
-  // Use the employee ID to find branch (admin status is tied to employee ID, not email)
   const employeeIdStr = employee.id || employee.employeeId || ''
   
   if (!employeeIdStr) {
-    console.log(`[getBranchByAdminEmail] ❌ Could not find employee ID`)
+    branchByAdminCache.set(normalizedEmail, null)
     return null
   }
   
-  // Delegate to the employee ID-based function
-  return getBranchByAdminEmployeeId(employeeIdStr)
+  const branch = await getBranchByAdminEmployeeId(employeeIdStr)
+  branchByAdminCache.set(normalizedEmail, branch)
+  return branch
 }
 
 // ========== LOCATION ADMIN AUTHORIZATION FUNCTIONS ==========
@@ -4834,37 +4851,7 @@ export async function getBranchByAdminEmail(email: string): Promise<any | null> 
 export async function isLocationAdmin(email: string, locationId: string): Promise<boolean> {
   await connectDB()
   
-  // Find employee by email (handle encryption)
-  const { encrypt, decrypt } = require('../utils/encryption')
-  const trimmedEmail = email.trim()
-  let encryptedEmail: string
-  
-  try {
-    encryptedEmail = encrypt(trimmedEmail)
-  } catch (error) {
-    encryptedEmail = ''
-  }
-  
-  // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
-  
-  // If not found, try decryption matching
-  if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
-    for (const emp of allEmployees) {
-      if (emp.email && typeof emp.email === 'string') {
-        try {
-          const decryptedEmail = decrypt(emp.email)
-          if (decryptedEmail.toLowerCase() === trimmedEmail.toLowerCase()) {
-            employee = emp
-            break
-          }
-        } catch (error) {
-          continue
-        }
-      }
-    }
-  }
+  const employee = await findEmployeeByEmailHashFast(email)
   
   if (!employee) {
     return false
@@ -4954,34 +4941,33 @@ export async function getLocationByAdminEmployeeId(employeeId: string): Promise<
  * @returns Location object if employee is a Location Admin, null otherwise
  */
 export async function getLocationByAdminEmail(email: string): Promise<any | null> {
-  console.log(`[getLocationByAdminEmail] Looking up location for email: ${email}`)
+  if (!email) return null
+  
+  const normalizedEmail = email.trim().toLowerCase()
+
+  // Check cache
+  const cached = locationByAdminCache.get(normalizedEmail)
+  if (cached !== undefined) return cached
+
   await connectDB()
   
-  if (!email) {
-    console.log(`[getLocationByAdminEmail] ❌ Email is empty`)
-    return null
-  }
-  
-  // Find employee by email
-  const employee = await getEmployeeByEmail(email.trim().toLowerCase())
+  const employee = await getEmployeeByEmail(normalizedEmail)
   
   if (!employee) {
-    console.log(`[getLocationByAdminEmail] ❌ Employee not found for email: ${email}`)
+    locationByAdminCache.set(normalizedEmail, null)
     return null
   }
   
-  console.log(`[getLocationByAdminEmail] ✅ Employee found: ${employee.id} (${employee.firstName} ${employee.lastName})`)
-  
-  // Use the employee ID to find location (admin status is tied to employee ID, not email)
   const employeeIdStr = employee.id || employee.employeeId || ''
   
   if (!employeeIdStr) {
-    console.log(`[getLocationByAdminEmail] ❌ Could not find employee ID`)
+    locationByAdminCache.set(normalizedEmail, null)
     return null
   }
   
-  // Delegate to the employee ID-based function
-  return getLocationByAdminEmployeeId(employeeIdStr)
+  const location = await getLocationByAdminEmployeeId(employeeIdStr)
+  locationByAdminCache.set(normalizedEmail, location)
+  return location
 }
 
 /**
@@ -5349,55 +5335,32 @@ export async function getCompanyByAdminEmployeeId(employeeId: string): Promise<a
  * @returns Company object or null if not found/not admin
  */
 export async function getCompanyByAdminEmail(email: string): Promise<any | null> {
-  console.log(`[getCompanyByAdminEmail] ========================================`)
-  console.log(`[getCompanyByAdminEmail] 🚀 FUNCTION CALLED`)
-  console.log(`[getCompanyByAdminEmail] Input email: "${email}"`)
+  if (!email) return null
   
+  const normalizedEmail = email.trim().toLowerCase()
+
+  // Check cache
+  const cached = companyByAdminCache.get(normalizedEmail)
+  if (cached !== undefined) return cached
+
   await connectDB()
   
-  if (!email) {
-    console.error(`[getCompanyByAdminEmail] ❌ Email is empty or null`)
-    return null
-  }
-  
-  // Normalize email: trim and lowercase for consistent comparison
-  const normalizedEmail = email.trim().toLowerCase()
-  console.log(`[getCompanyByAdminEmail] Normalized email: "${normalizedEmail}"`)
-  
-  // STEP 1: Find employee by email
-  console.log(`[getCompanyByAdminEmail] 🔍 STEP 1: Looking up employee by email...`)
   const employee = await getEmployeeByEmail(normalizedEmail)
   
   if (!employee) {
-    console.error(`[getCompanyByAdminEmail] ❌ Employee not found for email: ${normalizedEmail}`)
-    console.log(`[getCompanyByAdminEmail] ========================================`)
+    companyByAdminCache.set(normalizedEmail, null)
     return null
   }
   
-  console.log(`[getCompanyByAdminEmail] ✅ Employee found: ${employee.id} (${employee.firstName} ${employee.lastName})`)
-  
-  // STEP 2: Use the employee ID to find company (this is the smart part!)
-  // Admin status is tied to employee ID, not email
   const employeeIdStr = employee.id || employee.employeeId || ''
   
   if (!employeeIdStr) {
-    console.error(`[getCompanyByAdminEmail] ❌ Could not find employee ID`)
-    console.log(`[getCompanyByAdminEmail] ========================================`)
+    companyByAdminCache.set(normalizedEmail, null)
     return null
   }
   
-  console.log(`[getCompanyByAdminEmail] 🔍 STEP 2: Looking up company by employee ID: ${employeeIdStr}`)
-  
-  // Delegate to the employee ID-based function
   const company = await getCompanyByAdminEmployeeId(employeeIdStr)
-  
-  if (company) {
-    console.log(`[getCompanyByAdminEmail] ✅ Company found: ${company.name} (${company.id})`)
-  } else {
-    console.log(`[getCompanyByAdminEmail] ❌ No company admin record for employee: ${employeeIdStr}`)
-  }
-  
-  console.log(`[getCompanyByAdminEmail] ========================================`)
+  companyByAdminCache.set(normalizedEmail, company)
   return company
 }
 
@@ -5482,237 +5445,127 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
     return null
   }
   
-  // Normalize email: trim whitespace and convert to lowercase for consistent comparison
-  // This ensures emails are compared consistently regardless of case or whitespace
   const trimmedEmail = email.trim().toLowerCase()
-  
-  // Since email is encrypted in the database, we need to encrypt the search term
-  // or search through all employees and decrypt to match
-  // The more efficient approach is to encrypt the search term and query
-  
   const { encrypt, decrypt } = require('../utils/encryption')
-  let encryptedEmail: string
-  
-  try {
-    encryptedEmail = encrypt(trimmedEmail)
-  } catch (error) {
-    console.warn('Failed to encrypt email for query, will use decryption matching:', error)
-    encryptedEmail = ''
-  }
-  
-  // Try finding with encrypted email first (faster)
-  // Use raw MongoDB query to get the employee with companyId ObjectId
+  const { hashEmail } = require('../utils/encryption')
   const db = mongoose.connection.db
   let employee: any = null
-  
-  if (db && encryptedEmail) {
-    // First, try with encrypted email (for encrypted data)
-    // NOTE: This will only work if the email was encrypted with the EXACT same normalized value
-    // Due to random IVs, even the same email encrypts differently each time
-    // So this lookup is mainly for recently created employees with normalized emails
-    let rawEmployee = await db.collection('employees').findOne({ email: encryptedEmail })
-    
-    if (rawEmployee) {
-      console.log(`[getEmployeeByEmail] ✅ Found employee via encrypted email lookup (direct match)`)
-    }
-    
-    // If not found with encrypted email, try with plain text email (for plain text data - legacy)
-    if (!rawEmployee) {
-      rawEmployee = await db.collection('employees').findOne({ email: trimmedEmail })
-      if (rawEmployee) {
-        console.log(`[getEmployeeByEmail] ✅ Found employee via plain text email lookup (legacy data)`)
-      }
-    }
-    
-    // Also try case-insensitive plain text search (for legacy data)
-    if (!rawEmployee) {
-      rawEmployee = await db.collection('employees').findOne({ 
-        email: { $regex: new RegExp(`^${trimmedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
-      })
-      if (rawEmployee) {
-        console.log(`[getEmployeeByEmail] ✅ Found employee via case-insensitive plain text lookup (legacy data)`)
-      }
-    }
-    
-    if (rawEmployee) {
-      console.log(`[getEmployeeByEmail] Raw employee companyId:`, rawEmployee.companyId, 'Type:', typeof rawEmployee.companyId)
-      
-      // Now fetch with Mongoose to get populated fields and decryption
-      // Use string id field instead of _id
-      const employeeId = rawEmployee.id || String(rawEmployee._id || '')
-      employee = await Employee.findOne({ id: employeeId })
-        .populate('companyId', 'id name')
-        .populate('locationId', 'id name address city state pincode')
-        .lean()
-      
-      console.log(`[getEmployeeByEmail] Mongoose employee companyId after populate:`, employee?.companyId, 'Type:', typeof employee?.companyId)
-      
-      // ALWAYS ensure companyId is set from raw document if it exists
-      if (employee && rawEmployee.companyId) {
-        const rawCompanyIdStr = rawEmployee.companyId.toString()
-        
-        // Convert companyId from ObjectId to numeric ID using helper function
-        const numericCompanyId = await convertCompanyIdToNumericId(rawEmployee.companyId)
-        if (numericCompanyId) {
-          employee.companyId = numericCompanyId
-          console.log(`[getEmployeeByEmail] Converted companyId from raw document: ${numericCompanyId}`)
-        }
-      } else if (employee && !employee.companyId && rawEmployee.companyId) {
-        // Employee from Mongoose doesn't have companyId, but raw document does
-        const numericCompanyId = await convertCompanyIdToNumericId(rawEmployee.companyId)
-        if (numericCompanyId) {
-          employee.companyId = numericCompanyId
-          console.log(`[getEmployeeByEmail] Set companyId from raw document: ${numericCompanyId}`)
-        }
-      }
-    }
-  }
-  
-  // Fallback: if raw query didn't work, try Mongoose query
-  if (!employee && encryptedEmail) {
-    employee = await Employee.findOne({ email: encryptedEmail })
+
+  // --- Fast path: O(1) emailHash lookup ---
+  const emailHash = hashEmail(trimmedEmail)
+  const hashHit = db ? await db.collection('employees').findOne({ emailHash }) : null
+  if (hashHit) {
+    const employeeId = hashHit.id || String(hashHit._id || '')
+    employee = await Employee.findOne({ id: employeeId })
       .populate('companyId', 'id name')
       .populate('locationId', 'id name address city state pincode')
       .lean()
-    
-      // Convert companyId from ObjectId to numeric ID
-      if (employee && employee.companyId) {
-        const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
-        if (numericCompanyId) {
-          employee.companyId = numericCompanyId
-          console.log(`[getEmployeeByEmail] Converted companyId (Mongoose fallback): ${numericCompanyId}`)
-        }
-      }
+    if (employee && hashHit.companyId) {
+      const numericCompanyId = await convertCompanyIdToNumericId(hashHit.companyId)
+      if (numericCompanyId) employee.companyId = numericCompanyId
+    }
   }
-  
-  // Fallback: if still not found, try decryption-based search (works even if encryption format doesn't match)
-  // This MUST run regardless of whether encryptedEmail was set, because encryption uses random IVs
-  // CRITICAL FIX: Also handle plain text emails (user may have manually replaced encrypted email with plain text)
+
+  // --- Fallback chain (pre-migration records without emailHash) ---
   if (!employee) {
-    console.log(`[getEmployeeByEmail] ⚠️  Primary lookups failed for: ${trimmedEmail}`)
-    console.log(`[getEmployeeByEmail] Starting comprehensive fallback search...`)
-    
-    // Use raw MongoDB to get all employees (faster than Mongoose for bulk operations)
-    const db = mongoose.connection.db
-    if (db) {
-      // First, try direct plain text match (handles manually replaced plain text emails)
-      console.log(`[getEmployeeByEmail] Trying plain text email match...`)
-      const plainTextEmployee = await db.collection('employees').findOne({ email: trimmedEmail })
-      if (plainTextEmployee) {
-        console.log(`[getEmployeeByEmail] ✅ Found employee via plain text email match`)
-        // Fetch with Mongoose to get populated fields - use string id field instead of _id
-        const employeeId = plainTextEmployee.id || String(plainTextEmployee._id || '')
-        employee = await Employee.findOne({ id: employeeId })
+    let encryptedEmail: string
+    try { encryptedEmail = encrypt(trimmedEmail) } catch { encryptedEmail = '' }
+
+    if (db && encryptedEmail) {
+      let rawEmployee = await db.collection('employees').findOne({ email: encryptedEmail })
+      if (!rawEmployee) rawEmployee = await db.collection('employees').findOne({ email: trimmedEmail })
+      if (!rawEmployee) {
+        rawEmployee = await db.collection('employees').findOne({
+          email: { $regex: new RegExp(`^${trimmedEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+        })
+      }
+      if (rawEmployee) {
+        const eid = rawEmployee.id || String(rawEmployee._id || '')
+        employee = await Employee.findOne({ id: eid })
           .populate('companyId', 'id name')
           .populate('locationId', 'id name address city state pincode')
           .lean()
-        
-        if (employee) {
-          // Convert companyId from ObjectId to numeric ID
-          if (employee.companyId) {
-            const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
-            if (numericCompanyId) {
-              employee.companyId = numericCompanyId
-            }
-          }
-          console.log(`[getEmployeeByEmail] Employee ID: ${employee.id || employee.employeeId}`)
+        if (employee && rawEmployee.companyId) {
+          const numericCompanyId = await convertCompanyIdToNumericId(rawEmployee.companyId)
+          if (numericCompanyId) employee.companyId = numericCompanyId
         }
       }
     }
-    
-    // If still not found, try decryption-based search for encrypted emails
+
+    if (!employee && encryptedEmail) {
+      employee = await Employee.findOne({ email: encryptedEmail })
+        .populate('companyId', 'id name')
+        .populate('locationId', 'id name address city state pincode')
+        .lean()
+      if (employee?.companyId) {
+        const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
+        if (numericCompanyId) employee.companyId = numericCompanyId
+      }
+    }
+  }
+
+  // Last-resort O(n) decrypt scan for records without emailHash
+  if (!employee) {
+    console.warn(`[getEmployeeByEmail] Fast lookups failed for: ${trimmedEmail}, trying O(n) fallback`)
+    if (db) {
+      const plainHit = await db.collection('employees').findOne({ email: trimmedEmail })
+      if (plainHit) {
+        const eid = plainHit.id || String(plainHit._id || '')
+        employee = await Employee.findOne({ id: eid })
+          .populate('companyId', 'id name')
+          .populate('locationId', 'id name address city state pincode')
+          .lean()
+        if (employee?.companyId) {
+          const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
+          if (numericCompanyId) employee.companyId = numericCompanyId
+        }
+      }
+    }
+
     if (!employee) {
-      console.log(`[getEmployeeByEmail] Trying decryption-based search for encrypted emails...`)
-      // For encrypted values, we can't do regex search easily
-      // So we'll fall back to fetching all and decrypting (less efficient but works)
       const allEmployees = await Employee.find({})
         .populate('companyId', 'id name')
         .populate('locationId', 'id name address city state pincode')
         .lean()
-      
-      console.log(`[getEmployeeByEmail] Checking ${allEmployees.length} employees via decryption...`)
-      let checkedCount = 0
       for (const emp of allEmployees) {
         if (emp.email && typeof emp.email === 'string') {
-          checkedCount++
           try {
-            // Skip if already plain text (we already checked that)
             if (!emp.email.includes(':')) {
-              // Plain text email - check if it matches
               if (emp.email.toLowerCase() === trimmedEmail) {
-                console.log(`[getEmployeeByEmail] ✅ Found employee via plain text match in decryption loop: ${emp.email}`)
                 employee = emp
-                // Convert companyId from ObjectId to numeric ID
                 if (employee.companyId) {
                   const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
-                  if (numericCompanyId) {
-                    employee.companyId = numericCompanyId
-                  }
+                  if (numericCompanyId) employee.companyId = numericCompanyId
                 }
                 break
               }
               continue
             }
-            
-            // Encrypted email - try to decrypt
             const decryptedEmail = decrypt(emp.email)
-            // Check if decryption succeeded - be more lenient to avoid false negatives
-            // Decryption succeeded if:
-            // 1. Result is different from input (was actually encrypted)
-            // 2. Result doesn't contain ':' (not still encrypted)
-            // 3. Result is reasonable length (not corrupted)
-            // 4. Result contains '@' (looks like an email)
-            const isDecrypted = decryptedEmail && 
-                               decryptedEmail !== emp.email && 
-                               !decryptedEmail.includes(':') && 
-                               decryptedEmail.length > 0 &&
-                               decryptedEmail.length < 200 &&
-                               decryptedEmail.includes('@')
-            
-            // Check if email matches (case-insensitive - both should already be lowercase)
-            // trimmedEmail is already lowercase, so compare directly
+            const isDecrypted = decryptedEmail &&
+              decryptedEmail !== emp.email &&
+              !decryptedEmail.includes(':') &&
+              decryptedEmail.length > 0 &&
+              decryptedEmail.length < 200 &&
+              decryptedEmail.includes('@')
             if (isDecrypted && decryptedEmail.toLowerCase() === trimmedEmail) {
-              console.log(`[getEmployeeByEmail] ✅ Found employee via decryption fallback: ${decryptedEmail}`)
-              console.log(`[getEmployeeByEmail] Employee ID: ${emp.id || emp.employeeId}, _id: ${emp._id}`)
               employee = emp
-              // CRITICAL: Decrypt the email field itself so it matches what the caller expects
               employee.email = decryptedEmail
-              console.log(`[getEmployeeByEmail] Set employee.email to: ${employee.email}`)
-              // Decrypt all sensitive fields for this employee
-              if (employee.firstName && typeof employee.firstName === 'string' && employee.firstName.includes(':')) {
-                try { employee.firstName = decrypt(employee.firstName) } catch {}
+              const sensitiveDecryptFields = ['firstName', 'lastName', 'mobile', 'address', 'designation', 'location']
+              for (const f of sensitiveDecryptFields) {
+                if (employee[f] && typeof employee[f] === 'string' && employee[f].includes(':')) {
+                  try { employee[f] = decrypt(employee[f]) } catch {}
+                }
               }
-              if (employee.lastName && typeof employee.lastName === 'string' && employee.lastName.includes(':')) {
-                try { employee.lastName = decrypt(employee.lastName) } catch {}
-              }
-              if (employee.mobile && typeof employee.mobile === 'string' && employee.mobile.includes(':')) {
-                try { employee.mobile = decrypt(employee.mobile) } catch {}
-              }
-              if (employee.address && typeof employee.address === 'string' && employee.address.includes(':')) {
-                try { employee.address = decrypt(employee.address) } catch {}
-              }
-              if (employee.designation && typeof employee.designation === 'string' && employee.designation.includes(':')) {
-                try { employee.designation = decrypt(employee.designation) } catch {}
-              }
-              if (employee.location && typeof employee.location === 'string' && employee.location.includes(':')) {
-                try { employee.location = decrypt(employee.location) } catch {}
-              }
-              // Convert companyId from ObjectId to numeric ID
               if (employee.companyId) {
                 const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
-                if (numericCompanyId) {
-                  employee.companyId = numericCompanyId
-                }
+                if (numericCompanyId) employee.companyId = numericCompanyId
               }
               break
             }
-          } catch (error) {
-            // Skip employees with decryption errors silently (don't log for every employee)
-            continue
-          }
+          } catch { continue }
         }
       }
-      console.log(`[getEmployeeByEmail] Decryption fallback completed. Checked ${checkedCount} employees. Employee found: ${!!employee}`)
     }
   }
 
@@ -5721,33 +5574,12 @@ export async function getEmployeeByEmail(email: string): Promise<any | null> {
     return null
   }
   
-  // Convert companyId from ObjectId to numeric ID using helper function
-  // Always fetch from raw document to ensure we have the correct ObjectId
-  if (employee && db) {
-    let rawEmp: any = null
-    
-    // Try to get raw document using multiple methods
-    if (encryptedEmail) {
-      rawEmp = await db.collection('employees').findOne({ email: encryptedEmail })
-    }
-    if (!rawEmp && employee.id) {
-      rawEmp = await db.collection('employees').findOne({ id: employee.id })
-    }
-    if (!rawEmp && employee.employeeId) {
-      rawEmp = await db.collection('employees').findOne({ employeeId: employee.employeeId })
-    }
-    
-    if (rawEmp && rawEmp.companyId) {
-      // Convert companyId from ObjectId to numeric ID once
-      const numericCompanyId = await convertCompanyIdToNumericId(rawEmp.companyId)
-      if (numericCompanyId) {
-        employee.companyId = numericCompanyId
-        console.log(`[getEmployeeByEmail] Converted companyId to numeric ID: ${numericCompanyId}`)
-      } else {
-        console.warn(`[getEmployeeByEmail] Failed to convert companyId for employee ${employee.id || employee.employeeId}`)
-      }
-    } else if (rawEmp && !rawEmp.companyId) {
-      console.warn(`[getEmployeeByEmail] WARNING: Raw document has no companyId for employee ${employee.id || employee.employeeId}`)
+  // Final companyId safety net: ensure it's a numeric ID, not an ObjectId
+  if (employee && db && employee.companyId) {
+    const cid = String(employee.companyId)
+    if (/^[a-f0-9]{24}$/i.test(cid) || (typeof employee.companyId === 'object' && employee.companyId._id)) {
+      const numericCompanyId = await convertCompanyIdToNumericId(employee.companyId)
+      if (numericCompanyId) employee.companyId = numericCompanyId
     }
   }
   
@@ -6271,29 +6103,35 @@ export async function getEmployeeByEmployeeId(employeeId: string): Promise<any |
   return plainEmployee
 }
 
-export async function getEmployeesByCompany(companyId: string): Promise<any[]> {
+export async function getEmployeesByCompany(companyId: string, _userEmail?: string, pagination?: { page: number; pageSize: number }): Promise<any> {
   await connectDB()
   
   console.log(`[getEmployeesByCompany] Looking up company with id: ${companyId}`)
   const company = await Company.findOne({ id: companyId }).select('_id id name').lean()
   if (!company) {
     console.warn(`[getEmployeesByCompany] Company not found with id: ${companyId}`)
-    return []
+    return pagination ? { data: [], total: 0, page: pagination.page, pageSize: pagination.pageSize } : []
   }
 
   console.log(`[getEmployeesByCompany] Found company: ${company.name} (${company.id}), ObjectId: ${company._id}`)
 
-  // OPTIMIZATION: Use indexed query directly instead of fetch-all + filter
-  // This leverages the companyId index for O(log n) lookup instead of O(n) scan
-  // Direct indexed query - much faster than fetch-all
-  // CRITICAL FIX: Employee.companyId is stored as STRING ID, not ObjectId
+  const filter = { companyId: company.id }
+  let total: number | undefined
+  if (pagination) {
+    total = await Employee.countDocuments(filter)
+  }
+
   console.log(`[getEmployeesByCompany] Querying employees with companyId: ${company.id} (string ID)`)
-  const query = Employee.find({ companyId: company.id })
+  let employeeQuery = Employee.find(filter)
     .populate('companyId', 'id name')
     .populate('locationId', 'id name address city state pincode')
-    .populate('addressId') // Populate the Address record
+    .populate('addressId')
+  if (pagination) {
+    const skip = (pagination.page - 1) * pagination.pageSize
+    employeeQuery = employeeQuery.skip(skip).limit(pagination.pageSize)
+  }
 
-  const employees = await query.lean()
+  const employees = await employeeQuery.lean()
   
   console.log(`[getEmployeesByCompany] Raw query returned ${employees?.length || 0} employees`)
   
@@ -6455,6 +6293,9 @@ export async function getEmployeesByCompany(companyId: string): Promise<any[]> {
   // Convert to plain objects
   const plainEmployees = decryptedEmployees.map((e: any) => toPlainObject(e)).filter((e: any) => e !== null)
   
+  if (pagination) {
+    return { data: plainEmployees, total: total!, page: pagination.page, pageSize: pagination.pageSize }
+  }
   return plainEmployees
 }
 
@@ -6790,42 +6631,8 @@ export async function createEmployee(employeeData: {
     throw new Error(`Employee ID already exists: ${employeeId}`)
   }
 
-  // Check if email already exists (email is encrypted, so we need to encrypt the search term)
-  const { encrypt } = require('../utils/encryption')
-  let encryptedEmail: string
-  try {
-    encryptedEmail = encrypt(employeeData.email.trim())
-  } catch (error) {
-    console.warn('Failed to encrypt email for duplicate check:', error)
-    encryptedEmail = ''
-  }
-  
-  // Try finding with encrypted email
-  let existingByEmail = null
-  if (encryptedEmail) {
-    existingByEmail = await Employee.findOne({ email: encryptedEmail })
-  }
-  
-  // If not found with encrypted email, also check by decrypting all emails (fallback)
-  if (!existingByEmail) {
-    const allEmployees = await Employee.find({}).select('email').lean()
-    for (const emp of allEmployees) {
-      if (emp.email && typeof emp.email === 'string') {
-        try {
-          const { decrypt } = require('../utils/encryption')
-          const decryptedEmail = decrypt(emp.email)
-          if (decryptedEmail.toLowerCase() === employeeData.email.trim().toLowerCase()) {
-            existingByEmail = emp
-            break
-          }
-        } catch (error) {
-          // Skip employees with decryption errors
-          continue
-        }
-      }
-    }
-  }
-  
+  // Check if email already exists using O(1) emailHash lookup
+  const existingByEmail = await findEmployeeByEmailHashFast(employeeData.email.trim())
   if (existingByEmail) {
     throw new Error(`Employee with email already exists: ${employeeData.email}`)
   }
@@ -7028,10 +6835,8 @@ export async function updateEmployee(
   }
 
   // Check if email is being updated and if it conflicts with another employee
-  // Since email is encrypted, we need to handle this carefully
   if (updateData.email) {
-    // Decrypt current employee email to compare
-    const { encrypt, decrypt } = require('../utils/encryption')
+    const { decrypt } = require('../utils/encryption')
     let currentEmail = employee.email
     try {
       if (typeof currentEmail === 'string' && currentEmail.includes(':')) {
@@ -7043,45 +6848,8 @@ export async function updateEmployee(
     
     // Only check if email is actually changing
     if (updateData.email.trim().toLowerCase() !== currentEmail.toLowerCase()) {
-      // Encrypt the new email to check for duplicates
-      let encryptedNewEmail: string
-      try {
-        encryptedNewEmail = encrypt(updateData.email.trim())
-      } catch (error) {
-        console.warn('Failed to encrypt email for duplicate check:', error)
-        encryptedNewEmail = ''
-      }
-      
-      // Try finding with encrypted email
-      let existingByEmail = null
-      if (encryptedNewEmail) {
-        existingByEmail = await Employee.findOne({ 
-          email: encryptedNewEmail,
-          id: { $ne: employee.id }
-        })
-      }
-      
-      // If not found, check by decrypting all emails (fallback)
-      if (!existingByEmail) {
-        const allEmployees = await Employee.find({ id: { $ne: employee.id } })
-          .select('email')
-          .lean()
-        for (const emp of allEmployees) {
-          if (emp.email && typeof emp.email === 'string') {
-            try {
-              const decryptedEmail = decrypt(emp.email)
-              if (decryptedEmail.toLowerCase() === updateData.email.trim().toLowerCase()) {
-                existingByEmail = emp
-                break
-              }
-            } catch (error) {
-              continue
-            }
-          }
-        }
-      }
-      
-      if (existingByEmail) {
+      const existingByEmail = await findEmployeeByEmailHashFast(updateData.email.trim())
+      if (existingByEmail && (existingByEmail.id || existingByEmail.employeeId) !== employee.id) {
         throw new Error(`Employee with email already exists: ${updateData.email}`)
       }
     }
@@ -7296,6 +7064,13 @@ export async function updateEmployee(
     }
   }
 
+  // Invalidate caches when employee data changes (email, name, etc.)
+  employeeByEmailCache.clear()
+  adminCache.clear()
+  companyByAdminCache.clear()
+  locationByAdminCache.clear()
+  branchByAdminCache.clear()
+
   return toPlainObject(updated)
 }
 
@@ -7308,6 +7083,14 @@ export async function deleteEmployee(employeeId: string): Promise<boolean> {
   }
 
   await Employee.deleteOne({ id: employeeId })
+
+  // Invalidate all email-keyed caches
+  employeeByEmailCache.clear()
+  adminCache.clear()
+  companyByAdminCache.clear()
+  locationByAdminCache.clear()
+  branchByAdminCache.clear()
+
   return true
 }
 
@@ -7571,17 +7354,24 @@ export async function getAllOrders(): Promise<any[]> {
   return orders.map((o: any) => toPlainObject(o))
 }
 
-export async function getOrdersByCompany(companyId: string): Promise<any[]> {
+export async function getOrdersByCompany(companyId: string, pagination?: { page: number; pageSize: number }): Promise<any> {
   await connectDB()
   
-  const company = await Company.findOne({ id: companyId })
-  if (!company) return []
+  const company = await Company.findOne({ id: companyId }).select('_id id name').lean()
+  if (!company) return pagination ? { data: [], total: 0, page: pagination.page, pageSize: pagination.pageSize } : []
 
-  // CRITICAL FIX: Order.companyId is stored as STRING ID, not ObjectId
-  // Don't use .populate() since employeeId, companyId, uniformId are string IDs, not ObjectId references
-  const orders = await Order.find({ companyId: company.id })
-    .sort({ orderDate: -1 })
-    .lean()
+  const query = { companyId: company.id }
+  let total: number | undefined
+  if (pagination) {
+    total = await Order.countDocuments(query)
+  }
+
+  let orderQuery = Order.find(query).sort({ orderDate: -1 })
+  if (pagination) {
+    const skip = (pagination.page - 1) * pagination.pageSize
+    orderQuery = orderQuery.skip(skip).limit(pagination.pageSize)
+  }
+  const orders = await orderQuery.lean()
 
   // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
   // Fetch vendor names for all unique vendorIds
@@ -7800,6 +7590,9 @@ export async function getOrdersByCompany(companyId: string): Promise<any[]> {
     console.log(`getOrdersByCompany(${companyId}): Found ${transformedOrders.length} orders`)
   }
   
+  if (pagination) {
+    return { data: transformedOrders, total: total!, page: pagination.page, pageSize: pagination.pageSize }
+  }
   return transformedOrders
 }
 
@@ -7812,7 +7605,7 @@ export async function getOrdersByLocation(locationId: string): Promise<any[]> {
   await connectDB()
   
   const Location = require('../models/Location').default
-  const location = await Location.findOne({ id: locationId })
+  const location = await Location.findOne({ id: locationId }).select('id').lean()
   
   if (!location) {
     return []
@@ -7896,89 +7689,93 @@ export async function getOrdersByLocation(locationId: string): Promise<any[]> {
     }
   }
 
-  // Manually populate employee, company, and uniform info using string IDs
-  const ordersWithDetails = await Promise.all(orders.map(async (o: any) => {
+  // Batch-fetch employee, company, and uniform data to avoid N+1 queries
+  const allEmployeeIds = [...new Set(orders
+    .map((o: any) => o.employeeId)
+    .filter((id: any) => id && typeof id === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(id))
+  )]
+  const allCompanyIds = [...new Set(orders
+    .map((o: any) => o.companyId)
+    .filter((id: any) => id && typeof id === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(id))
+  )]
+  const allUniformIds = [...new Set(orders
+    .flatMap((o: any) => (o.items || []).map((item: any) => item.uniformId))
+    .filter((id: any) => id && typeof id === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(id))
+  )]
+
+  const Uniform = require('../models/Uniform').default
+  const [batchEmployees, batchCompanies, batchUniforms] = await Promise.all([
+    allEmployeeIds.length > 0
+      ? Employee.find({ $or: [{ id: { $in: allEmployeeIds } }, { employeeId: { $in: allEmployeeIds } }] })
+          .select('id employeeId firstName lastName email locationId').lean()
+      : [],
+    allCompanyIds.length > 0
+      ? Company.find({ id: { $in: allCompanyIds } }).select('id name').lean()
+      : [],
+    allUniformIds.length > 0
+      ? Uniform.find({ id: { $in: allUniformIds } }).select('id name').lean()
+      : []
+  ])
+
+  const employeeMap = new Map<string, any>()
+  for (const emp of batchEmployees) {
+    const empObj = toPlainObject(emp)
+    if (empObj.firstName && typeof empObj.firstName === 'string' && empObj.firstName.includes(':')) {
+      try { empObj.firstName = decrypt(empObj.firstName) } catch {}
+    }
+    if (empObj.lastName && typeof empObj.lastName === 'string' && empObj.lastName.includes(':')) {
+      try { empObj.lastName = decrypt(empObj.lastName) } catch {}
+    }
+    employeeMap.set(empObj.id, empObj)
+    if (empObj.employeeId) employeeMap.set(empObj.employeeId, empObj)
+  }
+  const companyMap = new Map(batchCompanies.map((c: any) => [c.id, toPlainObject(c)]))
+  const uniformMap = new Map(batchUniforms.map((u: any) => [u.id, toPlainObject(u)]))
+
+  const ordersWithDetails = orders.map((o: any) => {
     const plain = toPlainObject(o)
-    
-    // Manually fetch employee info using string ID
+
     if (plain.employeeId && typeof plain.employeeId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.employeeId)) {
-      const employee = await Employee.findOne({ 
-        $or: [
-          { id: plain.employeeId },
-          { employeeId: plain.employeeId }
-        ]
-      }).select('id employeeId firstName lastName email locationId').lean()
-      
-      if (employee) {
-        const empObj = toPlainObject(employee)
-        // Decrypt firstName and lastName
-        if (empObj.firstName && typeof empObj.firstName === 'string' && empObj.firstName.includes(':')) {
-          try { empObj.firstName = decrypt(empObj.firstName) } catch {}
-        }
-        if (empObj.lastName && typeof empObj.lastName === 'string' && empObj.lastName.includes(':')) {
-          try { empObj.lastName = decrypt(empObj.lastName) } catch {}
-        }
-        // Construct decrypted employee name
+      const empObj = employeeMap.get(plain.employeeId)
+      if (empObj) {
         const decryptedFirstName = empObj.firstName || ''
         const decryptedLastName = empObj.lastName || ''
         plain.employeeName = `${decryptedFirstName} ${decryptedLastName}`.trim() || plain.employeeName || 'Unknown'
         plain.employeeId = empObj
       }
     } else {
-      // If employeeName is stored directly and encrypted, decrypt it
       if (plain.employeeName && typeof plain.employeeName === 'string' && plain.employeeName.includes(':')) {
         try { plain.employeeName = decrypt(plain.employeeName) } catch {}
       }
     }
-    
-    // Manually fetch company info using string ID
+
     if (plain.companyId && typeof plain.companyId === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(plain.companyId)) {
-      const company = await Company.findOne({ id: plain.companyId })
-        .select('id name')
-        .lean()
-      
-      if (company) {
-        plain.companyId = toPlainObject(company)
-      }
+      const comp = companyMap.get(plain.companyId)
+      if (comp) plain.companyId = comp
     }
-    
-    // Manually fetch uniform info for items
+
     if (plain.items && Array.isArray(plain.items)) {
-      const uniformIds = plain.items
-        .map((item: any) => item.uniformId)
-        .filter((id: any) => id && typeof id === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(id))
-      
-      if (uniformIds.length > 0) {
-        const Uniform = require('../models/Uniform').default
-        const uniforms = await Uniform.find({ id: { $in: uniformIds } })
-          .select('id name')
-          .lean()
-        const uniformMap = new Map(uniforms.map((u: any) => [u.id, toPlainObject(u)]))
-        
-        plain.items = plain.items.map((item: any) => {
-          if (item.uniformId && uniformMap.has(item.uniformId)) {
-            item.uniformId = uniformMap.get(item.uniformId)
-          }
-          return item
-        })
-      }
+      plain.items = plain.items.map((item: any) => {
+        if (item.uniformId && uniformMap.has(item.uniformId)) {
+          item.uniformId = uniformMap.get(item.uniformId)
+        }
+        return item
+      })
     }
-    
-    // Add vendorName from vendorMap if missing
+
     if (!plain.vendorName && plain.vendorId && vendorMap.has(plain.vendorId)) {
       plain.vendorName = vendorMap.get(plain.vendorId)
     }
-    
-    // Add PO and PR numbers
+
     const orderId = plain.id
     const poDetails = orderId ? (poMap.get(orderId) || []) : []
     plain.poNumbers = poDetails.map((po: any) => po.poNumber).filter(Boolean)
     plain.poDetails = poDetails
     plain.prNumber = plain.pr_number || null
     plain.prDate = plain.pr_date || null
-    
+
     return plain
-  }))
+  })
 
   return ordersWithDetails
 }
@@ -7990,7 +7787,7 @@ export async function getOrdersByVendor(vendorId: string): Promise<any[]> {
   console.log(`[getOrdersByVendor] 🚀 FETCHING ORDERS FOR VENDOR: ${vendorId}`)
   
   // CRITICAL FIX: Enhanced vendor lookup using string ID only
-  let vendor = await Vendor.findOne({ id: vendorId })
+  let vendor = await Vendor.findOne({ id: vendorId }).select('_id id name').lean()
   
   if (!vendor) {
     console.error(`[getOrdersByVendor] ❌ Vendor not found: ${vendorId}`)
@@ -11281,6 +11078,8 @@ export async function createOrder(orderData: {
         quantity: item.quantity,
         price: itemPrice,
         ...(subcategoryId && { subcategoryId }),
+        ...((item as any).fit_type && { fit_type: (item as any).fit_type }),
+        ...((item as any).mtm_price_premium && { mtm_price_premium: (item as any).mtm_price_premium }),
     })
   }
 
@@ -11582,11 +11381,13 @@ export async function createOrder(orderData: {
         }
       }
       if (populatedOrder.items && Array.isArray(populatedOrder.items)) {
-        for (const item of populatedOrder.items) {
-          if (item.uniformId) {
-            const uniform = await Uniform.findOne({ id: item.uniformId }).select('id name').lean()
-            if (uniform) {
-              (item as any).uniformId = uniform
+        const uniformIds = populatedOrder.items.map((i: any) => i.uniformId).filter(Boolean)
+        if (uniformIds.length > 0) {
+          const uniforms = await Uniform.find({ id: { $in: uniformIds } }).select('id name').lean()
+          const uniformMap = new Map(uniforms.map((u: any) => [u.id, u]))
+          for (const item of populatedOrder.items) {
+            if (item.uniformId && uniformMap.has(item.uniformId)) {
+              (item as any).uniformId = uniformMap.get(item.uniformId)
             }
           }
         }
@@ -11614,63 +11415,62 @@ export async function createOrder(orderData: {
   if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true') {
     console.log(`[createOrder] 📧 Sending new order notifications...`)
     
-    for (const order of createdOrders) {
-      try {
-        // Get employee name (decrypted)
-        let orderEmployeeName = employee.firstName || 'Employee'
-        if (orderEmployeeName.includes(':')) {
-          try { orderEmployeeName = decrypt(orderEmployeeName) } catch (e) { /* ignore */ }
-        }
-        
-        // Get location name if employee has a location
-        let locationName = 'N/A'
-        if (employee.locationId) {
-          const location = await Location.findOne({ id: employee.locationId }).select('name').lean()
-          locationName = location?.name || employee.locationId
-        }
-        
-        // 1. Notify Location Admin (if exists) for approval
-        if (employee.locationId) {
-          const locAdmin = await resolveLocationAdminRecipient(employee.locationId)
+    try {
+      let orderEmployeeName = employee.firstName || 'Employee'
+      if (orderEmployeeName.includes(':')) {
+        try { orderEmployeeName = decrypt(orderEmployeeName) } catch (e) { /* ignore */ }
+      }
+
+      // Shared lookups - same for all split orders (same employee, same company)
+      const [locationDoc, locAdmin, companyAdmins] = await Promise.all([
+        employee.locationId ? Location.findOne({ id: employee.locationId }).select('name').lean() : null,
+        employee.locationId ? resolveLocationAdminRecipient(employee.locationId) : null,
+        resolveCompanyAdminRecipients(companyIdString)
+      ])
+      const locationName = locationDoc?.name || (employee.locationId || 'N/A')
+
+      // Batch-resolve unique vendors
+      const uniqueVendorIds = [...new Set(createdOrders.map((o: any) => o.vendorId).filter(Boolean))]
+      const vendorRecipients = await Promise.all(
+        uniqueVendorIds.map(vid => resolveVendorRecipient(vid))
+      )
+      const vendorMap = new Map<string, any>()
+      uniqueVendorIds.forEach((vid, i) => { if (vendorRecipients[i]) vendorMap.set(vid, vendorRecipients[i]) })
+
+      for (const order of createdOrders) {
+        try {
           if (locAdmin) {
             await sendLocationAdminApprovalNotification(
-              locAdmin.email,
-              locAdmin.name,
-              order.id,
+              locAdmin.email, locAdmin.name, order.id,
               { orderEmployeeName, companyName: order.companyName, locationName }
             )
             console.log(`[createOrder] 📧 Location Admin notification sent to ${locAdmin.email}`)
           }
-        }
-        
-        // 2. Notify Company Admins for approval
-        const companyAdmins = await resolveCompanyAdminRecipients(companyIdString)
-        for (const admin of companyAdmins) {
-          await sendCompanyAdminApprovalNotification(
-            admin.email,
-            admin.name,
-            order.id,
-            { orderEmployeeName, companyName: order.companyName, locationName }
-          )
-          console.log(`[createOrder] 📧 Company Admin notification sent to ${admin.email}`)
-        }
-        
-        // 3. Notify Vendor of new order (if vendor is assigned)
-        if (order.vendorId) {
-          const vendor = await resolveVendorRecipient(order.vendorId)
-          if (vendor) {
-            await sendVendorNewOrderNotification(
-              vendor.email,
-              vendor.name,
-              order.id,
-              { companyName: order.companyName, orderEmployeeName }
+
+          for (const admin of companyAdmins) {
+            await sendCompanyAdminApprovalNotification(
+              admin.email, admin.name, order.id,
+              { orderEmployeeName, companyName: order.companyName, locationName }
             )
-            console.log(`[createOrder] 📧 Vendor notification sent to ${vendor.email}`)
+            console.log(`[createOrder] 📧 Company Admin notification sent to ${admin.email}`)
           }
+
+          if (order.vendorId) {
+            const vendor = vendorMap.get(order.vendorId)
+            if (vendor) {
+              await sendVendorNewOrderNotification(
+                vendor.email, vendor.name, order.id,
+                { companyName: order.companyName, orderEmployeeName }
+              )
+              console.log(`[createOrder] 📧 Vendor notification sent to ${vendor.email}`)
+            }
+          }
+        } catch (notifError: any) {
+          console.warn(`[createOrder] ⚠️ Notification error (non-fatal): ${notifError.message}`)
         }
-      } catch (notifError: any) {
-        console.warn(`[createOrder] ⚠️ Notification error (non-fatal): ${notifError.message}`)
       }
+    } catch (notifError: any) {
+      console.warn(`[createOrder] ⚠️ Notification setup error (non-fatal): ${notifError.message}`)
     }
   }
 
@@ -11817,38 +11617,8 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
     throw new Error(`Order ${orderId} is not in 'Awaiting approval' status (current: ${order.status}, unified_pr_status: ${order.unified_pr_status || 'N/A'})`)
   }
   
-  // Find employee by email (handle encryption)
-  // Use the same pattern as canApproveOrders for reliable lookup
-  const { encrypt, decrypt } = require('../utils/encryption')
-  const trimmedEmail = adminEmail.trim()
-  let encryptedEmail: string
-  
-  try {
-    encryptedEmail = encrypt(trimmedEmail)
-  } catch (error) {
-    encryptedEmail = ''
-  }
-  
-  // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
-  
-  // If not found, try decryption matching
-  if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
-    for (const emp of allEmployees) {
-      if (emp.email && typeof emp.email === 'string') {
-        try {
-          const decryptedEmail = decrypt(emp.email)
-          if (decryptedEmail.toLowerCase() === trimmedEmail.toLowerCase()) {
-            employee = emp
-            break
-          }
-        } catch (error) {
-          continue
-        }
-      }
-    }
-  }
+  // Find employee by email using O(1) emailHash lookup
+  let employee = await findEmployeeByEmailHashFast(adminEmail)
   
   if (!employee) {
     throw new Error(`Employee not found: ${adminEmail}`)
@@ -12173,11 +11943,13 @@ export async function approveOrder(orderId: string, adminEmail: string, prNumber
       }
     }
     if (populatedOrder.items && Array.isArray(populatedOrder.items)) {
-      for (const item of populatedOrder.items) {
-        if (item.uniformId) {
-          const uniform = await Uniform.findOne({ id: item.uniformId }).select('id name').lean()
-          if (uniform) {
-            (item as any).uniformId = uniform
+      const uniformIds = populatedOrder.items.map((i: any) => i.uniformId).filter(Boolean)
+      if (uniformIds.length > 0) {
+        const uniforms = await Uniform.find({ id: { $in: uniformIds } }).select('id name').lean()
+        const uniformMap = new Map(uniforms.map((u: any) => [u.id, u]))
+        for (const item of populatedOrder.items) {
+          if (item.uniformId && uniformMap.has(item.uniformId)) {
+            (item as any).uniformId = uniformMap.get(item.uniformId)
           }
         }
       }
@@ -12262,38 +12034,8 @@ async function approveOrderByParentId(parentOrderId: string, adminEmail: string,
     }
   }
   
-  // Find employee by email (handle encryption)
-  // Use the same pattern as canApproveOrders for reliable lookup
-  const { encrypt, decrypt } = require('../utils/encryption')
-  const trimmedEmail = adminEmail.trim()
-  let encryptedEmail: string
-  
-  try {
-    encryptedEmail = encrypt(trimmedEmail)
-  } catch (error) {
-    encryptedEmail = ''
-  }
-  
-  // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
-  
-  // If not found, try decryption matching
-  if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
-    for (const emp of allEmployees) {
-      if (emp.email && typeof emp.email === 'string') {
-        try {
-          const decryptedEmail = decrypt(emp.email)
-          if (decryptedEmail.toLowerCase() === trimmedEmail.toLowerCase()) {
-            employee = emp
-            break
-          }
-        } catch (error) {
-          continue
-        }
-      }
-    }
-  }
+  // Find employee by email using O(1) emailHash lookup
+  let employee = await findEmployeeByEmailHashFast(adminEmail)
   
   if (!employee) {
     throw new Error(`Employee not found: ${adminEmail}`)
@@ -12814,38 +12556,8 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
   }
   
   // Verify admin can approve orders (check once for all orders)
-  // Find employee by email (handle encryption)
-  // Use the same pattern as canApproveOrders for reliable lookup
-  const { encrypt, decrypt } = require('../utils/encryption')
-  const trimmedEmail = adminEmail.trim()
-  let encryptedEmail: string
-  
-  try {
-    encryptedEmail = encrypt(trimmedEmail)
-  } catch (error) {
-    encryptedEmail = ''
-  }
-  
-  // Try finding with encrypted email first
-  let employee = await Employee.findOne({ email: encryptedEmail }).lean()
-  
-  // If not found, try decryption matching
-  if (!employee && encryptedEmail) {
-    const allEmployees = await Employee.find({}).lean()
-    for (const emp of allEmployees) {
-      if (emp.email && typeof emp.email === 'string') {
-        try {
-          const decryptedEmail = decrypt(emp.email)
-          if (decryptedEmail.toLowerCase() === trimmedEmail.toLowerCase()) {
-            employee = emp
-            break
-          }
-        } catch (error) {
-          continue
-        }
-      }
-    }
-  }
+  // Find employee by email using O(1) emailHash lookup
+  let employee = await findEmployeeByEmailHashFast(adminEmail)
   
   if (!employee) {
     throw new Error(`Employee not found: ${adminEmail}`)
@@ -12854,15 +12566,30 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
   // Track processed parentOrderIds to avoid duplicate approvals
   const processedParentIds = new Set<string>()
   
+  // Batch-fetch all orders and parent-order children upfront to avoid N+1
+  const allOrdersById = await Order.find({ id: { $in: orderIds } })
+  const orderByIdMap = new Map(allOrdersById.map((o: any) => [o.id, o]))
+
+  const missingIds = orderIds.filter(id => !orderByIdMap.has(id))
+  const childOrdersByParent = new Map<string, any[]>()
+  if (missingIds.length > 0) {
+    const childOrders = await Order.find({ parentOrderId: { $in: missingIds } })
+    for (const child of childOrders) {
+      const pid = child.parentOrderId
+      if (!childOrdersByParent.has(pid)) childOrdersByParent.set(pid, [])
+      childOrdersByParent.get(pid)!.push(child)
+    }
+  }
+
   // Process each order
   for (const orderId of orderIds) {
     try {
-      // First, try to find order by id field
-      let order = await Order.findOne({ id: orderId })
+      // Use pre-fetched order
+      let order = orderByIdMap.get(orderId) || null
       
       // If not found by id, check if orderId is a parentOrderId (from grouped approval view)
       if (!order) {
-        const ordersWithParent = await Order.find({ parentOrderId: orderId })
+        const ordersWithParent = childOrdersByParent.get(orderId) || []
         if (ordersWithParent.length > 0) {
           // This is a parent order ID, approve all child orders
           if (processedParentIds.has(orderId)) {
@@ -12872,8 +12599,8 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
           }
           processedParentIds.add(orderId)
           
-          // Approve all orders with this parentOrderId
-          const childOrders = await Order.find({ parentOrderId: orderId })
+          // Use pre-fetched child orders for this parentOrderId
+          const childOrders = childOrdersByParent.get(orderId) || []
           if (childOrders.length === 0) {
             results.failed.push({ orderId, error: 'No child orders found' })
             continue
@@ -12976,46 +12703,48 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
               }
             }
             
-            // Site admin can approve - update all child orders with PR data
-            for (const childOrder of childOrders) {
-              // Set PR number and date
-              childOrder.pr_number = prData.prNumber.trim()
-              childOrder.pr_date = prData.prDate
-              childOrder.unified_pr_status = 'SITE_ADMIN_APPROVED'
-              // CRITICAL FIX: Use string ID, not ObjectId
-              childOrder.site_admin_approved_by = employee.id || employee.employeeId
-              childOrder.site_admin_approved_at = new Date()
-              
-              if (company.require_company_admin_po_approval === true) {
-                childOrder.unified_pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
-              } else {
-                childOrder.status = 'Awaiting fulfilment'
-                childOrder.unified_status = 'IN_FULFILMENT'
+            // Site admin can approve - update all child orders atomically
+            await withTransaction(async (session) => {
+              const sessionOpt = session ? { session } : {}
+              for (const childOrder of childOrders) {
+                childOrder.pr_number = prData.prNumber.trim()
+                childOrder.pr_date = prData.prDate
+                childOrder.unified_pr_status = 'SITE_ADMIN_APPROVED'
+                childOrder.site_admin_approved_by = employee.id || employee.employeeId
+                childOrder.site_admin_approved_at = new Date()
+                
+                if (company.require_company_admin_po_approval === true) {
+                  childOrder.unified_pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
+                } else {
+                  childOrder.status = 'Awaiting fulfilment'
+                  childOrder.unified_status = 'IN_FULFILMENT'
+                }
+                
+                await childOrder.save(sessionOpt)
               }
-              
-              await childOrder.save()
-            }
+            })
             
             results.success.push(orderId)
             continue
           } else if (isCompanyAdminApproval) {
-            // Company Admin approval flow
             const canApprove = await canApproveOrders(adminEmail, company.id)
             if (!canApprove) {
               results.failed.push({ orderId, error: 'User does not have permission to approve orders as Company Admin' })
               continue
             }
             
-            // Update all child orders with company admin approval
-            for (const childOrder of childOrders) {
-              childOrder.unified_pr_status = 'COMPANY_ADMIN_APPROVED'
-              childOrder.unified_status = 'IN_FULFILMENT'
-              // CRITICAL FIX: Use string ID, not ObjectId
-              childOrder.company_admin_approved_by = employee.id || employee.employeeId
-              childOrder.company_admin_approved_at = new Date()
-              childOrder.status = 'Awaiting fulfilment'
-              await childOrder.save()
-            }
+            // Update all child orders atomically
+            await withTransaction(async (session) => {
+              const sessionOpt = session ? { session } : {}
+              for (const childOrder of childOrders) {
+                childOrder.unified_pr_status = 'COMPANY_ADMIN_APPROVED'
+                childOrder.unified_status = 'IN_FULFILMENT'
+                childOrder.company_admin_approved_by = employee.id || employee.employeeId
+                childOrder.company_admin_approved_at = new Date()
+                childOrder.status = 'Awaiting fulfilment'
+                await childOrder.save(sessionOpt)
+              }
+            })
             
             results.success.push(orderId)
             continue
@@ -13027,13 +12756,15 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
             continue
           }
           
-          // Approve all child orders
-          for (const childOrder of childOrders) {
-            if (childOrder.status === 'Awaiting approval' || childOrder.status === 'Awaiting fulfilment') {
-              childOrder.status = 'Awaiting fulfilment'
-              await childOrder.save()
+          await withTransaction(async (session) => {
+            const sessionOpt = session ? { session } : {}
+            for (const childOrder of childOrders) {
+              if (childOrder.status === 'Awaiting approval' || childOrder.status === 'Awaiting fulfilment') {
+                childOrder.status = 'Awaiting fulfilment'
+                await childOrder.save(sessionOpt)
+              }
             }
-          }
+          })
           
           results.success.push(orderId)
           continue
@@ -13152,42 +12883,44 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
             }
           }
           
-          // Site admin can approve - update all child orders
-          for (const childOrder of childOrders) {
-            childOrder.unified_pr_status = 'SITE_ADMIN_APPROVED'
-            // CRITICAL FIX: Use string ID, not ObjectId
-            childOrder.site_admin_approved_by = employee.id || employee.employeeId
-            childOrder.site_admin_approved_at = new Date()
-            
-            if (company.require_company_admin_po_approval === true) {
-              childOrder.unified_pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
-            } else {
-              childOrder.status = 'Awaiting fulfilment'
-              childOrder.unified_status = 'IN_FULFILMENT'
+          // Site admin can approve - update all child orders atomically
+          await withTransaction(async (session) => {
+            const sessionOpt = session ? { session } : {}
+            for (const childOrder of childOrders) {
+              childOrder.unified_pr_status = 'SITE_ADMIN_APPROVED'
+              childOrder.site_admin_approved_by = employee.id || employee.employeeId
+              childOrder.site_admin_approved_at = new Date()
+              
+              if (company.require_company_admin_po_approval === true) {
+                childOrder.unified_pr_status = 'PENDING_COMPANY_ADMIN_APPROVAL'
+              } else {
+                childOrder.status = 'Awaiting fulfilment'
+                childOrder.unified_status = 'IN_FULFILMENT'
+              }
+              
+              await childOrder.save(sessionOpt)
             }
-            
-            await childOrder.save()
-          }
+          })
           
           results.success.push(orderId)
         } else if (isCompanyAdminApproval) {
-          // Company Admin approval flow
           const canApprove = await canApproveOrders(adminEmail, company.id)
           if (!canApprove) {
             results.failed.push({ orderId, error: 'User does not have permission to approve orders as Company Admin' })
             continue
           }
           
-          // Update all child orders with company admin approval
-          for (const childOrder of childOrders) {
-            childOrder.unified_pr_status = 'COMPANY_ADMIN_APPROVED'
-            childOrder.unified_status = 'IN_FULFILMENT'
-            // CRITICAL FIX: Use string ID, not ObjectId
-            childOrder.company_admin_approved_by = employee.id || employee.employeeId
-            childOrder.company_admin_approved_at = new Date()
-            childOrder.status = 'Awaiting fulfilment'
-            await childOrder.save()
-          }
+          await withTransaction(async (session) => {
+            const sessionOpt = session ? { session } : {}
+            for (const childOrder of childOrders) {
+              childOrder.unified_pr_status = 'COMPANY_ADMIN_APPROVED'
+              childOrder.unified_status = 'IN_FULFILMENT'
+              childOrder.company_admin_approved_by = employee.id || employee.employeeId
+              childOrder.company_admin_approved_at = new Date()
+              childOrder.status = 'Awaiting fulfilment'
+              await childOrder.save(sessionOpt)
+            }
+          })
           
           results.success.push(orderId)
         } else {
@@ -13198,13 +12931,15 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
           continue
         }
         
-        // Approve all child orders
-        for (const childOrder of childOrders) {
-          if (childOrder.status === 'Awaiting approval' || childOrder.status === 'Awaiting fulfilment') {
-            childOrder.status = 'Awaiting fulfilment'
-            await childOrder.save()
+        await withTransaction(async (session) => {
+          const sessionOpt = session ? { session } : {}
+          for (const childOrder of childOrders) {
+            if (childOrder.status === 'Awaiting approval' || childOrder.status === 'Awaiting fulfilment') {
+              childOrder.status = 'Awaiting fulfilment'
+              await childOrder.save(sessionOpt)
+            }
           }
-        }
+        })
         
         results.success.push(orderId)
         }
@@ -13255,34 +12990,8 @@ export async function bulkApproveOrders(orderIds: string[], adminEmail: string, 
         }
         
         // Site Admin approval - check if user is location admin
-        const { encrypt, decrypt } = require('../utils/encryption')
-        const trimmedEmail = adminEmail.trim()
-        let encryptedEmail: string
-        
-        try {
-          encryptedEmail = encrypt(trimmedEmail)
-        } catch (error) {
-          encryptedEmail = ''
-        }
-        
-        // Find approving employee
-        let approvingEmployee = await Employee.findOne({ email: encryptedEmail }).lean()
-        if (!approvingEmployee && encryptedEmail) {
-          const allEmployees = await Employee.find({}).lean()
-          for (const emp of allEmployees) {
-            if (emp.email && typeof emp.email === 'string') {
-              try {
-                const decryptedEmail = decrypt(emp.email)
-                if (decryptedEmail.toLowerCase() === trimmedEmail.toLowerCase()) {
-                  approvingEmployee = emp
-                  break
-                }
-              } catch (error) {
-                continue
-              }
-            }
-          }
-        }
+        // Find approving employee using O(1) emailHash lookup
+        let approvingEmployee = await findEmployeeByEmailHashFast(adminEmail)
         
         if (!approvingEmployee) {
           results.failed.push({ orderId, error: 'Employee not found' })
@@ -14285,13 +13994,17 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
       if (uniformIds.length > 0) {
         const Uniform = require('../models/Uniform').default
         const uniforms = await Uniform.find({ id: { $in: uniformIds } })
-          .select('id name')
+          .select('id name price')
           .lean()
         const uniformMap = new Map(uniforms.map((u: any) => [u.id, toPlainObject(u)]))
         
         plain.items = plain.items.map((item: any) => {
-          if (item.uniformId && uniformMap.has(item.uniformId)) {
-            item.uniformId = uniformMap.get(item.uniformId)
+          const uniformObj = item.uniformId && uniformMap.has(item.uniformId) ? uniformMap.get(item.uniformId) : null
+          if (uniformObj) {
+            if (item.fit_type === 'MTM' && !item.mtm_price_premium && uniformObj.price && item.price > uniformObj.price) {
+              item.mtm_price_premium = Math.round((item.price - uniformObj.price) * 100) / 100
+            }
+            item.uniformId = uniformObj
           }
           return item
         })
@@ -14400,13 +14113,17 @@ export async function getPendingApprovals(companyId: string): Promise<any[]> {
         if (uniformIds.length > 0) {
           const Uniform = require('../models/Uniform').default
           const uniforms = await Uniform.find({ id: { $in: uniformIds } })
-            .select('id name')
+            .select('id name price')
             .lean()
           const uniformMap = new Map(uniforms.map((u: any) => [u.id, toPlainObject(u)]))
           
           plain.items = plain.items.map((item: any) => {
-            if (item.uniformId && uniformMap.has(item.uniformId)) {
-              item.uniformId = uniformMap.get(item.uniformId)
+            const uniformObj = item.uniformId && uniformMap.has(item.uniformId) ? uniformMap.get(item.uniformId) : null
+            if (uniformObj) {
+              if (item.fit_type === 'MTM' && !item.mtm_price_premium && uniformObj.price && item.price > uniformObj.price) {
+                item.mtm_price_premium = Math.round((item.price - uniformObj.price) * 100) / 100
+              }
+              item.uniformId = uniformObj
             }
             return item
           })
@@ -14655,13 +14372,18 @@ export async function getPendingApprovalsForSiteAdmin(
       if (uniformIds.length > 0) {
         const Uniform = require('../models/Uniform').default
         const uniforms = await Uniform.find({ id: { $in: uniformIds } })
-          .select('id name')
+          .select('id name price')
           .lean()
         const uniformMap = new Map(uniforms.map((u: any) => [u.id, toPlainObject(u)]))
         
         plain.items = plain.items.map((item: any) => {
-          if (item.uniformId && uniformMap.has(item.uniformId)) {
-            item.uniformId = uniformMap.get(item.uniformId)
+          const uniformObj = item.uniformId && uniformMap.has(item.uniformId) ? uniformMap.get(item.uniformId) : null
+          if (uniformObj) {
+            // Compute mtm_price_premium for MTM items that don't have it stored
+            if (item.fit_type === 'MTM' && !item.mtm_price_premium && uniformObj.price && item.price > uniformObj.price) {
+              item.mtm_price_premium = Math.round((item.price - uniformObj.price) * 100) / 100
+            }
+            item.uniformId = uniformObj
           }
           return item
         })
@@ -14757,13 +14479,17 @@ export async function getPendingApprovalsForSiteAdmin(
         if (uniformIds.length > 0) {
           const Uniform = require('../models/Uniform').default
           const uniforms = await Uniform.find({ id: { $in: uniformIds } })
-            .select('id name')
+            .select('id name price')
             .lean()
           const uniformMap = new Map(uniforms.map((u: any) => [u.id, toPlainObject(u)]))
           
           plain.items = plain.items.map((item: any) => {
-            if (item.uniformId && uniformMap.has(item.uniformId)) {
-              item.uniformId = uniformMap.get(item.uniformId)
+            const uniformObj = item.uniformId && uniformMap.has(item.uniformId) ? uniformMap.get(item.uniformId) : null
+            if (uniformObj) {
+              if (item.fit_type === 'MTM' && !item.mtm_price_premium && uniformObj.price && item.price > uniformObj.price) {
+                item.mtm_price_premium = Math.round((item.price - uniformObj.price) * 100) / 100
+              }
+              item.uniformId = uniformObj
             }
             return item
           })
@@ -15862,21 +15588,43 @@ export async function createPurchaseOrderFromPRs(
     throw new Error(`Employee not found: ${createdByUserId}`)
   }
   
-  // Fetch all orders (PRs) - handle both parent order IDs and child order IDs
+  // Batch-fetch all orders and child orders upfront to avoid N+1
   const allOrderIds = new Set<string>()
   const ordersToProcess: any[] = []
-  
+
+  const [directOrders, childOrdersForParents] = await Promise.all([
+    Order.find({ id: { $in: orderIds } }).lean(),
+    Order.find({ parentOrderId: { $in: orderIds } }).lean()
+  ])
+  const directOrderMap = new Map(directOrders.map((o: any) => [o.id, o]))
+  const childByParent = new Map<string, any[]>()
+  for (const child of childOrdersForParents) {
+    const pid = child.parentOrderId
+    if (!childByParent.has(pid)) childByParent.set(pid, [])
+    childByParent.get(pid)!.push(child)
+  }
+
+  // Collect all parentOrderIds from direct orders that are child orders, to batch-fetch siblings
+  const parentIdsForSiblings = [...new Set(
+    directOrders.filter((o: any) => o.parentOrderId).map((o: any) => o.parentOrderId)
+  )]
+  const siblingOrders = parentIdsForSiblings.length > 0
+    ? await Order.find({ parentOrderId: { $in: parentIdsForSiblings } }).lean()
+    : []
+  const siblingsByParent = new Map<string, any[]>()
+  for (const sib of siblingOrders) {
+    const pid = sib.parentOrderId
+    if (!siblingsByParent.has(pid)) siblingsByParent.set(pid, [])
+    siblingsByParent.get(pid)!.push(sib)
+  }
+
   for (const orderId of orderIds) {
-    // CRITICAL FIX: Fetch order and immediately convert to plain object to ensure vendorId is accessible
-    // Use lean() to get plain JavaScript object with all fields guaranteed to be present
-    let order = await Order.findOne({ id: orderId }).lean()
-    
-    // If not found, check if it's a parent order ID
+    const order = directOrderMap.get(orderId)
+
     if (!order) {
-      const childOrders = await Order.find({ parentOrderId: orderId }).lean()
-      if (childOrders.length > 0) {
-        // It's a parent order - add all child orders
-        for (const childOrder of childOrders) {
+      const children = childByParent.get(orderId) || []
+      if (children.length > 0) {
+        for (const childOrder of children) {
           if (!allOrderIds.has(childOrder.id)) {
             allOrderIds.add(childOrder.id)
             ordersToProcess.push(childOrder)
@@ -15887,19 +15635,16 @@ export async function createPurchaseOrderFromPRs(
         throw new Error(`Order not found: ${orderId}`)
       }
     }
-    
-    // Check if this order has a parentOrderId (it's a child order)
+
     if (order.parentOrderId) {
-      // Fetch all sibling orders
-      const siblingOrders = await Order.find({ parentOrderId: order.parentOrderId }).lean()
-      for (const siblingOrder of siblingOrders) {
+      const siblings = siblingsByParent.get(order.parentOrderId) || []
+      for (const siblingOrder of siblings) {
         if (!allOrderIds.has(siblingOrder.id)) {
           allOrderIds.add(siblingOrder.id)
           ordersToProcess.push(siblingOrder)
         }
       }
     } else {
-      // Standalone order
       if (!allOrderIds.has(order.id)) {
         allOrderIds.add(order.id)
         ordersToProcess.push(order)
@@ -16165,11 +15910,11 @@ export async function createPurchaseOrderFromPRs(
   
   console.log(`[createPurchaseOrderFromPRs] Orders grouped into ${ordersByVendor.size} vendor(s)`)
   
-  // Create one PO per vendor
+  // Create one PO per vendor — wrapped in a transaction so PO + POOrder + Order
+  // status updates are atomic. If any step fails, all writes roll back.
   const createdPOs: any[] = []
   
   for (const [vendorNumericId, vendorOrders] of ordersByVendor.entries()) {
-    // Get vendor document from map
     const vendor = vendorIdMap.get(vendorNumericId)
     
     if (!vendor) {
@@ -16179,10 +15924,8 @@ export async function createPurchaseOrderFromPRs(
     console.log(`[createPurchaseOrderFromPRs] Creating PO for vendor: ${vendor.name} (${vendor.id})`)
     console.log(`[createPurchaseOrderFromPRs]   Orders: ${vendorOrders.length}`)
     
-    // Generate PO ID
     const poId = `PO-${company.id}-${Date.now()}-${Math.random().toString(36).substr(2, 6).toUpperCase()}`
     
-    // DUAL-WRITE: PO status (behind feature flag)
     let unifiedPOFields: Record<string, any> = {}
     if (process.env.DUAL_WRITE_ENABLED === "true") {
       try {
@@ -16194,93 +15937,90 @@ export async function createPurchaseOrderFromPRs(
       }
     }
     
-    // Create PO - use vendor numeric ID (6-digit string) instead of ObjectId
-    // CRITICAL FIX: PurchaseOrder.companyId and PurchaseOrder.created_by_user_id are STRING IDs (6-digit numeric), not ObjectIds
-    const purchaseOrder = await PurchaseOrder.create({
-      id: poId,
-      companyId: company.id, // Use string ID (6-digit numeric), not ObjectId
-      vendorId: vendor.id, // Use vendor numeric ID (6-digit string, e.g., "100001")
-      client_po_number: poNumber.trim(),
-      po_date: poDate,
-      po_status: 'SENT_TO_VENDOR', // Immediately send to vendor for fulfilment
-      created_by_user_id: creatingEmployee.id || creatingEmployee.employeeId, // Use string ID (6-digit numeric), not ObjectId
-      ...unifiedPOFields, // Include unified fields if flag enabled
+    // --- TRANSACTION: PO creation + POOrder mappings + Order status updates ---
+    const purchaseOrder = await withTransaction(async (session) => {
+      const sessionOpt = session ? { session } : {}
+      
+      const [po] = await PurchaseOrder.create([{
+        id: poId,
+        companyId: company.id,
+        vendorId: vendor.id,
+        client_po_number: poNumber.trim(),
+        po_date: poDate,
+        po_status: 'SENT_TO_VENDOR',
+        created_by_user_id: creatingEmployee.id || creatingEmployee.employeeId,
+        ...unifiedPOFields,
+      }], sessionOpt)
+      
+      console.log(`[createPurchaseOrderFromPRs] ✅ Created PO: ${poId} for vendor ${vendor.name}`)
+      
+      for (const orderDoc of vendorOrders) {
+        const orderIdString = orderDoc.id
+        if (!orderIdString) {
+          throw new Error(`Order document missing id: ${JSON.stringify(orderDoc)}`)
+        }
+        
+        await POOrder.create([{
+          purchase_order_id: po.id,
+          order_id: orderIdString,
+        }], sessionOpt)
+        
+        let orderUnifiedFields: Record<string, any> = {}
+        if (process.env.DUAL_WRITE_ENABLED === "true") {
+          try {
+            const currentOrder = orderDoc as any
+            const oldStatus = currentOrder.status || 'CREATED'
+            const oldPRStatus = currentOrder.unified_pr_status || 'PENDING_COMPANY_ADMIN_APPROVAL'
+            
+            const orderResult = safeDualWriteOrderStatus(orderIdString, 'IN_PURCHASE_ORDER' as UnifiedOrderStatus, oldStatus, currentOrder.unified_status || null, { source: 'createPurchaseOrderFromPRs' })
+            const prResult = safeDualWritePRStatus(orderIdString, 'LINKED_TO_PO' as UnifiedPRStatus, oldPRStatus, currentOrder.unified_pr_status || null, { source: 'createPurchaseOrderFromPRs' })
+            
+            orderUnifiedFields = {
+              ...orderResult.unifiedUpdate,
+              ...prResult.unifiedUpdate,
+            }
+            console.log(`[createPurchaseOrderFromPRs] 🔄 DUAL-WRITE: Order ${orderIdString} → unified_status=IN_PURCHASE_ORDER, unified_pr_status=LINKED_TO_PO`)
+          } catch (dualWriteError: any) {
+            console.error(`[createPurchaseOrderFromPRs] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
+          }
+        }
+        
+        const updateResult = await Order.updateOne(
+          { id: orderIdString },
+          { 
+            $set: {
+              status: 'Awaiting fulfilment',
+              unified_pr_status: 'LINKED_TO_PO',
+              unified_status: 'IN_FULFILMENT',
+            }
+          },
+          sessionOpt
+        )
+        
+        if (updateResult.matchedCount === 0) {
+          throw new Error(`Order not found for update: ${orderIdString}`)
+        }
+        
+        console.log(`[createPurchaseOrderFromPRs]   ✅ Linked order ${orderIdString} to PO ${poId}`)
+        console.log(`[createPurchaseOrderFromPRs]   ✅ Updated order ${orderIdString} status to 'Awaiting fulfilment'`)
+      }
+      
+      return po
     })
+    // --- END TRANSACTION ---
     
-    console.log(`[createPurchaseOrderFromPRs] ✅ Created PO: ${poId} for vendor ${vendor.name}`)
-    
-    // Create POOrder mappings for all orders in this vendor group
-    for (const orderDoc of vendorOrders) {
-      // CRITICAL FIX: POOrder.purchase_order_id and POOrder.order_id are STRING IDs, not ObjectIds
-      // Use PurchaseOrder.id and Order.id (string IDs) instead of _id (ObjectIds)
-      const orderIdString = orderDoc.id
-      if (!orderIdString) {
-        throw new Error(`Order document missing id: ${JSON.stringify(orderDoc)}`)
-      }
-      
-      // Create POOrder mapping using string IDs
-      await POOrder.create({
-        purchase_order_id: purchaseOrder.id, // Use PurchaseOrder.id (string ID), not _id (ObjectId)
-        order_id: orderIdString // Use Order.id (string ID), not ObjectId
-      })
-      
-      // Update order status using string ID
-      // DUAL-WRITE: Order and PR status cascade (behind feature flag)
-      let orderUnifiedFields: Record<string, any> = {}
-      if (process.env.DUAL_WRITE_ENABLED === "true") {
-        try {
-          // Get current order for old status values
-          const currentOrder = orderDoc as any
-          const oldStatus = currentOrder.status || 'CREATED'
-          const oldPRStatus = currentOrder.unified_pr_status || 'PENDING_COMPANY_ADMIN_APPROVAL'
-          
-          const orderResult = safeDualWriteOrderStatus(orderIdString, 'IN_PURCHASE_ORDER' as UnifiedOrderStatus, oldStatus, currentOrder.unified_status || null, { source: 'createPurchaseOrderFromPRs' })
-          const prResult = safeDualWritePRStatus(orderIdString, 'LINKED_TO_PO' as UnifiedPRStatus, oldPRStatus, currentOrder.unified_pr_status || null, { source: 'createPurchaseOrderFromPRs' })
-          
-          orderUnifiedFields = {
-            ...orderResult.unifiedUpdate,
-            ...prResult.unifiedUpdate,
-          }
-          console.log(`[createPurchaseOrderFromPRs] 🔄 DUAL-WRITE: Order ${orderIdString} → unified_status=IN_PURCHASE_ORDER, unified_pr_status=LINKED_TO_PO`)
-        } catch (dualWriteError: any) {
-          console.error(`[createPurchaseOrderFromPRs] ❌ DUAL-WRITE error (continuing with legacy): ${dualWriteError.message}`)
-        }
-      }
-      
-      const updateResult = await Order.updateOne(
-        { id: orderIdString },
-        { 
-          $set: {
-            status: 'Awaiting fulfilment',
-            unified_pr_status: 'LINKED_TO_PO',
-            unified_status: 'IN_FULFILMENT',
-          }
-        }
-      )
-      
-      if (updateResult.matchedCount === 0) {
-        throw new Error(`Order not found for update: ${orderIdString}`)
-      }
-      
-      console.log(`[createPurchaseOrderFromPRs]   ✅ Linked order ${orderIdString} to PO ${poId}`)
-      console.log(`[createPurchaseOrderFromPRs]   ✅ Updated order ${orderIdString} status to 'Awaiting fulfilment'`)
-    }
-    
-    // Fetch vendor details separately since vendorId is now numeric ID, not ObjectId reference
     const vendorDetails = await Vendor.findOne({ id: vendor.id })
       .select('id name')
       .lean()
     
-    // Populate company and employee, then add vendor details manually
     const populatedPO = await PurchaseOrder.findOne({ id: purchaseOrder.id })
       .populate('companyId', 'id name')
       .populate('created_by_user_id', 'id employeeId firstName lastName email')
       .lean()
     
-    // Add vendor details to the PO object
     const poWithVendor = {
       ...populatedPO,
-      vendorId: vendor.id, // Numeric vendor ID
+      vendorId: vendor.id,
       vendor: vendorDetails ? {
         id: vendorDetails.id,
         name: vendorDetails.name
@@ -16302,13 +16042,21 @@ export async function createPurchaseOrderFromPRs(
   // ========================================================================
   if (process.env.ENABLE_EMAIL_NOTIFICATIONS === 'true' && createdPOs.length > 0) {
     try {
-      // Get unique employee IDs from orders
-      const uniqueEmployeeIds = [...new Set(ordersToProcess.map((o: any) => o.employeeId))]
-      
+      // Batch-fetch all employees for notification upfront
+      const uniqueEmployeeIds = [...new Set(ordersToProcess.map((o: any) => o.employeeId).filter(Boolean))]
+      const notifEmployees = uniqueEmployeeIds.length > 0
+        ? await Employee.find({ $or: [{ id: { $in: uniqueEmployeeIds } }, { employeeId: { $in: uniqueEmployeeIds } }] }).lean()
+        : []
+      const notifEmployeeMap = new Map<string, any>()
+      for (const emp of notifEmployees) {
+        if (emp.id) notifEmployeeMap.set(emp.id, emp)
+        if (emp.employeeId) notifEmployeeMap.set(emp.employeeId, emp)
+      }
+
       // 1. Notify Employees
       for (const employeeId of uniqueEmployeeIds) {
         try {
-          const employeeForNotif = await Employee.findOne({ id: employeeId }).lean()
+          const employeeForNotif = notifEmployeeMap.get(employeeId)
           if (employeeForNotif?.email) {
             let employeeEmail = employeeForNotif.email
             let employeeName = `${employeeForNotif.firstName || ''} ${employeeForNotif.lastName || ''}`.trim() || 'Customer'
@@ -16321,7 +16069,6 @@ export async function createPurchaseOrderFromPRs(
               try { employeeName = `${decrypt(employeeForNotif.firstName)} ${decrypt(employeeForNotif.lastName || '')}`.trim() } catch (e) { /* ignore */ }
             }
             
-            // Get PO number(s) for this employee's orders
             const employeeOrders = ordersToProcess.filter((o: any) => o.employeeId === employeeId)
             const employeeOrderIds = employeeOrders.map((o: any) => o.id)
             const relatedPOs = createdPOs.filter((po: any) => 
@@ -16329,7 +16076,6 @@ export async function createPurchaseOrderFromPRs(
             )
             const poNumbers = relatedPOs.map((po: any) => po.client_po_number).filter(Boolean)
             
-            // Send notification for each PO (or combined if multiple)
             const poNumberStr = poNumbers.length > 0 ? poNumbers.join(', ') : poNumber
             
             sendPOGeneratedNotification(
@@ -16387,28 +16133,24 @@ export async function createPurchaseOrderFromPRs(
       
       // 4. Notify Location Admins - for each unique location in the orders
       try {
-        // Get unique location IDs from employees whose orders are being processed
+        // Batch-fetch location IDs from already-fetched employees (reuse notifEmployeeMap)
         const uniqueLocationIds = new Set<string>()
-        const locationNames = new Map<string, string>()
-        
         for (const order of ordersToProcess) {
           if (order.employeeId) {
-            const orderEmployee = await Employee.findOne({ 
-              $or: [{ id: order.employeeId }, { employeeId: order.employeeId }] 
-            }).select('locationId').lean()
-            
+            const orderEmployee = notifEmployeeMap.get(order.employeeId)
             if (orderEmployee?.locationId) {
-              const locationId = orderEmployee.locationId as string
-              uniqueLocationIds.add(locationId)
-              
-              // Get location name if not already cached
-              if (!locationNames.has(locationId)) {
-                const location = await Location.findOne({ id: locationId }).select('name').lean()
-                locationNames.set(locationId, location?.name || locationId)
-              }
+              uniqueLocationIds.add(orderEmployee.locationId as string)
             }
           }
         }
+
+        // Batch-fetch location names
+        const locationNameDocs = uniqueLocationIds.size > 0
+          ? await Location.find({ id: { $in: [...uniqueLocationIds] } }).select('id name').lean()
+          : []
+        const locationNames = new Map<string, string>(
+          locationNameDocs.map((l: any) => [l.id, l.name || l.id])
+        )
         
         const allPoNumbers = createdPOs.map((po: any) => po.client_po_number).filter(Boolean).join(', ')
         
@@ -16489,6 +16231,58 @@ export async function getPendingApprovalCount(companyId: string): Promise<number
  * @param poId Purchase Order ID
  * @returns Derived shipping status: AWAITING_SHIPMENT | PARTIALLY_SHIPPED | FULLY_SHIPPED | FULLY_DELIVERED
  */
+/**
+ * Batch-derive shipping status for multiple POs in 2 queries instead of 3*N.
+ */
+export async function derivePOShippingStatusBatch(poIds: string[]): Promise<Map<string, string>> {
+  await connectDB()
+  const result = new Map<string, string>()
+  if (poIds.length === 0) return result
+
+  for (const id of poIds) result.set(id, 'AWAITING_SHIPMENT')
+
+  const allMappings = await POOrder.find({ purchase_order_id: { $in: poIds } }).lean()
+  if (allMappings.length === 0) return result
+
+  const mappingsByPO = new Map<string, string[]>()
+  for (const m of allMappings) {
+    const poId = m.purchase_order_id
+    if (!mappingsByPO.has(poId)) mappingsByPO.set(poId, [])
+    mappingsByPO.get(poId)!.push(m.order_id)
+  }
+
+  const allOrderIds = [...new Set(allMappings.map(m => m.order_id))]
+  const allOrders = await Order.find({ id: { $in: allOrderIds } })
+    .select('id status dispatchStatus deliveryStatus items')
+    .lean()
+  const orderMap = new Map(allOrders.map((o: any) => [o.id, o]))
+
+  for (const poId of poIds) {
+    const orderIds = mappingsByPO.get(poId) || []
+    if (orderIds.length === 0) continue
+
+    let totalItems = 0, itemsShipped = 0, itemsDelivered = 0
+    for (const oid of orderIds) {
+      const pr: any = orderMap.get(oid)
+      if (!pr) continue
+      const isOrderMarkedDelivered = pr.deliveryStatus === 'DELIVERED' || pr.status === 'Delivered'
+      for (const item of (pr.items || [])) {
+        totalItems++
+        if ((item.dispatchedQuantity || 0) > 0) itemsShipped++
+        if (isOrderMarkedDelivered || ((item.deliveredQuantity || 0) >= (item.quantity || 0) && (item.quantity || 0) > 0)) {
+          itemsDelivered++
+        }
+      }
+    }
+
+    if (itemsDelivered === totalItems && totalItems > 0) result.set(poId, 'FULLY_DELIVERED')
+    else if (itemsShipped === totalItems && totalItems > 0) result.set(poId, 'FULLY_SHIPPED')
+    else if (itemsShipped > 0 && itemsShipped < totalItems) result.set(poId, 'PARTIALLY_SHIPPED')
+  }
+
+  return result
+}
+
 export async function derivePOShippingStatus(poId: string): Promise<'AWAITING_SHIPMENT' | 'PARTIALLY_SHIPPED' | 'FULLY_SHIPPED' | 'FULLY_DELIVERED'> {
   await connectDB()
   
@@ -17027,61 +16821,89 @@ async function updatePOStatusFromPRDelivery(prId: string): Promise<void> {
     return
   }
   
-  // Fetch POs using string IDs
-  const pos = await PurchaseOrder.find({ id: { $in: poIds } }).lean()
+  // Batch-prefetch all data for POs and update each
+  const prefetched = await prefetchPOStatusData(poIds)
   
-  // Update each PO's status based on all its PRs
-  for (const po of pos) {
-    const poId = typeof po.id === 'string' ? po.id : String(po.id || '')
+  for (const poId of poIds) {
     if (poId) {
-      await updateSinglePOStatus(poId)
+      await updateSinglePOStatus(poId, prefetched)
     }
   }
+}
+
+interface PrefetchedPOData {
+  poOrdersByPO: Map<string, any[]>
+  ordersByIds: Map<string, any>
+  purchaseOrdersByIds: Map<string, any>
+}
+
+/**
+ * Batch-prefetch all data needed by updateSinglePOStatus for multiple PO IDs.
+ * This eliminates N+1 queries when called in a loop.
+ */
+async function prefetchPOStatusData(poIds: string[]): Promise<PrefetchedPOData> {
+  const allMappings = await POOrder.find({ purchase_order_id: { $in: poIds } }).lean()
+  const poOrdersByPO = new Map<string, any[]>()
+  const allOrderIds = new Set<string>()
+  for (const m of allMappings) {
+    const pid = typeof m.purchase_order_id === 'string' ? m.purchase_order_id : String(m.purchase_order_id || '')
+    if (!poOrdersByPO.has(pid)) poOrdersByPO.set(pid, [])
+    poOrdersByPO.get(pid)!.push(m)
+    const oid = typeof m.order_id === 'string' ? m.order_id : String(m.order_id || '')
+    if (oid) allOrderIds.add(oid)
+  }
+
+  const [orders, purchaseOrders] = await Promise.all([
+    allOrderIds.size > 0
+      ? Order.find({ id: { $in: [...allOrderIds] } }).select('id dispatchStatus deliveryStatus items pr_status pr_number unified_pr_status').lean()
+      : [],
+    PurchaseOrder.find({ id: { $in: poIds } }).lean()
+  ])
+
+  const ordersByIds = new Map(orders.map((o: any) => [o.id, o]))
+  const purchaseOrdersByIds = new Map(purchaseOrders.map((p: any) => [p.id, p]))
+
+  return { poOrdersByPO, ordersByIds, purchaseOrdersByIds }
 }
 
 /**
  * Update a single PO's status based on all its linked PRs
  * CRITICAL FIX: Use string ID instead of ObjectId
  * @param poId PO string ID
+ * @param prefetched Optional pre-fetched data to avoid N+1 queries
  */
-async function updateSinglePOStatus(poId: string): Promise<void> {
+async function updateSinglePOStatus(poId: string, prefetched?: PrefetchedPOData): Promise<void> {
   await connectDB()
   
-  // CRITICAL FIX: POOrder.purchase_order_id stores PurchaseOrder.id (string ID), not _id (ObjectId)
-  // Get all PRs linked to this PO using string ID
-  const poOrderMappings = await POOrder.find({ purchase_order_id: poId }).lean()
+  const poOrderMappings = prefetched
+    ? (prefetched.poOrdersByPO.get(poId) || [])
+    : await POOrder.find({ purchase_order_id: poId }).lean()
   if (poOrderMappings.length === 0) {
     return
   }
   
-  // CRITICAL FIX: POOrder.order_id stores Order.id (string ID), not Order._id (ObjectId)
-  // Extract order string IDs from mappings
   const orderIds = poOrderMappings
-    .map(m => typeof m.order_id === 'string' ? m.order_id : String(m.order_id || ''))
+    .map((m: any) => typeof m.order_id === 'string' ? m.order_id : String(m.order_id || ''))
     .filter(Boolean)
   
   if (orderIds.length === 0) {
     return
   }
   
-  // Fetch PRs using string IDs
-  const prs = await Order.find({ id: { $in: orderIds } })
-    .select('id dispatchStatus deliveryStatus items pr_status pr_number')
-    .lean()
+  const prs = prefetched
+    ? orderIds.map((oid: string) => prefetched.ordersByIds.get(oid)).filter(Boolean)
+    : await Order.find({ id: { $in: orderIds } }).select('id dispatchStatus deliveryStatus items pr_status pr_number unified_pr_status').lean()
   
   if (prs.length === 0) {
     return
   }
   
-  // CRITICAL FIX: Check PR status (unified_pr_status = 'FULLY_DELIVERED' or deliveryStatus = 'DELIVERED')
-  // instead of item-level checks to properly handle shipment-based delivery
   let allPRsDelivered = true
   let allPRsShipped = true
   let anyPRShipped = false
   let anyPRDelivered = false
   
   for (const pr of prs) {
-    // Check PR status: PR is fully delivered if unified_pr_status = 'FULLY_DELIVERED' or deliveryStatus = 'DELIVERED'
     const prFullyDelivered = pr.unified_pr_status === 'FULLY_DELIVERED' || pr.deliveryStatus === 'DELIVERED'
     const prShipped = pr.dispatchStatus === 'SHIPPED'
     const prDelivered = pr.deliveryStatus === 'DELIVERED' || pr.deliveryStatus === 'PARTIALLY_DELIVERED'
@@ -17100,8 +16922,9 @@ async function updateSinglePOStatus(poId: string): Promise<void> {
     }
   }
   
-  // Get PO using string ID
-  const currentPO = await PurchaseOrder.findOne({ id: poId })
+  const currentPO = prefetched
+    ? prefetched.purchaseOrdersByIds.get(poId) || await PurchaseOrder.findOne({ id: poId })
+    : await PurchaseOrder.findOne({ id: poId })
   
   if (!currentPO) {
     console.warn(`[updateSinglePOStatus] PO not found: ${poId}`)
@@ -17370,10 +17193,10 @@ export async function updateManualShipmentStatus(
             .filter(Boolean)
           
           let poUpdated = false
+          const prefetchedPO = await prefetchPOStatusData(poIds)
           
           for (const poId of poIds) {
-            // Use existing updateSinglePOStatus function to check and update PO
-            await updateSinglePOStatus(poId)
+            await updateSinglePOStatus(poId, prefetchedPO)
             poUpdated = true
             console.log(`[updateManualShipmentStatus] ✅ Step 3: Updated PO ${poId} status`)
           }
@@ -17837,12 +17660,14 @@ export async function updatePRAndPOStatusesFromDelivery(companyId?: string): Pro
     const pos = await PurchaseOrder.find(poQuery).lean()
     console.log(`[updatePRAndPOStatusesFromDelivery] Found ${pos.length} POs to process`)
     
+    const allPoIds = pos.map((po: any) => typeof po.id === 'string' ? po.id : String(po.id || '')).filter(Boolean)
+    const prefetchedPO = allPoIds.length > 0 ? await prefetchPOStatusData(allPoIds) : null
+    
     for (const po of pos) {
       try {
-        // CRITICAL FIX: Use string ID (po.id) instead of ObjectId (po._id)
         const poId = typeof po.id === 'string' ? po.id : String(po.id || '')
         if (poId) {
-          await updateSinglePOStatus(poId)
+          await updateSinglePOStatus(poId, prefetchedPO || undefined)
           result.posUpdated++
         }
       } catch (error: any) {
@@ -19057,9 +18882,13 @@ export async function createProductCompanyBatch(productIds: string[], companyId:
   const success: string[] = []
   const failed: Array<{ productId: string, error: string }> = []
 
+  // Batch-fetch all products upfront to avoid N+1
+  const products = await Uniform.find({ id: { $in: productIds } }).select('id').lean()
+  const productMap = new Map(products.map((p: any) => [p.id, p]))
+
   for (const productId of productIds) {
     try {
-      const product = await Uniform.findOne({ id: productId })
+      const product = productMap.get(productId)
       if (!product) {
         failed.push({ productId, error: `Product not found: ${productId}` })
         continue
@@ -19072,7 +18901,6 @@ export async function createProductCompanyBatch(productIds: string[], companyId:
       )
 
       success.push(productId)
-      console.log(`createProductCompanyBatch - Successfully linked product ${productId} to company ${companyId}`)
     } catch (error: any) {
       failed.push({ productId, error: error.message || 'Unknown error' })
     }
@@ -22203,26 +22031,7 @@ export async function getProductFeedback(
   
   // If not Company Admin and not Vendor, try to find as employee
   if (!employee && !isCompanyAdminUser) {
-    // Try finding with encrypted email first
-    employee = await Employee.findOne({ email: encryptedEmail }).lean()
-    
-    // If not found, try decryption matching
-    if (!employee && encryptedEmail) {
-      const allEmployees = await Employee.find({}).lean()
-      for (const emp of allEmployees) {
-        if (emp.email && typeof emp.email === 'string') {
-          try {
-            const decryptedEmail = decrypt(emp.email)
-            if (decryptedEmail.toLowerCase() === trimmedEmail.toLowerCase()) {
-              employee = emp
-              break
-            }
-          } catch (error) {
-            continue
-          }
-        }
-      }
-    }
+    employee = await findEmployeeByEmailHashFast(trimmedEmail)
     
     if (!employee) {
       throw new Error('User not found')

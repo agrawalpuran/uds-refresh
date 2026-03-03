@@ -5,11 +5,12 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { 
   LayoutDashboard, Package, Users, FileText, BarChart3, 
-  Settings, LogOut, MapPin, ShoppingCart, Upload, Shield, Warehouse, MessageSquare, Menu, X, RefreshCw, Layers, Tag, Link2, ChevronDown, ChevronRight, Truck, Plus, Building2
+  Settings, LogOut, MapPin, ShoppingCart, Upload, Shield, Warehouse, MessageSquare, Menu, X, RefreshCw, Layers, Tag, Link2, ChevronDown, ChevronRight, Truck, Plus, Building2, Scissors
 } from 'lucide-react'
 import { getVendorById, getCompanyById, getEmployeeByEmail } from '@/lib/data'
 import { getCompanyById as getCompanyByIdAPI, getBranchByAdminEmail, getCompanyByAdminEmail, getLocationByAdminEmail, getEmployeeByEmail as getEmployeeByEmailAPI, getVendorById as getVendorByIdAPI } from '@/lib/data-mongodb'
 import Image from 'next/image'
+import { useSession, signOut } from 'next-auth/react'
 
 interface DashboardLayoutProps {
   children: ReactNode
@@ -19,6 +20,7 @@ interface DashboardLayoutProps {
 export default function DashboardLayout({ children, actorType }: DashboardLayoutProps) {
   const pathname = usePathname()
   const router = useRouter()
+  const { data: session, status: sessionStatus } = useSession()
   const [currentCompany, setCurrentCompany] = useState<any>(null)
   const [currentVendor, setCurrentVendor] = useState<any>(null)
   const [currentEmployee, setCurrentEmployee] = useState<any>(null)
@@ -87,194 +89,144 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
   const [testOrdersEnabled, setTestOrdersEnabled] = useState<boolean>(true) // Default: enabled
 
   useEffect(() => {
-    // Use tab-specific authentication storage
-    const loadAuthData = async () => {
-      const { getUserEmail, getCompanyId, getVendorId } = await import('@/lib/utils/auth-storage')
-      
-      if (actorType === 'consumer') {
-        // Get current employee from tab-specific storage
-        // CRITICAL SECURITY FIX: Use only tab-specific auth storage (no localStorage fallback)
-        const userEmail = getUserEmail('consumer')
-        if (userEmail) {
-          // Check if user is Location Admin and get employee
-          Promise.all([
-            getLocationByAdminEmail(userEmail),
-            getEmployeeByEmailAPI(userEmail)
-          ]).then(async ([location, employee]) => {
-            setIsLocationAdmin(!!location)
-            
-            if (employee) {
-              // API should already return decrypted data for authorized users
-              // No need to decrypt client-side
-              setCurrentEmployee(employee)
-              // Get company for employee
-              const companyId = typeof employee.companyId === 'object' && employee.companyId?.id 
-                ? employee.companyId.id 
-                : employee.companyId
-              if (companyId) {
-                getCompanyByIdAPI(companyId)
-                  .then(company => {
-                    if (company) {
-                      setCurrentCompany(company)
-                      // Check if Location Admin can view feedback
-                      if (location && company.allowLocationAdminViewFeedback) {
-                        setCanLocationAdminViewFeedback(true)
-                        console.log('[DashboardLayout] Consumer: Location Admin can view feedback - setting enabled')
-                      } else {
-                        setCanLocationAdminViewFeedback(false)
-                      }
-                    } else {
-                      const mockCompany = getCompanyById(companyId)
-                      setCurrentCompany(mockCompany || null)
-                      setCanLocationAdminViewFeedback(false)
-                    }
-                  })
-                  .catch(() => {
-                    const mockCompany = getCompanyById(companyId)
-                    setCurrentCompany(mockCompany || null)
-                    setCanLocationAdminViewFeedback(false)
-                  })
-              }
-            } else {
-              // Employee not found in database - show empty state
-              console.warn('[DashboardLayout] Consumer: Employee not found in database for email:', userEmail)
-              setCurrentEmployee(null)
-              setCurrentCompany(null)
-              setCanLocationAdminViewFeedback(false)
-            }
-          })
-          .catch((error) => {
-            // Error fetching employee - show empty state (don't use mock data)
-            console.error('[DashboardLayout] Consumer: Error fetching employee data:', error)
-            setCurrentEmployee(null)
-            setCurrentCompany(null)
-            setCanLocationAdminViewFeedback(false)
-          })
-        } else {
-          // SECURITY FIX: No valid session - redirect to login instead of showing mock data
-          console.warn('[DashboardLayout] Consumer: No valid session found, redirecting to login')
-          router.push('/login/consumer')
-          return
-        }
-      } else if (actorType === 'company') {
-        // SECURITY FIX: Use ONLY tab-specific storage - NO localStorage fallback
-        // localStorage is shared across tabs and causes session cross-contamination
-        const companyId = getCompanyId()
-        const userEmail = getUserEmail('company')
-        
-        // Check if user is Branch Admin, Location Admin, or Company Admin
-        if (userEmail) {
-          Promise.all([
-            getBranchByAdminEmail(userEmail),
-            getLocationByAdminEmail(userEmail),
-            getCompanyByAdminEmail(userEmail)
-          ]).then(([branch, location, company]) => {
-            setIsBranchAdmin(!!branch)
-            setIsLocationAdmin(!!location)
-            setIsCompanyAdmin(!!company)
-            setCurrentLocation(location) // Store location for approval counts
-            
-            // If Branch Admin, use branch's company; if Location Admin, use location's company; otherwise use companyId
-            const targetCompanyId = branch?.companyId?.id || branch?.companyId || location?.companyId?.id || location?.companyId || companyId || company?.id
-            
-            if (targetCompanyId) {
-              // Fetch company from API to get latest branding
-              getCompanyByIdAPI(targetCompanyId)
-                .then(companyData => {
-                  if (companyData) {
-                    setCurrentCompany(companyData)
-                  } else {
-                    // Company not found - show empty state (don't use mock data)
-                    console.warn('[DashboardLayout] Company: Company not found in database for ID:', targetCompanyId)
-                    setCurrentCompany(null)
-                  }
-                })
-                .catch((error) => {
-                  // Error fetching company - show empty state
-                  console.error('[DashboardLayout] Company: Error fetching company data:', error)
-                  setCurrentCompany(null)
-                })
-            } else {
-              // No company ID found - show empty state
-              console.warn('[DashboardLayout] Company: No company ID found')
-              setCurrentCompany(null)
-            }
-          }).catch((error) => {
-            // On error, fall back to companyId-based lookup
-            console.error('[DashboardLayout] Company: Error checking admin status:', error)
+    if (sessionStatus === 'loading') return
+
+    if (sessionStatus === 'unauthenticated' || !session?.user) {
+      const loginPath = actorType === 'vendor' ? '/login/vendor'
+        : actorType === 'company' ? '/login/company'
+        : actorType === 'superadmin' ? '/login/superadmin'
+        : '/login/consumer'
+      router.push(loginPath)
+      return
+    }
+
+    const userEmail = session.user.email
+    const sessionCompanyId = session.user.companyId
+    const sessionVendorId = session.user.vendorId
+
+    if (actorType === 'consumer') {
+      if (userEmail) {
+        Promise.all([
+          getLocationByAdminEmail(userEmail),
+          getEmployeeByEmailAPI(userEmail)
+        ]).then(async ([location, employee]) => {
+          setIsLocationAdmin(!!location)
+          
+          if (employee) {
+            setCurrentEmployee(employee)
+            const companyId = typeof employee.companyId === 'object' && employee.companyId?.id 
+              ? employee.companyId.id 
+              : employee.companyId || sessionCompanyId
             if (companyId) {
               getCompanyByIdAPI(companyId)
                 .then(company => {
                   if (company) {
                     setCurrentCompany(company)
+                    if (location && company.allowLocationAdminViewFeedback) {
+                      setCanLocationAdminViewFeedback(true)
+                    } else {
+                      setCanLocationAdminViewFeedback(false)
+                    }
                   } else {
-                    console.warn('[DashboardLayout] Company: Company not found for companyId:', companyId)
-                    setCurrentCompany(null)
+                    const mockCompany = getCompanyById(companyId)
+                    setCurrentCompany(mockCompany || null)
+                    setCanLocationAdminViewFeedback(false)
                   }
                 })
-                .catch((err) => {
-                  console.error('[DashboardLayout] Company: Error fetching company by ID:', err)
-                  setCurrentCompany(null)
+                .catch(() => {
+                  const mockCompany = companyId ? getCompanyById(companyId) : null
+                  setCurrentCompany(mockCompany || null)
+                  setCanLocationAdminViewFeedback(false)
                 })
+            }
+          } else {
+            console.warn('[DashboardLayout] Consumer: Employee not found for email:', userEmail)
+            setCurrentEmployee(null)
+            setCurrentCompany(null)
+            setCanLocationAdminViewFeedback(false)
+          }
+        })
+        .catch((error) => {
+          console.error('[DashboardLayout] Consumer: Error fetching employee data:', error)
+          setCurrentEmployee(null)
+          setCurrentCompany(null)
+          setCanLocationAdminViewFeedback(false)
+        })
+      }
+    } else if (actorType === 'company') {
+      const companyId = sessionCompanyId
+      
+      if (userEmail) {
+        Promise.all([
+          getBranchByAdminEmail(userEmail),
+          getLocationByAdminEmail(userEmail),
+          getCompanyByAdminEmail(userEmail)
+        ]).then(([branch, location, company]) => {
+          setIsBranchAdmin(!!branch)
+          setIsLocationAdmin(!!location)
+          setIsCompanyAdmin(!!company)
+          setCurrentLocation(location)
+          
+          const targetCompanyId = branch?.companyId?.id || branch?.companyId || location?.companyId?.id || location?.companyId || companyId || company?.id
+          
+          if (targetCompanyId) {
+            getCompanyByIdAPI(targetCompanyId)
+              .then(companyData => {
+                if (companyData) {
+                  setCurrentCompany(companyData)
+                } else {
+                  console.warn('[DashboardLayout] Company: Company not found for ID:', targetCompanyId)
+                  setCurrentCompany(null)
+                }
+              })
+              .catch((error) => {
+                console.error('[DashboardLayout] Company: Error fetching company data:', error)
+                setCurrentCompany(null)
+              })
+          } else {
+            console.warn('[DashboardLayout] Company: No company ID found')
+            setCurrentCompany(null)
+          }
+        }).catch((error) => {
+          console.error('[DashboardLayout] Company: Error checking admin status:', error)
+          if (companyId) {
+            getCompanyByIdAPI(companyId)
+              .then(company => {
+                if (company) {
+                  setCurrentCompany(company)
+                } else {
+                  setCurrentCompany(null)
+                }
+              })
+              .catch(() => setCurrentCompany(null))
+          } else {
+            setCurrentCompany(null)
+          }
+        })
+      } else if (companyId) {
+        getCompanyByIdAPI(companyId)
+          .then(company => setCurrentCompany(company || null))
+          .catch(() => setCurrentCompany(null))
+      }
+    } else if (actorType === 'vendor') {
+      const vendorId = sessionVendorId
+      if (vendorId) {
+        getVendorByIdAPI(vendorId)
+          .then(vendor => {
+            if (vendor) {
+              setCurrentVendor(vendor)
             } else {
-              setCurrentCompany(null)
+              const mockVendor = getVendorById(vendorId)
+              setCurrentVendor(mockVendor || null)
             }
           })
-        } else if (companyId) {
-          // Fetch company from API to get latest branding
-          getCompanyByIdAPI(companyId)
-            .then(company => {
-              if (company) {
-                setCurrentCompany(company)
-              } else {
-                // Company not found - show empty state
-                console.warn('[DashboardLayout] Company: Company not found for companyId:', companyId)
-                setCurrentCompany(null)
-              }
-            })
-            .catch((error) => {
-              // Error fetching company - show empty state
-              console.error('[DashboardLayout] Company: Error fetching company:', error)
-              setCurrentCompany(null)
-            })
-        } else {
-          // SECURITY FIX: No valid session - redirect to login instead of showing mock data
-          console.warn('[DashboardLayout] Company: No valid session found, redirecting to login')
-          router.push('/login/company')
-          return
-        }
-      } else if (actorType === 'vendor') {
-        // SECURITY FIX: Use ONLY tab-specific storage - NO localStorage fallback
-        // localStorage is shared across tabs and causes session cross-contamination
-        const vendorId = getVendorId()
-        if (vendorId) {
-          // Try to fetch vendor from API first
-          getVendorByIdAPI(vendorId)
-            .then(vendor => {
-              if (vendor) {
-                setCurrentVendor(vendor)
-              } else {
-                // Fallback to mock data
-                const mockVendor = getVendorById(vendorId)
-                setCurrentVendor(mockVendor || null)
-              }
-            })
-            .catch((error) => {
-              // Error fetching vendor - show empty state
-              console.error('[DashboardLayout] Vendor: Error fetching vendor data:', error)
-              setCurrentVendor(null)
-            })
-        } else {
-          // SECURITY FIX: No valid session - redirect to login instead of using default vendor
-          console.warn('[DashboardLayout] Vendor: No valid session found, redirecting to login')
-          router.push('/login/vendor')
-          return
-        }
+          .catch((error) => {
+            console.error('[DashboardLayout] Vendor: Error fetching vendor data:', error)
+            setCurrentVendor(null)
+          })
       }
     }
-    
-    loadAuthData()
-  }, [actorType, router])
+  }, [actorType, router, session, sessionStatus])
 
   // Fetch approval counts when company/vendor/location is loaded
   useEffect(() => {
@@ -434,6 +386,15 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
         { name: 'Product–Subcategory Associations', href: '/dashboard/company/product-subcategories', icon: Link2 },
         { name: 'Subcategory Management', href: '/dashboard/company/subcategories', icon: Layers },
         { name: 'Designation Product Eligibility', href: '/dashboard/company/designation-eligibility', icon: Shield },
+      ]
+    },
+    {
+      name: 'Made-to-Measure',
+      icon: Scissors,
+      items: [
+        { name: 'Measurement Templates', href: '/dashboard/company/mtm/specifications', icon: Scissors },
+        { name: 'Product MTM Config', href: '/dashboard/company/mtm/product-config', icon: Package },
+        { name: 'Vendor Capabilities', href: '/dashboard/company/mtm/vendor-capabilities', icon: Truck },
       ]
     },
     {
@@ -1056,14 +1017,16 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
           })}
         </nav>
         <div className="absolute bottom-0 left-0 right-0 border-t border-neutral-200 p-3">
-          <Link
-            href="/"
-            onClick={() => setMobileMenuOpen(false)}
-            className="flex items-center space-x-3 px-3 py-2.5 rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 transition-all duration-200"
+          <button
+            onClick={() => {
+              setMobileMenuOpen(false)
+              signOut({ callbackUrl: '/' })
+            }}
+            className="flex items-center space-x-3 px-3 py-2.5 rounded-md text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900 transition-all duration-200 w-full"
           >
             <LogOut className="h-5 w-5 flex-shrink-0" />
             <span className="text-sm font-medium">Logout</span>
-          </Link>
+          </button>
         </div>
       </div>
 

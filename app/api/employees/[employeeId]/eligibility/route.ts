@@ -1,5 +1,5 @@
-
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getEmployeeEligibilityFromDesignation } from '@/lib/db/data-access'
 
 // Force dynamic rendering for serverless functions
@@ -10,6 +10,8 @@ export async function GET(
   { params }: { params: Promise<{ employeeId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const resolvedParams = await params
     const employeeId = resolvedParams.employeeId
 

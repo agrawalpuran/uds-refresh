@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import ProductSubcategoryMapping from '@/lib/models/ProductSubcategoryMapping'
 import Subcategory from '@/lib/models/Subcategory'
@@ -436,6 +437,8 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
     
     const searchParams = request.nextUrl.searchParams

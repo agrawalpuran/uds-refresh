@@ -100,11 +100,15 @@ export class ShipwayProvider implements LogisticsProvider {
 
     const url = `${this.config.apiBaseUrl}${this.config.apiVersion ? `/${this.config.apiVersion}` : ''}${endpoint}`
     
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 30000)
     const response = await fetch(url, {
       method,
       headers: this.getAuthHeaders(),
       body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
     })
+    clearTimeout(timeout)
 
     if (!response.ok) {
       const errorText = await response.text()

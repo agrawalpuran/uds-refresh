@@ -12,6 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import {
   processNotificationQueue,
   getQueueStats,
@@ -25,6 +26,8 @@ const QUEUE_PROCESSOR_SECRET = process.env.NOTIFICATION_QUEUE_SECRET
  */
 export async function GET(request: NextRequest) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Optional: Verify secret for production security
     const authHeader = request.headers.get('x-queue-secret')
     if (QUEUE_PROCESSOR_SECRET && authHeader !== QUEUE_PROCESSOR_SECRET) {
@@ -55,6 +58,8 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Optional: Verify secret for production security
     const authHeader = request.headers.get('x-queue-secret')
     if (QUEUE_PROCESSOR_SECRET && authHeader !== QUEUE_PROCESSOR_SECRET) {

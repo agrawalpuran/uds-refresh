@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getShipmentServiceProviderById } from '@/lib/db/shipping-config-access'
 import { getProviderInstance } from '@/lib/providers/ProviderFactory'
 import { createTestLog } from '@/lib/db/provider-test-access'
@@ -14,6 +15,8 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {
@@ -298,6 +301,8 @@ export async function POST(request: Request) {
  */
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const providerId = searchParams.get('providerId')
     const testType = searchParams.get('testType') as any

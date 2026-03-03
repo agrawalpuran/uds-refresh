@@ -838,6 +838,7 @@ export default function CompanyOrdersPage() {
   
   // Get company ID from tab-specific storage (set during login)
   useEffect(() => {
+    let cancelled = false
     if (typeof window !== 'undefined') {
       const loadData = async () => {
         try {
@@ -851,6 +852,7 @@ export default function CompanyOrdersPage() {
           let locationAdminLocation = null
           if (userEmail) {
             locationAdminLocation = await getLocationByAdminEmail(userEmail)
+            if (cancelled) return
             const isLocationAdminUser = !!locationAdminLocation
             setIsLocationAdmin(isLocationAdminUser)
             setLocationInfo(locationAdminLocation)
@@ -863,12 +865,14 @@ export default function CompanyOrdersPage() {
               const locationId = locationAdminLocation.id || locationAdminLocation._id?.toString()
               if (locationId) {
                 const locationOrders = await getOrdersByLocation(locationId)
+                if (cancelled) return
                 setCompanyOrders(locationOrders)
                 
                 const targetCompanyId = locationAdminLocation.companyId?.id || locationAdminLocation.companyId || storedCompanyId
                 if (targetCompanyId) {
                   setCompanyId(targetCompanyId)
                   const companyDetails = await getCompanyById(targetCompanyId)
+                  if (cancelled) return
                   if (companyDetails) {
                     setCompanyPrimaryColor(companyDetails.primaryColor || '#f76b1c')
                     setCompanySecondaryColor(companyDetails.secondaryColor || companyDetails.primaryColor || '#f76b1c')
@@ -883,6 +887,7 @@ export default function CompanyOrdersPage() {
           if (storedCompanyId) {
             setCompanyId(storedCompanyId)
             const filtered = await getOrdersByCompany(storedCompanyId)
+            if (cancelled) return
             if (filtered.length > 0) {
               console.log('[OrderHistory] Sample order:', {
                 id: filtered[0].id,
@@ -894,42 +899,36 @@ export default function CompanyOrdersPage() {
             }
             setCompanyOrders(filtered)
             
-            // Fetch GRNs with pending approval status
-            try {
-              const grnsResponse = await fetch(`/api/grns?companyId=${storedCompanyId}&raisedByVendors=true`)
-              if (grnsResponse.ok) {
-                const grns = await grnsResponse.json()
-                // Filter for pending GRNs (RAISED status, not yet APPROVED)
-                const pendingGRNs = grns.filter((grn: any) => 
-                  (grn.grnStatus === 'RAISED' || grn.unified_grn_status === 'RAISED' || grn.unified_grn_status === 'PENDING_APPROVAL') &&
-                  grn.grnStatus !== 'APPROVED' && grn.unified_grn_status !== 'APPROVED'
-                )
-                setCompanyGRNs(pendingGRNs)
-                console.log(`[OrderHistory] Fetched ${pendingGRNs.length} pending GRNs`)
-              }
-            } catch (err) {
-              console.error('Error fetching GRNs:', err)
+            // Fetch GRNs and Invoices in parallel
+            const [grnsResult, invoicesResult] = await Promise.allSettled([
+              fetch(`/api/grns?companyId=${storedCompanyId}&raisedByVendors=true`).then(r => r.ok ? r.json() : []),
+              fetch(`/api/company/invoices?companyId=${storedCompanyId}`).then(r => r.ok ? r.json() : []),
+            ])
+
+            if (cancelled) return
+            if (grnsResult.status === 'fulfilled') {
+              const grns = grnsResult.value
+              const pendingGRNs = (Array.isArray(grns) ? grns : []).filter((grn: any) => 
+                (grn.grnStatus === 'RAISED' || grn.unified_grn_status === 'RAISED' || grn.unified_grn_status === 'PENDING_APPROVAL') &&
+                grn.grnStatus !== 'APPROVED' && grn.unified_grn_status !== 'APPROVED'
+              )
+              setCompanyGRNs(pendingGRNs)
+              console.log(`[OrderHistory] Fetched ${pendingGRNs.length} pending GRNs`)
             }
-            
-            // Fetch Invoices with pending approval status
-            try {
-              const invoicesResponse = await fetch(`/api/company/invoices?companyId=${storedCompanyId}`)
-              if (invoicesResponse.ok) {
-                const invoicesData = await invoicesResponse.json()
-                const invoices = Array.isArray(invoicesData) ? invoicesData : (invoicesData.invoices || [])
-                // Filter for pending Invoices (RAISED status, not yet APPROVED)
-                const pendingInvoices = invoices.filter((inv: any) => 
-                  (inv.invoiceStatus === 'RAISED' || inv.unified_invoice_status === 'RAISED' || inv.unified_invoice_status === 'PENDING_APPROVAL') &&
-                  inv.invoiceStatus !== 'APPROVED' && inv.unified_invoice_status !== 'APPROVED'
-                )
-                setCompanyInvoices(pendingInvoices)
-                console.log(`[OrderHistory] Fetched ${pendingInvoices.length} pending Invoices`)
-              }
-            } catch (err) {
-              console.error('Error fetching Invoices:', err)
+
+            if (invoicesResult.status === 'fulfilled') {
+              const invoicesData = invoicesResult.value
+              const invoices = Array.isArray(invoicesData) ? invoicesData : (invoicesData.invoices || [])
+              const pendingInvoices = invoices.filter((inv: any) => 
+                (inv.invoiceStatus === 'RAISED' || inv.unified_invoice_status === 'RAISED' || inv.unified_invoice_status === 'PENDING_APPROVAL') &&
+                inv.invoiceStatus !== 'APPROVED' && inv.unified_invoice_status !== 'APPROVED'
+              )
+              setCompanyInvoices(pendingInvoices)
+              console.log(`[OrderHistory] Fetched ${pendingInvoices.length} pending Invoices`)
             }
             
             const companyDetails = await getCompanyById(storedCompanyId)
+            if (cancelled) return
             if (companyDetails) {
               setCompanyPrimaryColor(companyDetails.primaryColor || '#f76b1c')
               setCompanySecondaryColor(companyDetails.secondaryColor || companyDetails.primaryColor || '#f76b1c')
@@ -939,12 +938,13 @@ export default function CompanyOrdersPage() {
         } catch (error) {
           console.error('Error loading orders:', error)
         } finally {
-          setLoading(false)
+          if (!cancelled) setLoading(false)
         }
       }
       
       loadData()
     }
+    return () => { cancelled = true }
   }, [])
 
   // Get unique locations for filter
@@ -1770,12 +1770,16 @@ export default function CompanyOrdersPage() {
                   <p className="text-xs text-gray-500 uppercase tracking-wide mb-3">Order Items</p>
                   <div className="space-y-2">
                     {selectedOrder.items?.map((item: any, idx: number) => (
-                      <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                        <div>
-                          <p className="font-medium text-gray-900">{item.uniformName}</p>
-                          <p className="text-sm text-gray-500">Size: {item.size} • Qty: {item.quantity}</p>
+                      <div key={idx} className="p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium text-gray-900">{item.uniformName}</p>
+                            <p className="text-sm text-gray-500">
+                              {item.fit_type === 'MTM' ? 'Fit: Custom (MTM)' : `Size: ${item.size}`} • Qty: {item.quantity}
+                            </p>
+                          </div>
+                          <p className="font-semibold text-gray-900">₹{(item.price * item.quantity).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
                         </div>
-                        <p className="font-semibold text-gray-900">₹{(item.price * item.quantity).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
                       </div>
                     ))}
                   </div>

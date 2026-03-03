@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import { Search, ShoppingCart, Plus, Minus, AlertCircle, Package, RefreshCw, Ruler } from 'lucide-react'
 import { getProductsForDesignation, getEmployeeByEmail, getConsumedEligibility, getCompanyById, isCompanyAdmin, getLocationByAdminEmail, getBranchByAdminEmail, Uniform } from '@/lib/data-mongodb'
@@ -10,6 +10,8 @@ import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 // Removed maskEmail import - employees should see their own information unmasked
 import SizeChartModal from '@/components/SizeChartModal'
+import MeasurementForm from '@/components/MeasurementForm'
+import MTMBadge from '@/components/MTMBadge'
 
 export default function ConsumerCatalogPage() {
   const router = useRouter()
@@ -45,9 +47,17 @@ export default function ConsumerCatalogPage() {
     imageUrl: '',
     productName: '',
   })
+  // MTM (Made-to-Measure) state
+  const [mtmAvailability, setMtmAvailability] = useState<Record<string, { available: boolean; config?: any; specification?: any }>>({})
+  const [mtmSelections, setMtmSelections] = useState<Record<string, boolean>>({}) // productId → true if MTM selected
+  const [mtmMeasurements, setMtmMeasurements] = useState<Record<string, { measurements: Record<string, { value: number; unit: 'cm' | 'inches' }>; instructions: string }>>({})
+  const [mtmFormOpen, setMtmFormOpen] = useState<{ isOpen: boolean; productId: string; productName: string }>({ isOpen: false, productId: '', productName: '' })
+  const [savedProfile, setSavedProfile] = useState<Record<string, { value: number; unit: 'cm' | 'inches' }> | null>(null)
+  const lastLoadRef = useRef(0)
   
   // Get current employee and load products - SINGLE useEffect to avoid race conditions
   useEffect(() => {
+    let cancelled = false
     if (typeof window === 'undefined') return
     
     const loadData = async () => {
@@ -60,6 +70,7 @@ export default function ConsumerCatalogPage() {
         
         if (!userEmail) {
           console.error('Consumer Catalog - No userEmail in sessionStorage for consumer role')
+          if (cancelled) return
           setLoading(false)
           return
         }
@@ -72,6 +83,7 @@ export default function ConsumerCatalogPage() {
         // If user logged in as vendor, redirect to vendor portal immediately (no API call needed)
         if (currentActorType === 'vendor' || vendorAuthData?.vendorId) {
           console.log('Consumer Catalog - User is logged in as vendor, redirecting to vendor portal')
+          if (cancelled) return
           router.push('/dashboard/vendor')
           setLoading(false)
           return
@@ -84,6 +96,7 @@ export default function ConsumerCatalogPage() {
         
         if (!employee) {
           console.error('Consumer Catalog - No employee found for email:', userEmail)
+          if (cancelled) return
           alert(`No employee account found for email: ${userEmail}. Please check your login credentials or contact support.`)
           router.push('/login/consumer')
           setLoading(false)
@@ -91,6 +104,7 @@ export default function ConsumerCatalogPage() {
         }
         
         // Set employee first
+        if (cancelled) return
         setCurrentEmployee(employee)
         
         // ENFORCEMENT: Check if employee order is enabled (only for regular employees, not admins)
@@ -108,6 +122,7 @@ export default function ConsumerCatalogPage() {
             const companyData = await getCompanyById(companyIdForCheck)
             // Check if enableEmployeeOrder is explicitly false (undefined/null means not set, which should default to false)
             if (companyData && (companyData.enableEmployeeOrder === false || companyData.enableEmployeeOrder === undefined)) {
+              if (cancelled) return
               setError('Employee orders are currently disabled for your company. Please contact your administrator.')
               setLoading(false)
               router.push('/login/consumer')
@@ -148,6 +163,7 @@ export default function ConsumerCatalogPage() {
         if (!companyId) {
           console.error('Consumer Catalog - Employee has no companyId. Employee must be linked to a company using companyId.')
           console.error('Consumer Catalog - Employee object:', JSON.stringify(employee, null, 2))
+          if (cancelled) return
           setLoading(false)
           return
         }
@@ -169,6 +185,7 @@ export default function ConsumerCatalogPage() {
           fetch(`/api/companies?getAdmins=true&companyId=${companyId}`).then(res => res.ok ? res.json() : []).catch(() => [])
         ])
         
+        if (cancelled) return
         // Set company admins for contact information
         if (Array.isArray(adminsResponse)) {
           setCompanyAdmins(adminsResponse)
@@ -292,6 +309,7 @@ export default function ConsumerCatalogPage() {
             const response = await fetch(`/api/products/size-charts?productIds=${productIds.join(',')}`)
             if (response.ok) {
               const charts = await response.json()
+              if (cancelled) return
               setSizeCharts(charts)
             }
           } catch (error) {
@@ -312,17 +330,22 @@ export default function ConsumerCatalogPage() {
       } catch (error) {
         console.error('Consumer Catalog - Error loading data:', error)
       } finally {
+        if (cancelled) return
         setLoading(false)
       }
     }
     
     // Load immediately
     loadData()
+    lastLoadRef.current = Date.now()
     
-    // Also reload when window gains focus (in case data was updated in another tab)
+    // Reload when window gains focus, but only if data is stale (>2 min)
     const handleFocus = () => {
-      console.log('Consumer Catalog - Window focused, reloading...')
-      loadData()
+      if (Date.now() - lastLoadRef.current > 120_000) {
+        console.log('Consumer Catalog - Window focused, data stale, reloading...')
+        loadData()
+        lastLoadRef.current = Date.now()
+      }
     }
     window.addEventListener('focus', handleFocus)
     
@@ -342,6 +365,7 @@ export default function ConsumerCatalogPage() {
     window.addEventListener('storage', handleStorageChange)
     
     return () => {
+      cancelled = true
       window.removeEventListener('focus', handleFocus)
       window.removeEventListener('storage', handleStorageChange)
     }
@@ -375,6 +399,55 @@ export default function ConsumerCatalogPage() {
     reloadProducts()
   }, [currentEmployee?.id, currentEmployee?.companyId])
   
+  // Fetch MTM availability for loaded products when company has MTM enabled
+  useEffect(() => {
+    if (!company?.enable_mtm || uniforms.length === 0) return
+    const companyId = typeof currentEmployee?.companyId === 'object'
+      ? currentEmployee.companyId.id : String(currentEmployee?.companyId || '')
+    if (!companyId) return
+
+    const fetchMTM = async () => {
+      try {
+        const productIds = uniforms.map(u => u.id)
+        // Single batch fetch instead of N individual requests
+        const batchRes = await fetch(`/api/mtm/product-config?companyId=${companyId}&productIds=${productIds.join(',')}`)
+        const availability: Record<string, { available: boolean; config?: any; specification?: any }> = batchRes.ok
+          ? await batchRes.json()
+          : Object.fromEntries(productIds.map(pid => [pid, { available: false }]))
+        setMtmAvailability(availability)
+
+        // Also fetch saved measurement profile for this employee
+        const employeeId = currentEmployee?.employeeId || currentEmployee?.id
+        if (employeeId) {
+          try {
+            const profileRes = await fetch(`/api/employees/${employeeId}/measurements?active=true`)
+            if (profileRes.ok) {
+              const profileData = await profileRes.json()
+              if (profileData && profileData.measurements) {
+                const profileMap: Record<string, { value: number; unit: 'cm' | 'inches' }> = {}
+                if (profileData.measurements instanceof Map || typeof profileData.measurements === 'object') {
+                  Object.entries(profileData.measurements).forEach(([key, val]: [string, any]) => {
+                    if (val && typeof val === 'object' && 'value' in val) {
+                      profileMap[key] = { value: val.value, unit: val.unit || 'cm' }
+                    }
+                  })
+                }
+                if (Object.keys(profileMap).length > 0) {
+                  setSavedProfile(profileMap)
+                }
+              }
+            }
+          } catch {
+            // Non-critical: profile loading is optional
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching MTM availability:', error)
+      }
+    }
+    fetchMTM()
+  }, [company?.enable_mtm, uniforms.length, currentEmployee?.companyId])
+
   // REMOVED: Gender filter dropdown - employee gender is auto-derived from profile
   // Gender filtering is handled by backend API (getProductsForDesignation)
   // Frontend should NOT allow manual gender selection
@@ -710,17 +783,38 @@ export default function ConsumerCatalogPage() {
       // Personal payments are allowed - proceed to review page where personal payment will be calculated
     }
 
+    // Validate MTM items have measurements before checkout
+    for (const [uniformId] of Object.entries(cart)) {
+      if (mtmSelections[uniformId] && !mtmMeasurements[uniformId]) {
+        const uniform = uniforms.find(u => u.id === uniformId) as any
+        alert(`Please provide measurements for "${uniform?.name || 'product'}" before checkout.`)
+        return
+      }
+    }
+
     // Build order data with subcategoryId per item (for per-subcategory consumed tracking)
     const orderData = {
       items: Object.entries(cart).map(([uniformId, item]) => {
         const uniform = uniforms.find(u => u.id === uniformId) as any
+        const isMTM = mtmSelections[uniformId] || false
+        const mtmData = isMTM ? mtmMeasurements[uniformId] : undefined
+        const basePrice = uniform?.price || 0
+        const mtmPremium = isMTM ? (mtmAvailability[uniformId]?.config?.mtm_price_premium || 0) : 0
         return {
           uniformId,
           uniformName: uniform?.name || '',
-          size: item.size,
+          size: isMTM ? 'MTM' : item.size,
           quantity: item.quantity,
-          price: uniform?.price || 0,
-          ...(uniform?.primarySubcategoryId && { subcategoryId: uniform.primarySubcategoryId })
+          price: basePrice + mtmPremium,
+          ...(uniform?.primarySubcategoryId && { subcategoryId: uniform.primarySubcategoryId }),
+          ...(isMTM && {
+            fit_type: 'MTM' as const,
+            mtm_measurements: mtmData?.measurements,
+            mtm_instructions: mtmData?.instructions || '',
+            mtm_specification_id: mtmAvailability[uniformId]?.config?.mtm_specification_id,
+            mtm_price_premium: mtmPremium,
+            base_price: basePrice,
+          }),
         }
       })
     }
@@ -1272,6 +1366,68 @@ export default function ConsumerCatalogPage() {
                     </div>
                   )}
                   
+                  {/* MTM toggle – shown only when product supports MTM */}
+                  {company?.enable_mtm && mtmAvailability[uniform.id]?.available && (
+                    <div className="mb-3 p-2.5 rounded-lg border border-violet-200 bg-violet-50/50">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={mtmSelections[uniform.id] || false}
+                          onChange={(e) => {
+                            setMtmSelections(prev => ({ ...prev, [uniform.id]: e.target.checked }))
+                            if (!e.target.checked) {
+                              setMtmMeasurements(prev => { const copy = { ...prev }; delete copy[uniform.id]; return copy })
+                            }
+                          }}
+                          className="w-4 h-4 text-violet-600 border-gray-300 rounded focus:ring-violet-500"
+                        />
+                        <span className="text-sm font-medium text-violet-700">Custom Fit (MTM)</span>
+                      </label>
+                      {mtmSelections[uniform.id] && (
+                        <div className="mt-2">
+                          {mtmMeasurements[uniform.id] ? (
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-green-700">
+                                ✓ {Object.keys(mtmMeasurements[uniform.id].measurements).length} measurements saved
+                              </span>
+                              <button
+                                onClick={() => setMtmFormOpen({ isOpen: true, productId: uniform.id, productName: uniform.name })}
+                                className="text-xs text-violet-600 hover:text-violet-800 underline"
+                              >
+                                Edit
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => setMtmFormOpen({ isOpen: true, productId: uniform.id, productName: uniform.name })}
+                                className="w-full text-xs text-white py-1.5 rounded-md hover:opacity-90 transition-opacity"
+                                style={{ backgroundColor: company?.primaryColor || '#f76b1c' }}
+                              >
+                                Enter Measurements
+                              </button>
+                              {savedProfile && (
+                                <button
+                                  onClick={() => {
+                                    setMtmMeasurements(prev => ({
+                                      ...prev,
+                                      [uniform.id]: { measurements: { ...savedProfile }, instructions: '' },
+                                    }))
+                                  }}
+                                  className="w-full text-xs text-violet-600 py-1 mt-1 rounded-md hover:bg-violet-50 transition-colors border border-violet-200"
+                                >
+                                  Use Saved Profile
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Size selection – hidden when MTM is selected */}
+                  {!mtmSelections[uniform.id] && (
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-gray-700 mb-2">Size:</label>
                     <select
@@ -1286,6 +1442,7 @@ export default function ConsumerCatalogPage() {
                       ))}
                     </select>
                   </div>
+                  )}
 
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-gray-700 mb-2">Quantity:</label>
@@ -1322,8 +1479,9 @@ export default function ConsumerCatalogPage() {
 
                   {currentQuantity > 0 && (
                     <div className="mt-4 pt-4 border-t border-gray-200">
-                      <p className="text-sm text-gray-600">
-                        <span className="font-medium text-gray-900">{currentQuantity}</span> × {selectedSize} in cart
+                      <p className="text-sm text-gray-600 flex items-center gap-2">
+                        <span className="font-medium text-gray-900">{currentQuantity}</span> × {mtmSelections[uniform.id] ? 'Custom Fit' : selectedSize} in cart
+                        {mtmSelections[uniform.id] && <MTMBadge />}
                       </p>
                     </div>
                   )}
@@ -1342,6 +1500,26 @@ export default function ConsumerCatalogPage() {
         imageUrl={sizeChartModal.imageUrl}
         productName={sizeChartModal.productName}
       />
+
+      {/* MTM Measurement Form Modal */}
+      {mtmFormOpen.isOpen && mtmAvailability[mtmFormOpen.productId]?.specification && (
+        <MeasurementForm
+          isOpen={mtmFormOpen.isOpen}
+          onClose={() => setMtmFormOpen({ isOpen: false, productId: '', productName: '' })}
+          onSave={(measurements, instructions) => {
+            setMtmMeasurements(prev => ({
+              ...prev,
+              [mtmFormOpen.productId]: { measurements, instructions },
+            }))
+            setMtmFormOpen({ isOpen: false, productId: '', productName: '' })
+          }}
+          measurementPoints={mtmAvailability[mtmFormOpen.productId]?.specification?.measurement_points || []}
+          productName={mtmFormOpen.productName}
+          existingMeasurements={mtmMeasurements[mtmFormOpen.productId]?.measurements || savedProfile || undefined}
+          existingInstructions={mtmMeasurements[mtmFormOpen.productId]?.instructions}
+          primaryColor={company?.primaryColor}
+        />
+      )}
     </DashboardLayout>
   )
 }

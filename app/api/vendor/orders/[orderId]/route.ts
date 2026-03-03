@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import Order from '@/lib/models/Order'
 import Shipment from '@/lib/models/Shipment'
@@ -21,6 +22,8 @@ export async function GET(
   { params }: { params: Promise<{ orderId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { orderId } = await params
     const { searchParams } = new URL(request.url)
     const vendorId = searchParams.get('vendorId')

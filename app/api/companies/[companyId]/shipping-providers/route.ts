@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getEnabledProvidersForCompany } from '@/lib/providers/ProviderFactory'
 import connectDB from '@/lib/db/mongodb'
 // Ensure models are registered
@@ -86,6 +87,8 @@ export async function POST(
   { params }: { params: Promise<{ companyId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
     const { companyId } = await params
     // Parse JSON body with error handling
@@ -265,6 +268,8 @@ export async function PUT(
   { params }: { params: Promise<{ companyId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
     const { companyId } = await params
     // Parse JSON body with error handling

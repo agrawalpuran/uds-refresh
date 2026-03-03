@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getInvoicesForCompany, approveInvoice } from '@/lib/db/data-access'
 // Ensure models are registered
 import '@/lib/models/Invoice'
@@ -12,6 +13,8 @@ import '@/lib/models/Invoice'
 export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const companyId = searchParams.get('companyId')
 

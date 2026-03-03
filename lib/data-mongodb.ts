@@ -587,7 +587,9 @@ export async function getAllCompanies(): Promise<any[]> {
 export async function getCompanyById(companyId: string): Promise<any | null> {
   if (!companyId) return null
   try {
-    return await fetchAPI<any>(`/companies?companyId=${companyId}`)
+    return await fetchAPI<any>(`/companies?companyId=${companyId}&_t=${Date.now()}`, {
+      cache: 'no-store',
+    })
   } catch (error) {
     console.error('Error fetching company by ID:', error)
     return null
@@ -671,6 +673,8 @@ export async function updateCompanySettings(
     enable_site_admin_pr_approval?: boolean
     require_company_admin_po_approval?: boolean
     allow_multi_pr_po?: boolean
+    // Made-to-Measure (MTM)
+    enable_mtm?: boolean
   }
 ): Promise<any> {
   try {
@@ -1164,10 +1168,18 @@ export async function createOrder(orderData: {
     quantity: number
     price: number
     subcategoryId?: string
+    fit_type?: string
+    mtm_measurements?: Record<string, any>
+    mtm_specification_id?: string
+    mtm_instructions?: string
+    mtm_price_premium?: number
+    base_price?: number
   }>
   deliveryAddress: string
   estimatedDeliveryTime: string
   dispatchLocation?: string
+  isPersonalPayment?: boolean
+  personalPaymentAmount?: number
 }): Promise<any> {
   try {
     const response = await fetch('/api/orders', {

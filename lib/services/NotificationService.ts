@@ -1146,25 +1146,37 @@ export async function processNotificationQueue(
   
   try {
     // Build query for pending notifications that are due
-    const query: any = {
+    const claimQuery: any = {
       status: 'PENDING',
       scheduledFor: { $lte: new Date() },
-      attempts: { $lt: 3 }, // Max 3 attempts
+      attempts: { $lt: 3 },
     }
     
     if (companyId) {
-      query.companyId = companyId
+      claimQuery.companyId = companyId
     }
     
-    // Fetch pending notifications
-    const pendingNotifications = await NotificationQueue.find(query)
-      .sort({ scheduledFor: 1 })
-      .limit(batchSize)
-      .lean()
+    console.log(`${logPrefix} Claiming up to ${batchSize} pending notifications...`)
     
-    console.log(`${logPrefix} Found ${pendingNotifications.length} pending notifications to process`)
+    // Atomically claim notifications one at a time using findOneAndUpdate.
+    // This prevents two concurrent processors from picking up the same item.
+    const claimedNotifications: any[] = []
+    for (let i = 0; i < batchSize; i++) {
+      const claimed = await NotificationQueue.findOneAndUpdate(
+        claimQuery,
+        {
+          $set: { status: 'PROCESSING', lastAttemptAt: new Date() },
+          $inc: { attempts: 1 },
+        },
+        { sort: { scheduledFor: 1 }, returnDocument: 'after' }
+      ).lean()
+      if (!claimed) break
+      claimedNotifications.push(claimed)
+    }
     
-    for (const notification of pendingNotifications) {
+    console.log(`${logPrefix} Claimed ${claimedNotifications.length} notifications to process`)
+    
+    for (const notification of claimedNotifications) {
       result.processed++
       
       try {
@@ -1172,32 +1184,18 @@ export async function processNotificationQueue(
         const stillInQuietHours = await isInQuietHours(notification.companyId)
         
         if (stillInQuietHours) {
-          // Reschedule for later
           const newScheduledTime = await getQuietHoursEndTime(notification.companyId)
           if (newScheduledTime) {
             await NotificationQueue.updateOne(
               { queueId: notification.queueId },
               {
-                $set: { scheduledFor: newScheduledTime },
-                $inc: { attempts: 1 },
+                $set: { scheduledFor: newScheduledTime, status: 'PENDING' },
               }
             )
             console.log(`${logPrefix} ⏰ Rescheduled ${notification.queueId} to ${newScheduledTime.toISOString()}`)
           }
           continue
         }
-        
-        // Mark as processing
-        await NotificationQueue.updateOne(
-          { queueId: notification.queueId },
-          {
-            $set: {
-              status: 'PROCESSING',
-              lastAttemptAt: new Date(),
-            },
-            $inc: { attempts: 1 },
-          }
-        )
         
         // Get company branding for from name
         const branding = await getCompanyBranding(notification.companyId)
@@ -1247,9 +1245,9 @@ export async function processNotificationQueue(
           result.sent++
           console.log(`${logPrefix} ✅ Sent queued notification ${notification.queueId} to ${notification.recipientEmail}`)
         } else {
-          // Mark as failed or retry
-          const newAttempts = (notification.attempts || 0) + 1
-          const status = newAttempts >= 3 ? 'FAILED' : 'PENDING'
+          // Mark as failed or retry (attempts already incremented during claim)
+          const currentAttempts = notification.attempts || 1
+          const status = currentAttempts >= 3 ? 'FAILED' : 'PENDING'
           
           await NotificationQueue.updateOne(
             { queueId: notification.queueId },
@@ -1271,13 +1269,16 @@ export async function processNotificationQueue(
           console.error(`${logPrefix} ❌ Failed to send ${notification.queueId}: ${emailResult.error}`)
         }
       } catch (error: any) {
-        // Mark as failed
+        // Attempts already incremented during claim — retry if under limit
+        const currentAttempts = notification.attempts || 1
+        const errorStatus = currentAttempts >= 3 ? 'FAILED' : 'PENDING'
         await NotificationQueue.updateOne(
           { queueId: notification.queueId },
           {
             $set: {
-              status: 'FAILED',
+              status: errorStatus,
               lastError: error.message,
+              ...(errorStatus === 'PENDING' ? { scheduledFor: new Date(Date.now() + 5 * 60 * 1000) } : {}),
             },
           }
         )

@@ -1,5 +1,6 @@
 
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getReturnRequestsByCompany } from '@/lib/db/data-access'
 
 // Force dynamic rendering for serverless functions
@@ -7,6 +8,8 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const companyId = searchParams.get('companyId')
     const status = searchParams.get('status')

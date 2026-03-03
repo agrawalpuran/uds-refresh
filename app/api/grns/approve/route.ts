@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { approveGRN } from '@/lib/db/data-access'
 // Ensure models are registered
 import '@/lib/models/GRN'
@@ -13,6 +14,8 @@ import '@/lib/models/GRN'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {

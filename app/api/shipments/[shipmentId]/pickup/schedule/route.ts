@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import Shipment from '@/lib/models/Shipment'
 import ShipmentPickup from '@/lib/models/ShipmentPickup'
@@ -26,6 +27,8 @@ export async function POST(
   { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { shipmentId } = await params
     // Parse JSON body with error handling
     let body: any

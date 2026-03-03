@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import { updateManualShipmentStatus } from '@/lib/db/data-access'
 // Ensure models are registered
@@ -18,6 +19,8 @@ export async function PUT(
   { params }: { params: Promise<{ shipmentId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
     
     const { shipmentId } = await params

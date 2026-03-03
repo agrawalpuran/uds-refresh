@@ -25,6 +25,7 @@
     "set-prices": "node scripts/set-product-prices.js",
     "fix-order-prices": "node scripts/fix-order-prices.js",
     "fix-missing-pr-status": "npx tsx scripts/fix-missing-pr-status.ts",
+    "migrate-email-hash": "npx tsx scripts/migrate-email-hash.ts",
     "enable-workflow-and-fix-orders": "npx tsx scripts/enable-workflow-and-fix-orders.ts",
     "seed-workflows": "npx tsx scripts/seed-workflow-configurations.ts",
     "delete-all-orders": "node scripts/delete-all-orders.js",
@@ -73,7 +74,8 @@
     "test:api:map": "node scripts/generate-api-route-map.js",
     "validate:string-ids": "node scripts/validate-string-ids.js",
     "seed-notifications": "npx tsx scripts/seed-notification-templates.ts",
-    "test-email": "npx tsx scripts/test-email.ts"
+    "test-email": "npx tsx scripts/test-email.ts",
+    "create-users": "npx tsx scripts/create-users.ts"
   },
   "dependencies": {
     "@types/nodemailer": "^7.0.5",
@@ -81,10 +83,12 @@
     "adm-zip": "^0.5.16",
     "archiver": "^7.0.1",
     "autoprefixer": "10.4.23",
+    "bcryptjs": "^3.0.3",
     "exceljs": "^4.4.0",
     "lucide-react": "^0.553.0",
     "mongoose": "^8.19.3",
     "next": "^16.1.1",
+    "next-auth": "^5.0.0-beta.30",
     "nodemailer": "^7.0.12",
     "postcss": "8.5.6",
     "react": "^19.2.3",
@@ -96,6 +100,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "25.0.6",
     "@types/react": "^19.2.4",
     "@types/react-dom": "^19.2.3",

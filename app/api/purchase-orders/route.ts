@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { createPurchaseOrderFromPRs, derivePOShippingStatus } from '@/lib/db/data-access'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
+import { createPurchaseOrderFromPRs, derivePOShippingStatusBatch } from '@/lib/db/data-access'
 // Ensure models are registered
 import '@/lib/models/PurchaseOrder'
 import '@/lib/models/POOrder'
@@ -194,24 +195,20 @@ export async function GET(request: Request) {
     
     const vendorMap = new Map(vendors.map((v: any) => [v.id, v]))
     
-    // Add vendor details and derived shipping status to each PO
-    const purchaseOrdersWithDetails = await Promise.all(
-      purchaseOrders.map(async (po: any) => {
-        // Derive shipping status from PR data
-        let shippingStatus: string = 'AWAITING_SHIPMENT'
-        try {
-          shippingStatus = await derivePOShippingStatus(po.id)
-        } catch (error: any) {
-          console.warn(`[API /purchase-orders GET] Could not derive shipping status for PO ${po.id}:`, error.message)
-        }
-        
-        return {
-          ...po,
-          vendor: vendorMap.get(po.vendorId) || null,
-          shippingStatus // Derived, not persisted
-        }
-      })
-    )
+    // Batch-derive shipping status for all POs in 2 queries instead of 3*N
+    const poIds = purchaseOrders.map((po: any) => po.id).filter(Boolean)
+    let shippingStatusMap = new Map<string, string>()
+    try {
+      shippingStatusMap = await derivePOShippingStatusBatch(poIds)
+    } catch (error: any) {
+      console.warn(`[API /purchase-orders GET] Could not batch derive shipping statuses:`, error.message)
+    }
+
+    const purchaseOrdersWithDetails = purchaseOrders.map((po: any) => ({
+      ...po,
+      vendor: vendorMap.get(po.vendorId) || null,
+      shippingStatus: shippingStatusMap.get(po.id) || 'AWAITING_SHIPMENT'
+    }))
     
     // Convert to plain objects - use string IDs
     const plainPOs = purchaseOrdersWithDetails.map((po: any) => {

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getProductsByVendor, getProductsByVendorAndCompany } from '@/lib/db/data-access'
 
 // Force dynamic rendering for serverless functions
@@ -16,6 +17,8 @@ export async function GET(
   { params }: { params: Promise<{ vendorId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // CRITICAL: In Next.js 15+, params is a Promise that must be awaited
     const { vendorId } = await params
     const { searchParams } = new URL(request.url)

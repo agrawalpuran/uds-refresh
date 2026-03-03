@@ -48,6 +48,7 @@ export default function ConsumerDashboard() {
   
   // Get current employee from tab-specific storage on mount
   useEffect(() => {
+    let cancelled = false
     if (typeof window !== 'undefined') {
       const loadData = async () => {
         try {
@@ -60,6 +61,7 @@ export default function ConsumerDashboard() {
           
           if (!userEmail) {
             console.error('Consumer Dashboard - No userEmail found')
+            if (cancelled) return
             setError('No email found. Please log in again.')
             setLoading(false)
             return
@@ -74,6 +76,7 @@ export default function ConsumerDashboard() {
             // If user logged in as vendor, redirect to vendor portal immediately (no API call needed)
             if (currentActorType === 'vendor' || vendorAuthData?.vendorId) {
               console.log('Consumer Dashboard - User is logged in as vendor, redirecting to vendor portal')
+              if (cancelled) return
               router.push('/dashboard/vendor')
               setLoading(false)
               return
@@ -86,11 +89,13 @@ export default function ConsumerDashboard() {
             
             if (!employee) {
               console.error('Consumer Dashboard - No employee found for email:', userEmail)
+              if (cancelled) return
               setError(`No employee account found for email: ${userEmail}. Please check your login credentials or contact support.`)
               setLoading(false)
               return
             }
             
+            if (cancelled) return
             setCurrentEmployee(employee)
             
             // ENFORCEMENT: Check if employee order is enabled (only for regular employees, not admins)
@@ -99,15 +104,18 @@ export default function ConsumerDashboard() {
               : employee.companyId
             
             if (companyIdForCheck) {
-              const isAdmin = await isCompanyAdmin(userEmail, companyIdForCheck)
-              const location = await getLocationByAdminEmail(userEmail)
-              const branch = await getBranchByAdminEmail(userEmail)
+              const [isAdmin, location, branch] = await Promise.all([
+                isCompanyAdmin(userEmail, companyIdForCheck),
+                getLocationByAdminEmail(userEmail),
+                getBranchByAdminEmail(userEmail),
+              ])
               
               // If not an admin, check if employee order is enabled
               if (!isAdmin && !location && !branch) {
                 const companyData = await getCompanyById(companyIdForCheck)
                 // Check if enableEmployeeOrder is explicitly false (undefined/null means not set, which should default to false)
                 if (companyData && (companyData.enableEmployeeOrder === false || companyData.enableEmployeeOrder === undefined)) {
+                  if (cancelled) return
                   setError('Employee orders are currently disabled for your company. Please contact your administrator.')
                   setLoading(false)
                   router.push('/login/consumer')
@@ -199,6 +207,7 @@ export default function ConsumerDashboard() {
                 companyId: employee.companyId,
                 companyName: employee.companyName
               })
+              if (cancelled) return
               setError('Employee is not associated with a company. Please contact your administrator.')
               setLoading(false)
               return
@@ -224,6 +233,7 @@ export default function ConsumerDashboard() {
             console.log('Consumer Dashboard - Total eligibility from designation:', eligibilityResponse)
             console.log('Consumer Dashboard - Company settings:', companyData ? { showPrices: companyData.showPrices, allowPersonalPayments: companyData.allowPersonalPayments } : 'not loaded')
             
+            if (cancelled) return
             setCompanyProducts(products)
             setMyOrders(orders)
             setConsumedEligibility(consumed)
@@ -275,6 +285,7 @@ export default function ConsumerDashboard() {
               const profileResponse = await fetch(`/api/user/profile?email=${encodeURIComponent(userEmail)}`)
               if (profileResponse.ok) {
                 const profileData = await profileResponse.json()
+                if (cancelled) return
                 setUserProfile(profileData)
               } else {
                 console.warn('Failed to fetch user profile:', profileResponse.status)
@@ -288,18 +299,22 @@ export default function ConsumerDashboard() {
             }
           } catch (apiError: any) {
             console.error('Consumer Dashboard - API Error:', apiError)
+            if (cancelled) return
             setError(apiError?.message || 'Failed to load employee data. Please try again.')
           }
         } catch (error: any) {
           console.error('Consumer Dashboard - Error loading data:', error)
+          if (cancelled) return
           setError(error?.message || 'Failed to load data. Please try again.')
         } finally {
+          if (cancelled) return
           setLoading(false)
         }
       }
       
       loadData()
     }
+    return () => { cancelled = true }
   }, [])
   
   const pendingOrders = myOrders.filter(o => o.status === 'Awaiting approval' || o.status === 'Awaiting fulfilment').length

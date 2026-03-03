@@ -115,10 +115,8 @@ const BranchSchema = new Schema<IBranch>(
   }
 )
 
-// Note: id, companyId, and adminId already have index: true in schema definitions
-// BranchSchema.index({ id: 1 }) // REMOVED: Duplicate of id: { index: true }
-// BranchSchema.index({ companyId: 1 }) // REMOVED: Duplicate of companyId: { index: true }
-// BranchSchema.index({ adminId: 1 }) // REMOVED: Duplicate of adminId: { index: true }
+BranchSchema.index({ companyId: 1 }) // Branches-by-company lookups
+BranchSchema.index({ adminId: 1 }) // Branch admin lookups
 
 // Encryption removed: Branch data is NOT employee PII
 // Branch fields (address, phone, email) are stored and queried as plaintext

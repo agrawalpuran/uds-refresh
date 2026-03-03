@@ -114,6 +114,16 @@ export function decrypt(encryptedText: string): string {
 }
 
 /**
+ * Generates a deterministic SHA-256 hash of a normalized email.
+ * Used for O(1) employee lookup by email without decrypting every record.
+ */
+export function hashEmail(email: string): string {
+  if (!email) return ''
+  const normalized = email.trim().toLowerCase()
+  return crypto.createHash('sha256').update(normalized).digest('hex')
+}
+
+/**
  * Encrypts an object's sensitive fields
  * @param obj - Object to encrypt
  * @param fields - Array of field names to encrypt

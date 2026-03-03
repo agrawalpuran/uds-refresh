@@ -1,5 +1,6 @@
 
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getGRNsRaisedByVendors } from '@/lib/db/data-access'
 
 // Ensure models are registered
@@ -20,6 +21,8 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     return NextResponse.json(
       { error: 'GRN creation is now vendor-led. Please use /api/vendor/grns endpoint.' },
       { status: 400 }
@@ -147,6 +150,8 @@ export async function GET(request: Request) {
  */
 export async function PUT(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     return NextResponse.json(
       { error: 'GRN status updates are handled via approval/acknowledgment endpoints.' },
       { status: 400 }

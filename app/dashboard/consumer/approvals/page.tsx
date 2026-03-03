@@ -712,9 +712,21 @@ export default function SiteAdminApprovalsPage() {
                           <div key={idx} className="flex items-center justify-between p-2 bg-gray-50 rounded">
                             <div>
                               <p className="font-medium text-gray-900">{item.uniformName || item.uniformId?.name || 'N/A'}</p>
-                              <p className="text-sm text-gray-600">Size: {item.size}, Qty: {item.quantity}</p>
+                              <p className="text-sm text-gray-600">{item.fit_type === 'MTM' ? 'Fit: Custom (MTM)' : `Size: ${item.size}`}, Qty: {item.quantity}</p>
+                              {item.fit_type === 'MTM' && (
+                                <p className="text-xs text-violet-600 mt-0.5">
+                                  {item.mtm_price_premium > 0
+                                    ? `Includes MTM premium: +₹${Number(item.mtm_price_premium).toFixed(2)}`
+                                    : 'Price includes MTM premium'}
+                                </p>
+                              )}
                             </div>
-                            <p className="font-semibold text-gray-900">₹{(item.price * item.quantity).toFixed(2)}</p>
+                            <div className="text-right">
+                              <p className="font-semibold text-gray-900">₹{(item.price * item.quantity).toFixed(2)}</p>
+                              {item.fit_type === 'MTM' && item.mtm_price_premium > 0 && (
+                                <p className="text-[10px] text-gray-400">₹{(item.price - item.mtm_price_premium).toFixed(2)} + ₹{Number(item.mtm_price_premium).toFixed(2)}</p>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -765,56 +777,60 @@ export default function SiteAdminApprovalsPage() {
               </button>
             </div>
 
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="prNumber" className="block text-sm font-medium text-gray-700 mb-1">
-                  PR Number <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  id="prNumber"
-                  value={prNumber}
-                  onChange={(e) => setPrNumber(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Enter PR number"
-                  required
-                />
+            <form onSubmit={(e) => { e.preventDefault(); handleConfirmApprove() }}>
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="prNumber" className="block text-sm font-medium text-gray-700 mb-1">
+                    PR Number <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    id="prNumber"
+                    value={prNumber}
+                    onChange={(e) => setPrNumber(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Enter PR number"
+                    autoFocus
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="prDate" className="block text-sm font-medium text-gray-700 mb-1">
+                    PR Date <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="date"
+                    id="prDate"
+                    value={prDate || new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setPrDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    required
+                  />
+                </div>
               </div>
 
-              <div>
-                <label htmlFor="prDate" className="block text-sm font-medium text-gray-700 mb-1">
-                  PR Date <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  id="prDate"
-                  value={prDate || new Date().toISOString().split('T')[0]}
-                  onChange={(e) => setPrDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
+              <div className="mt-6 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowPRModal(false)
+                    setCurrentOrderId(null)
+                    setPrNumber('')
+                    setPrDate('')
+                  }}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  Approve PR
+                </button>
               </div>
-            </div>
-
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowPRModal(false)
-                  setCurrentOrderId(null)
-                  setPrNumber('')
-                  setPrDate('')
-                }}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmApprove}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-              >
-                Approve PR
-              </button>
-            </div>
+            </form>
           </div>
         </div>
       )}
@@ -837,109 +853,113 @@ export default function SiteAdminApprovalsPage() {
               </button>
             </div>
 
-            {/* Single PR Input Section - Applied to All Orders */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-              <div className="mb-3">
-                <p className="text-sm font-medium text-blue-900 mb-1">
-                  <FileText className="inline h-4 w-4 mr-1" />
-                  Common PR Details
-                </p>
-                <p className="text-xs text-blue-700">
-                  These PR details will be applied to all {selectedOrders.size} selected order{selectedOrders.size !== 1 ? 's' : ''}
-                </p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    PR Number <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={bulkPRNumber}
-                    onChange={(e) => setBulkPRNumber(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="Enter PR number"
-                    required
-                  />
+            <form onSubmit={(e) => { e.preventDefault(); handleConfirmBulkApprove() }}>
+              {/* Single PR Input Section - Applied to All Orders */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                <div className="mb-3">
+                  <p className="text-sm font-medium text-blue-900 mb-1">
+                    <FileText className="inline h-4 w-4 mr-1" />
+                    Common PR Details
+                  </p>
+                  <p className="text-xs text-blue-700">
+                    These PR details will be applied to all {selectedOrders.size} selected order{selectedOrders.size !== 1 ? 's' : ''}
+                  </p>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    PR Date <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="date"
-                    value={bulkPRDate || new Date().toISOString().split('T')[0]}
-                    onChange={(e) => setBulkPRDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    required
-                  />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      PR Number <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={bulkPRNumber}
+                      onChange={(e) => setBulkPRNumber(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Enter PR number"
+                      autoFocus
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      PR Date <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={bulkPRDate || new Date().toISOString().split('T')[0]}
+                      onChange={(e) => setBulkPRDate(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      required
+                    />
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Read-Only Order List */}
-            <div className="mb-4">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">
-                Selected Orders ({selectedOrders.size})
-              </h3>
-              <div className="space-y-2 max-h-96 overflow-y-auto border border-gray-200 rounded-lg p-4">
-                {Array.from(selectedOrders).map((orderId) => {
-                  const order = pendingOrders.find(o => o.id === orderId)
-                  
-                  if (!order) return null
+              {/* Read-Only Order List */}
+              <div className="mb-4">
+                <h3 className="text-sm font-medium text-gray-700 mb-3">
+                  Selected Orders ({selectedOrders.size})
+                </h3>
+                <div className="space-y-2 max-h-96 overflow-y-auto border border-gray-200 rounded-lg p-4">
+                  {Array.from(selectedOrders).map((orderId) => {
+                    const order = pendingOrders.find(o => o.id === orderId)
+                    
+                    if (!order) return null
 
-                  return (
-                    <div key={orderId} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <h4 className="font-semibold text-gray-900 text-sm">Order #{order.id}</h4>
-                          <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-600">
-                            <span className="flex items-center">
-                              <User className="h-3 w-3 mr-1" />
-                              {order.employeeName}
-                            </span>
-                            <span className="flex items-center">
-                              <Package className="h-3 w-3 mr-1" />
-                              {order.items?.length || 0} item(s)
-                            </span>
-                            <span className="flex items-center">
-                              <ShoppingBag className="h-3 w-3 mr-1" />
-                              ₹{order.total?.toFixed(2) || '0.00'}
+                    return (
+                      <div key={orderId} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <h4 className="font-semibold text-gray-900 text-sm">Order #{order.id}</h4>
+                            <div className="mt-1 flex flex-wrap gap-3 text-xs text-gray-600">
+                              <span className="flex items-center">
+                                <User className="h-3 w-3 mr-1" />
+                                {order.employeeName}
+                              </span>
+                              <span className="flex items-center">
+                                <Package className="h-3 w-3 mr-1" />
+                                {order.items?.length || 0} item(s)
+                              </span>
+                              <span className="flex items-center">
+                                <ShoppingBag className="h-3 w-3 mr-1" />
+                                ₹{order.total?.toFixed(2) || '0.00'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="ml-4">
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                              {order.unified_pr_status || 'Pending'}
                             </span>
                           </div>
                         </div>
-                        <div className="ml-4">
-                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                            {order.unified_pr_status || 'Pending'}
-                          </span>
-                        </div>
                       </div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
               </div>
-            </div>
 
-            <div className="mt-6 flex justify-end space-x-3">
-              <button
-                onClick={() => {
-                  setShowBulkPRModal(false)
-                  setBulkPRNumber('')
-                  setBulkPRDate('')
-                }}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                disabled={bulkApproving}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmBulkApprove}
-                disabled={bulkApproving || !bulkPRNumber.trim() || !bulkPRDate}
-                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-              >
-                {bulkApproving ? 'Approving...' : `Approve ${selectedOrders.size} PR(s)`}
-              </button>
-            </div>
+              <div className="mt-6 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowBulkPRModal(false)
+                    setBulkPRNumber('')
+                    setBulkPRDate('')
+                  }}
+                  className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                  disabled={bulkApproving}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={bulkApproving || !bulkPRNumber.trim() || !bulkPRDate}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {bulkApproving ? 'Approving...' : `Approve ${selectedOrders.size} PR(s)`}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

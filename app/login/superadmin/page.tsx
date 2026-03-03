@@ -5,34 +5,73 @@ import Link from 'next/link'
 import { ArrowLeft, Shield } from 'lucide-react'
 import OTPVerification from '@/components/OTPVerification'
 import { useRouter } from 'next/navigation'
+import { signIn } from 'next-auth/react'
 
 export default function SuperAdminLogin() {
-  const [emailOrPhone, setEmailOrPhone] = useState('')
+  const [email, setEmail] = useState('')
   const [showOTP, setShowOTP] = useState(false)
+  const [maskedPhone, setMaskedPhone] = useState('')
+  const [error, setError] = useState<string>('')
+  const [loading, setLoading] = useState(false)
   const router = useRouter()
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (emailOrPhone) {
+    setError('')
+
+    if (!email) {
+      setError('Please enter your email')
+      return
+    }
+
+    setLoading(true)
+
+    try {
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), portalType: 'superadmin' }),
+      })
+      const data = await res.json()
+
+      if (!res.ok) {
+        setError(data.error || 'Unable to send OTP. Please try again.')
+        setLoading(false)
+        return
+      }
+
+      setMaskedPhone(data.maskedPhone || '')
       setShowOTP(true)
+    } catch (err: any) {
+      console.error('Error sending OTP:', err)
+      setError('An error occurred. Please try again.')
+    } finally {
+      setLoading(false)
     }
   }
 
   const handleOTPVerify = async (otp: string) => {
-    // Use tab-specific authentication storage
-    const { setAuthData } = await import('@/lib/utils/auth-storage')
-    setAuthData('superadmin', {
-      userEmail: emailOrPhone
-    })
-    
-    // CRITICAL SECURITY FIX: Do NOT write to localStorage as it's shared across tabs
-    // Only use sessionStorage which is tab-specific
-    // This prevents cross-tab authentication leakage
-    sessionStorage.setItem('currentActorType', 'superadmin')
-    
-    setTimeout(() => {
-      router.push('/dashboard/superadmin')
-    }, 1000)
+    try {
+      const result = await signIn('credentials', {
+        email: email.trim().toLowerCase(),
+        otp,
+        redirect: false,
+      })
+
+      if (result?.error) {
+        setError('Verification failed. Please try again.')
+        setShowOTP(false)
+        return
+      }
+
+      if (result?.ok) {
+        router.push('/dashboard/superadmin')
+      }
+    } catch (err: any) {
+      console.error('Login error:', err)
+      setError('An error occurred during login. Please try again.')
+      setShowOTP(false)
+    }
   }
 
   const handleResendOTP = () => {
@@ -43,15 +82,28 @@ export default function SuperAdminLogin() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-50 via-white to-red-50 flex items-center justify-center p-4">
         <div className="w-full max-w-md">
-          <Link href="/login/superadmin" className="inline-flex items-center text-gray-600 hover:text-gray-900 mb-4">
+          <button
+            onClick={() => { setShowOTP(false); setError('') }}
+            className="inline-flex items-center text-gray-600 hover:text-gray-900 mb-4"
+          >
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to login
-          </Link>
+          </button>
+          {maskedPhone && (
+            <p className="text-sm text-gray-500 mb-2 text-center">
+              OTP sent to <span className="font-medium">{maskedPhone}</span>
+            </p>
+          )}
           <OTPVerification
-            emailOrPhone={emailOrPhone}
+            emailOrPhone={email}
             onVerify={handleOTPVerify}
             onResend={handleResendOTP}
           />
+          {error && (
+            <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-600">{error}</p>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -77,31 +129,42 @@ export default function SuperAdminLogin() {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label htmlFor="emailOrPhone" className="block text-sm font-medium text-gray-700 mb-2">
-                Email or Phone Number
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                Email Address
               </label>
               <input
-                type="text"
-                id="emailOrPhone"
-                value={emailOrPhone}
-                onChange={(e) => setEmailOrPhone(e.target.value)}
-                placeholder="Enter email or phone number"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                type="email"
+                id="email"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value)
+                  setError('')
+                }}
+                placeholder="Enter your email"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
                 required
+                disabled={loading}
+                autoComplete="email"
               />
+              {error && (
+                <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-sm text-red-600">{error}</p>
+                </div>
+              )}
             </div>
 
             <button
               type="submit"
-              className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold hover:bg-red-700 transition-colors"
+              disabled={loading || !email}
+              className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold hover:bg-red-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              Send OTP
+              {loading ? 'Verifying...' : 'Send OTP'}
             </button>
           </form>
 
           <div className="mt-6 text-center">
             <Link href="/" className="text-gray-600 hover:text-gray-900 text-sm">
-              ← Back to home
+              &larr; Back to home
             </Link>
           </div>
         </div>
@@ -109,9 +172,3 @@ export default function SuperAdminLogin() {
     </div>
   )
 }
-
-
-
-
-
-

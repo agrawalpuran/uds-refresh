@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import {
   getManualCourierProviderById,
   updateManualCourierProvider,
@@ -18,6 +19,8 @@ export async function GET(
   { params }: { params: Promise<{ courierRefId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { courierRefId } = await params
 
     const courier = await getManualCourierProviderById(courierRefId)
@@ -82,6 +85,8 @@ export async function PUT(
   { params }: { params: Promise<{ courierRefId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { courierRefId } = await params
     // Parse JSON body with error handling
     let body: any
@@ -171,6 +176,8 @@ export async function DELETE(
   { params }: { params: Promise<{ courierRefId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { courierRefId } = await params
 
     await deleteManualCourierProvider(courierRefId)

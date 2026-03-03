@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import {
   createIndentHeader,
   getIndentById,
@@ -11,6 +12,8 @@ import { isCompanyAdmin } from '@/lib/db/data-access'
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {
@@ -103,6 +106,8 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const indentId = searchParams.get('indentId')
 

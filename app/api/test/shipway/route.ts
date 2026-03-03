@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { ShipwayProvider } from '@/lib/providers/ShipwayProvider'
 import { ShiprocketProvider } from '@/lib/providers/ShiprocketProvider'
 import { MockProvider } from '@/lib/providers/MockProvider'
@@ -26,6 +27,8 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Only allow in development mode
     if (process.env.NODE_ENV === 'production') {
       return NextResponse.json(

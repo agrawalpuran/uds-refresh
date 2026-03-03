@@ -1,5 +1,5 @@
-
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import Employee from '@/lib/models/Employee'
 import Location from '@/lib/models/Location'
@@ -18,6 +18,8 @@ export async function GET(
   { params }: { params: Promise<{ branchId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
 
     const { branchId } = await params

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { 
   getAllCompanies, 
   getCompanyById, 
@@ -18,6 +19,8 @@ import {
 export const dynamic = 'force-dynamic'
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const companyId = searchParams.get('companyId')
     const email = searchParams.get('email')
@@ -158,6 +161,8 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {
@@ -167,7 +172,7 @@ export async function PATCH(request: Request) {
         error: 'Invalid JSON in request body'
       }, { status: 400 })
     }
-    const { companyId, employeeId, action, canApproveOrders, showPrices, allowPersonalPayments, enableEmployeeOrder, allowLocationAdminViewFeedback, allowEligibilityConsumptionReset, logo, primaryColor, secondaryColor, name, enable_pr_po_workflow, enable_site_admin_pr_approval, require_company_admin_po_approval, allow_multi_pr_po, shipmentRequestMode } = body
+    const { companyId, employeeId, action, canApproveOrders, showPrices, allowPersonalPayments, enableEmployeeOrder, allowLocationAdminViewFeedback, allowEligibilityConsumptionReset, logo, primaryColor, secondaryColor, name, enable_pr_po_workflow, enable_site_admin_pr_approval, require_company_admin_po_approval, allow_multi_pr_po, shipmentRequestMode, enable_mtm } = body
 
     if (!companyId) {
       return NextResponse.json({ error: 'Company ID is required' }, { status: 400 })
@@ -220,6 +225,7 @@ export async function PATCH(request: Request) {
         require_company_admin_po_approval?: boolean
         allow_multi_pr_po?: boolean
         shipmentRequestMode?: 'MANUAL' | 'AUTOMATIC'
+        enable_mtm?: boolean
       } = {}
       if (showPrices !== undefined) {
         if (typeof showPrices !== 'boolean') {
@@ -306,6 +312,12 @@ export async function PATCH(request: Request) {
         }
         settings.shipmentRequestMode = shipmentRequestMode
       }
+      if (enable_mtm !== undefined) {
+        if (typeof enable_mtm !== 'boolean') {
+          return NextResponse.json({ error: 'enable_mtm must be a boolean' }, { status: 400 })
+        }
+        settings.enable_mtm = enable_mtm
+      }
       const updated = await updateCompanySettings(companyId, settings)
       return NextResponse.json({ success: true, company: updated, message: 'Company settings updated successfully' })
     } else {
@@ -356,6 +368,8 @@ export async function PATCH(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {

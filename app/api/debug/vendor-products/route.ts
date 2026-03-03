@@ -1,5 +1,5 @@
-
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import mongoose from 'mongoose'
 import connectDB from '@/lib/db/mongodb'
 
@@ -8,6 +8,8 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
     const { searchParams } = new URL(request.url)
     const vendorId = searchParams.get('vendorId')

@@ -9,6 +9,7 @@ export interface IOrderItem {
   price: number
   /** Fit type: STANDARD = off-the-shelf size; MTM = Made-to-Measure. MTM excluded from size distribution analytics. */
   fit_type?: 'STANDARD' | 'MTM'
+  mtm_price_premium?: number
   /** Subcategory ID for eligibility tracking (per-subcategory limits). Resolved from ProductSubcategoryMapping when order is created. */
   subcategoryId?: string
   // Shipment tracking fields (PR-level, backward compatible)
@@ -138,6 +139,11 @@ const OrderItemSchema = new Schema<IOrderItem>({
     enum: ['STANDARD', 'MTM'],
     default: 'STANDARD',
     required: false,
+  },
+  mtm_price_premium: {
+    type: Number,
+    required: false,
+    default: 0,
   },
   subcategoryId: {
     type: String,
@@ -572,6 +578,10 @@ OrderSchema.index({ trackingNumber: 1 }) // Index for tracking number lookups
 // Unified status indexes
 OrderSchema.index({ unified_status: 1, companyId: 1 }) // Compound index for unified status queries by company
 OrderSchema.index({ unified_pr_status: 1, companyId: 1 }) // Compound index for unified PR status queries by company
+// Performance audit additions
+OrderSchema.index({ employeeId: 1, unified_pr_status: 1 }) // Site admin pending-approval lookups
+OrderSchema.index({ companyId: 1, parentOrderId: 1 }) // Split-order grouping queries
+OrderSchema.index({ employeeId: 1, createdAt: -1 }) // Employee order history with date sorting
 
 const Order = mongoose.models.Order || mongoose.model<IOrder>('Order', OrderSchema)
 

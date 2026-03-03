@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import * as XLSX from 'xlsx'
 import connectDB from '@/lib/db/mongodb'
 import { 
@@ -48,6 +49,8 @@ interface BulkOrderResult {
 export const dynamic = 'force-dynamic'
 export async function POST(request: NextRequest) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     await connectDB()
     
     const formData = await request.formData()

@@ -1,5 +1,5 @@
-
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getVendorInventory, updateVendorInventory, getLowStockItems, getVendorInventorySummary } from '@/lib/db/data-access'
 import '@/lib/models/VendorInventory' // Ensure model is registered
 
@@ -8,6 +8,8 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const vendorId = searchParams.get('vendorId')
     const productId = searchParams.get('productId')
@@ -67,6 +69,8 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {

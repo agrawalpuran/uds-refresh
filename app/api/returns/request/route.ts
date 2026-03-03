@@ -1,5 +1,6 @@
 
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { createReturnRequest, validateReturnEligibility } from '@/lib/db/data-access'
 
 // Force dynamic rendering for serverless functions
@@ -7,6 +8,8 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {
@@ -69,6 +72,8 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const orderId = searchParams.get('orderId')
     const itemIndex = searchParams.get('itemIndex')

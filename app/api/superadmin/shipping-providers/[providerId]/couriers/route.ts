@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { getShipmentServiceProviderById, updateShipmentServiceProvider } from '@/lib/db/shipping-config-access'
 import '@/lib/models/ShipmentServiceProvider'
 
@@ -15,6 +16,8 @@ export async function GET(
   { params }: { params: Promise<{ providerId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const resolvedParams = await params
     const { providerId } = resolvedParams
 
@@ -90,6 +93,8 @@ export async function PUT(
   { params }: { params: Promise<{ providerId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const resolvedParams = await params
     const { providerId } = resolvedParams
 

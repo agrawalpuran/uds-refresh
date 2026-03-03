@@ -52,10 +52,10 @@ declare global {
   var mongoose: MongooseCache | undefined
 }
 
-let cached: MongooseCache = global.mongoose || { conn: null, promise: null }
+let cached: MongooseCache = globalThis.mongoose || { conn: null, promise: null }
 
-if (!global.mongoose) {
-  global.mongoose = cached
+if (!globalThis.mongoose) {
+  globalThis.mongoose = cached
 }
 
 async function connectDB(): Promise<typeof mongoose> {
@@ -68,6 +68,8 @@ async function connectDB(): Promise<typeof mongoose> {
       bufferCommands: false,
       serverSelectionTimeoutMS: 10000, // 10 seconds timeout
       socketTimeoutMS: 45000, // 45 seconds socket timeout
+      maxPoolSize: 50, // Limit connections per process to prevent Atlas exhaustion under load
+      minPoolSize: 5, // Keep a warm pool for faster request handling
     }
 
     // Log connection attempt (without exposing password)

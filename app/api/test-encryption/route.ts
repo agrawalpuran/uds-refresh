@@ -5,6 +5,7 @@
  */
 
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import { encrypt, decrypt } from '@/lib/utils/encryption'
 
 
@@ -12,6 +13,8 @@ import { encrypt, decrypt } from '@/lib/utils/encryption'
 export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Get the key (same way as encryption.ts does)
     const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'default-encryption-key-change-in-production-32-chars!!'
     
@@ -74,5 +77,5 @@ export async function GET() {
       { error: errorMessage },
       { status: 500 }
     )
+  }
 }
-}}}}

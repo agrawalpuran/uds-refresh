@@ -1,4 +1,5 @@
 import { NextResponse, NextRequest } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 // Ensure Branch model is registered before Employee queries
 import '@/lib/models/Branch'
 import { 
@@ -17,6 +18,8 @@ import { getUserEmailFromRequest } from '@/lib/utils/api-auth'
 export const dynamic = 'force-dynamic'
 export async function GET(request: NextRequest) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const email = searchParams.get('email')
     const employeeId = searchParams.get('employeeId')
@@ -56,17 +59,21 @@ export async function GET(request: NextRequest) {
 
     if (companyId) {
       console.log(`[API /api/employees] Getting employees for companyId: ${companyId}, userEmail: ${userEmail || 'NOT PROVIDED'}`)
-      const employees = await getEmployeesByCompany(companyId, userEmail || undefined)
-      console.log(`[API /api/employees] Returning ${employees?.length || 0} employees for companyId: ${companyId}`)
-      if (employees && employees.length > 0) {
+      const page = searchParams.get('page')
+      const pageSize = searchParams.get('pageSize')
+      const pagination = page ? { page: parseInt(page, 10) || 1, pageSize: Math.min(parseInt(pageSize || '50', 10), 200) } : undefined
+      const employees = await getEmployeesByCompany(companyId, userEmail || undefined, pagination)
+      const list = pagination ? employees.data : employees
+      console.log(`[API /api/employees] Returning ${list?.length || 0} employees for companyId: ${companyId}`)
+      if (list && list.length > 0) {
         console.log(`[API /api/employees] First employee sample:`, {
-          id: employees[0].id,
-          employeeId: employees[0].employeeId,
-          firstName: employees[0].firstName,
-          lastName: employees[0].lastName,
-          firstNameEncrypted: employees[0].firstName?.includes(':'),
-          lastNameEncrypted: employees[0].lastName?.includes(':'),
-          companyId: employees[0].companyId
+          id: list[0].id,
+          employeeId: list[0].employeeId,
+          firstName: list[0].firstName,
+          lastName: list[0].lastName,
+          firstNameEncrypted: list[0].firstName?.includes(':'),
+          lastNameEncrypted: list[0].lastName?.includes(':'),
+          companyId: list[0].companyId
         })
       }
       return NextResponse.json(employees)
@@ -156,6 +163,8 @@ export async function POST(request: Request) {
 
 export async function PUT(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     // Parse JSON body with error handling
     let body: any
     try {
@@ -186,6 +195,8 @@ export async function PUT(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { searchParams } = new URL(request.url)
     const employeeId = searchParams.get('employeeId')
     

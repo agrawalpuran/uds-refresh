@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import {
   getVendorWarehouseById,
   updateVendorWarehouse,
@@ -40,6 +41,8 @@ export async function GET(
   { params }: { params: Promise<{ warehouseRefId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const resolvedParams = await params
     const warehouseRefId = resolvedParams.warehouseRefId
     const vendorId = getVendorIdFromRequest(request)
@@ -128,6 +131,8 @@ export async function PUT(
   { params }: { params: Promise<{ warehouseRefId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const resolvedParams = await params
     const warehouseRefId = resolvedParams.warehouseRefId
     // Parse JSON body with error handling
@@ -238,6 +243,8 @@ export async function DELETE(
   { params }: { params: Promise<{ warehouseRefId: string }> }
 ) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const resolvedParams = await params
     const warehouseRefId = resolvedParams.warehouseRefId
     const vendorId = getVendorIdFromRequest(request)

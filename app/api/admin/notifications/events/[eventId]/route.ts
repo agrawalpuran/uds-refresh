@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthContext } from '@/lib/utils/api-auth-context'
 import connectDB from '@/lib/db/mongodb'
 import NotificationEvent from '@/lib/models/NotificationEvent'
 import NotificationTemplate from '@/lib/models/NotificationTemplate'
@@ -17,6 +18,8 @@ interface RouteParams {
 // GET - Get single event
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { eventId } = await params
     await connectDB()
     
@@ -53,6 +56,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 // PUT - Update event
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { eventId } = await params
     await connectDB()
     
@@ -121,6 +126,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 // DELETE - Delete event and associated templates
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
+    const ctx = await getAuthContext()
+    if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { eventId } = await params
     await connectDB()
     
