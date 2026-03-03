@@ -10944,6 +10944,11 @@ export async function createOrder(orderData: {
   }
   console.log(`[createOrder] Using company ID for vendor lookup: ${companyStringId}`)
 
+  // Batch-fetch all products referenced by order items (avoids N+1 per item)
+  const uniqueProductIds = [...new Set(orderData.items.map((i: any) => String(i.uniformId)).filter(Boolean))]
+  const productDocs = await Uniform.find({ id: { $in: uniqueProductIds } }).lean()
+  const productMap = new Map(productDocs.map((p: any) => [p.id, p]))
+
   // Group items by vendor
   // CRITICAL FIX: uniformId must be STRING ID (6-digit numeric), not ObjectId
   // OrderItemSchema validates uniformId as a 6-digit numeric string
@@ -10962,8 +10967,8 @@ export async function createOrder(orderData: {
   for (const item of orderData.items) {
       console.log(`[createOrder] Processing order item: productId=${item.uniformId}, productName=${item.uniformName}, companyId=${companyStringId}`)
       
-      // Find product by string ID only (no ObjectId fallback)
-      const uniform = await Uniform.findOne({ id: item.uniformId })
+      // Lookup from pre-fetched batch (no per-item DB call)
+      const uniform = productMap.get(String(item.uniformId))
       
       if (!uniform) {
         console.error(`[createOrder] Uniform not found for productId=${item.uniformId}`)

@@ -1192,6 +1192,11 @@ export default function VendorReplacementOrdersPage() {
     [orders, searchTerm]
   )
 
+  const totalPages = Math.ceil(filteredOrders.length / PAGE_SIZE)
+  const paginatedOrders = filteredOrders.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  useEffect(() => { setCurrentPage(1) }, [searchTerm, filterCompany])
+
   const companyOptions = useMemo(() =>
     companies.map((company) => (
       <option key={company.id} value={company.id}>
@@ -1446,7 +1451,7 @@ export default function VendorReplacementOrdersPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredOrders.map((order) => (
+            {paginatedOrders.map((order) => (
               <div key={order.id} className="bg-white rounded-xl shadow-lg p-4 border-l-4 border-green-500 border border-gray-200 hover:shadow-xl transition-shadow flex flex-col">
               <div className="flex items-start justify-between mb-3 gap-2">
                 <div className="flex-1 min-w-0">
@@ -1529,6 +1534,30 @@ export default function VendorReplacementOrdersPage() {
             </div>
             ))}
           </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-4 px-4 py-3 bg-white rounded-lg border border-gray-200">
+              <div className="text-sm text-gray-500">
+                Showing {((currentPage - 1) * PAGE_SIZE) + 1}–{Math.min(currentPage * PAGE_SIZE, filteredOrders.length)} of {filteredOrders.length} orders
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <span className="text-sm text-gray-700">Page {currentPage} of {totalPages}</span>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
         )}
 
         {/* Shipping Context Loading Overlay */}

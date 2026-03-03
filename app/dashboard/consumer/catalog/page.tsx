@@ -452,6 +452,8 @@ export default function ConsumerCatalogPage() {
   // Gender filtering is handled by backend API (getProductsForDesignation)
   // Frontend should NOT allow manual gender selection
   const [filterCategory, setFilterCategory] = useState<string>('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const PRODUCTS_PER_PAGE = 24
   const [cart, setCart] = useState<Record<string, { size: string; quantity: number }>>({})
   const [selectedSizes, setSelectedSizes] = useState<Record<string, string>>({})
   const [hoveredItemType, setHoveredItemType] = useState<string | null>(null) // Support all categories, not just legacy 4
@@ -496,6 +498,13 @@ export default function ConsumerCatalogPage() {
       return matchesSearch && matchesGender && matchesCategory
     })
   }, [uniforms, searchTerm, currentEmployee?.gender, filterCategory])
+
+  const totalPages = Math.ceil(filteredUniforms.length / PRODUCTS_PER_PAGE)
+  const paginatedUniforms = filteredUniforms.slice((currentPage - 1) * PRODUCTS_PER_PAGE, currentPage * PRODUCTS_PER_PAGE)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, filterCategory])
 
   // CRITICAL FIX: Use useCallback to ensure function uses latest state values
   // But actually, since this is called during render, it will always use latest state
@@ -1286,8 +1295,9 @@ export default function ConsumerCatalogPage() {
 
         {/* Catalog Grid */}
         {filteredUniforms.length > 0 && (
+          <>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
-            {filteredUniforms.map((uniform) => {
+            {paginatedUniforms.map((uniform) => {
             const u = uniform as any
             const selectedSize = selectedSizes[uniform.id] || uniform.sizes[0]
             const cartItem = cart[uniform.id]

@@ -42,6 +42,8 @@ export default function EmployeesPage() {
   const [availableShirtSizes, setAvailableShirtSizes] = useState<string[]>([])
   const [availablePantSizes, setAvailablePantSizes] = useState<string[]>([])
   const [availableShoeSizes, setAvailableShoeSizes] = useState<string[]>([])
+  const [currentPage, setCurrentPage] = useState(1)
+  const PAGE_SIZE = 50
   
   // Form state for add/edit employee
   const [formData, setFormData] = useState({
@@ -281,7 +283,7 @@ export default function EmployeesPage() {
       locationName.toLowerCase().includes(searchTerm.toLowerCase())
   })
 
-  // Group employees by location
+  // Group employees by location (full list for expand-all logic)
   const employeesByLocation = filteredEmployees.reduce((acc: Record<string, any[]>, emp: any) => {
     const locationName = getLocationName(emp)
     if (!acc[locationName]) {
@@ -293,6 +295,24 @@ export default function EmployeesPage() {
 
   // Get sorted location names
   const locationNames = Object.keys(employeesByLocation).sort()
+
+  // Pagination: slice displayed employees
+  const totalPages = Math.ceil(filteredEmployees.length / PAGE_SIZE)
+  const paginatedEmployees = filteredEmployees.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+  const employeesByLocationPaginated = paginatedEmployees.reduce((acc: Record<string, any[]>, emp: any) => {
+    const locationName = getLocationName(emp)
+    if (!acc[locationName]) {
+      acc[locationName] = []
+    }
+    acc[locationName].push(emp)
+    return acc
+  }, {})
+  const locationNamesPaginated = Object.keys(employeesByLocationPaginated).sort()
+
+  // Reset to page 1 when search/filter changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm])
   
   // Debug logging
   if (typeof window !== 'undefined' && locationNames.length > 0) {
@@ -757,8 +777,8 @@ export default function EmployeesPage() {
                 : `No employees match search "${searchTerm}" (${companyEmployees.length} total employees)`}
             </div>
           ) : (
-            locationNames.map((locationName) => {
-              const locationEmployees = employeesByLocation[locationName]
+            locationNamesPaginated.map((locationName) => {
+              const locationEmployees = employeesByLocationPaginated[locationName]
               const isExpanded = expandedLocations.has(locationName)
               const employeeCount = locationEmployees.length
               
@@ -874,6 +894,34 @@ export default function EmployeesPage() {
                 </div>
               )
             })
+          )}
+
+          {/* Pagination controls */}
+          {!loading && locationNames.length > 0 && totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-white rounded-b-lg">
+              <div className="text-sm text-gray-500">
+                Showing {((currentPage - 1) * PAGE_SIZE) + 1}–{Math.min(currentPage * PAGE_SIZE, filteredEmployees.length)} of {filteredEmployees.length}
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <span className="text-sm text-gray-700">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           )}
         </div>
 

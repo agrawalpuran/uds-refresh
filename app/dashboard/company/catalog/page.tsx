@@ -23,6 +23,8 @@ export default function CatalogPage() {
   const [filterGender, setFilterGender] = useState<'all' | 'male' | 'female' | 'unisex'>('all')
   const [filterCategory, setFilterCategory] = useState<string>('all')
   const [filterVendor, setFilterVendor] = useState<string>('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const PRODUCTS_PER_PAGE = 24
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('')
   const [uniforms, setUniforms] = useState<any[]>([])
   const [companyVendors, setCompanyVendors] = useState<{ id: string; name: string }[]>([])
@@ -163,6 +165,13 @@ export default function CatalogPage() {
        uniform.vendors.some((v: any) => v.id === filterVendor || v.name === filterVendor))
     return matchesSearch && matchesGender && matchesCategory && matchesVendor
   })
+
+  const totalPages = Math.ceil(filteredUniforms.length / PRODUCTS_PER_PAGE)
+  const paginatedUniforms = filteredUniforms.slice((currentPage - 1) * PRODUCTS_PER_PAGE, currentPage * PRODUCTS_PER_PAGE)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, filterGender, filterCategory, filterVendor])
 
   // View modal handlers
   const handleView = async (productId: string) => {
@@ -478,8 +487,9 @@ export default function CatalogPage() {
             )}
           </div>
         ) : (
+          <>
           <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
-            {filteredUniforms.map((uniform) => (
+            {paginatedUniforms.map((uniform) => (
             <div key={uniform.id} className="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-2xl transition-shadow">
               <div className="relative h-64 bg-white overflow-hidden">
                 <Image
@@ -597,6 +607,31 @@ export default function CatalogPage() {
             </div>
           ))}
           </div>
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-6">
+              <div className="text-sm text-gray-500">
+                Showing {((currentPage - 1) * PRODUCTS_PER_PAGE) + 1}–{Math.min(currentPage * PRODUCTS_PER_PAGE, filteredUniforms.length)} of {filteredUniforms.length} products
+              </div>
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                <span className="text-sm text-gray-700">Page {currentPage} of {totalPages}</span>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="px-3 py-1.5 text-sm font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+          </>
         )}
 
         {/* View Modal */}
