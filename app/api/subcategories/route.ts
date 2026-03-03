@@ -172,10 +172,12 @@ export async function GET(request: NextRequest) {
       }))
     })
     
-    return NextResponse.json({
+    const res = NextResponse.json({
       success: true,
       subcategories: mappedSubcategories
     })
+    res.headers.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=120')
+    return res
   } catch (error: any) {
     console.error('[API /subcategories] ❌ Error fetching subcategories:', error)
     console.error('[API /subcategories] Error stack:', error.stack)

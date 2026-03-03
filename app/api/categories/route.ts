@@ -38,10 +38,12 @@ export async function GET(request: NextRequest) {
     // Get all categories
     const categories = await getCategoriesByCompany(companyId)
     
-    return NextResponse.json({
+    const res = NextResponse.json({
       success: true,
       categories
     })
+    res.headers.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=120')
+    return res
   } catch (error: any) {
     console.error('Error fetching categories:', error)
     

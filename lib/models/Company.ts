@@ -230,8 +230,7 @@ CompanySchema.pre('save', function(next) {
   next()
 })
 
-// Note: id field already has index: true in schema definition, so no need for explicit index here
-// CompanySchema.index({ id: 1 }) // REMOVED: Duplicate of id: { index: true }
+CompanySchema.index({ adminId: 1 }, { sparse: true })
 
 const Company = mongoose.models.Company || mongoose.model<ICompany>('Company', CompanySchema)
 

@@ -26,20 +26,19 @@ export async function GET(request: Request) {
       )
     }
 
+    let data: any
     if (type === 'shirtSize') {
-      const sizes = await getUniqueShirtSizesByCompany(companyId)
-      return NextResponse.json(sizes)
+      data = await getUniqueShirtSizesByCompany(companyId)
     } else if (type === 'pantSize') {
-      const sizes = await getUniquePantSizesByCompany(companyId)
-      return NextResponse.json(sizes)
+      data = await getUniquePantSizesByCompany(companyId)
     } else if (type === 'shoeSize') {
-      const sizes = await getUniqueShoeSizesByCompany(companyId)
-      return NextResponse.json(sizes)
+      data = await getUniqueShoeSizesByCompany(companyId)
     } else {
-      // Default: return designations
-      const designations = await getUniqueDesignationsByCompany(companyId)
-      return NextResponse.json(designations)
+      data = await getUniqueDesignationsByCompany(companyId)
     }
+    const res = NextResponse.json(data)
+    res.headers.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=120')
+    return res
   } catch (error: any) {
     console.error('API Error in /api/designations:', error)
     
