@@ -1184,9 +1184,21 @@ export default function VendorReplacementOrdersPage() {
     setConfirmDialog({ show: false, orderId: null, action: null })
   }
 
-  const filteredOrders = orders.filter(order =>
-    order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    order.employeeName?.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredOrders = useMemo(() =>
+    orders.filter(order =>
+      order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.employeeName?.toLowerCase().includes(searchTerm.toLowerCase())
+    ),
+    [orders, searchTerm]
+  )
+
+  const companyOptions = useMemo(() =>
+    companies.map((company) => (
+      <option key={company.id} value={company.id}>
+        {company.name}
+      </option>
+    )),
+    [companies]
   )
 
   // ============================================================================
@@ -1411,11 +1423,7 @@ export default function VendorReplacementOrdersPage() {
                 ) : (
                   <>
                     <option value="all">All Companies</option>
-                    {companies.map((company) => (
-                      <option key={company.id} value={company.id}>
-                        {company.name}
-                      </option>
-                    ))}
+                    {companyOptions}
                   </>
                 )}
               </select>

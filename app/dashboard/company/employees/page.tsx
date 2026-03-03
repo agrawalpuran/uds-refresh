@@ -1053,7 +1053,7 @@ export default function EmployeesPage() {
                   <input
                     type="text"
                     value={formData.firstName}
-                    onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, firstName: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   />
@@ -1063,7 +1063,7 @@ export default function EmployeesPage() {
                   <input
                     type="text"
                     value={formData.lastName}
-                    onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, lastName: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   />
@@ -1073,7 +1073,7 @@ export default function EmployeesPage() {
                   <input
                     type="email"
                     value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   />
@@ -1083,7 +1083,7 @@ export default function EmployeesPage() {
                   <input
                     type="tel"
                     value={formData.mobile}
-                    onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, mobile: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   />
@@ -1092,7 +1092,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Designation *</label>
                   <select
                     value={formData.designation}
-                    onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, designation: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1112,7 +1112,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Gender *</label>
                   <select
                     value={formData.gender}
-                    onChange={(e) => setFormData({ ...formData, gender: e.target.value as 'male' | 'female' })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, gender: e.target.value as 'male' | 'female' }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1125,10 +1125,10 @@ export default function EmployeesPage() {
                   <select
                     value={formData.locationId}
                     onChange={(e) => {
-                      setFormData({ 
-                        ...formData, 
+                      setFormData(prev => ({ 
+                        ...prev, 
                         locationId: e.target.value
-                      })
+                      }))
                     }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
@@ -1145,7 +1145,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Shirt Size *</label>
                   <select
                     value={formData.shirtSize}
-                    onChange={(e) => setFormData({ ...formData, shirtSize: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, shirtSize: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1164,7 +1164,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Pant Size *</label>
                   <select
                     value={formData.pantSize}
-                    onChange={(e) => setFormData({ ...formData, pantSize: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, pantSize: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1183,7 +1183,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Shoe Size *</label>
                   <select
                     value={formData.shoeSize}
-                    onChange={(e) => setFormData({ ...formData, shoeSize: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, shoeSize: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1202,7 +1202,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Dispatch Preference *</label>
                   <select
                     value={formData.dispatchPreference}
-                    onChange={(e) => setFormData({ ...formData, dispatchPreference: e.target.value as 'direct' | 'central' | 'regional' })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, dispatchPreference: e.target.value as 'direct' | 'central' | 'regional' }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1215,7 +1215,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Status *</label>
                   <select
                     value={formData.status}
-                    onChange={(e) => setFormData({ ...formData, status: e.target.value as 'active' | 'inactive' })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value as 'active' | 'inactive' }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1228,7 +1228,7 @@ export default function EmployeesPage() {
                   <input
                     type="date"
                     value={formData.dateOfJoining}
-                    onChange={(e) => setFormData({ ...formData, dateOfJoining: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, dateOfJoining: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   />
@@ -1237,7 +1237,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Address *</label>
                   <AddressForm
                     value={formData.addressData}
-                    onChange={(address) => setFormData({ ...formData, addressData: address })}
+                    onChange={(address) => setFormData(prev => ({ ...prev, addressData: address }))}
                     required={true}
                     className=""
                   />
@@ -1291,7 +1291,7 @@ export default function EmployeesPage() {
                   <input
                     type="text"
                     value={formData.firstName}
-                    onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, firstName: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   />
@@ -1301,7 +1301,7 @@ export default function EmployeesPage() {
                   <input
                     type="text"
                     value={formData.lastName}
-                    onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, lastName: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   />
@@ -1311,7 +1311,7 @@ export default function EmployeesPage() {
                   <input
                     type="email"
                     value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   />
@@ -1321,7 +1321,7 @@ export default function EmployeesPage() {
                   <input
                     type="tel"
                     value={formData.mobile}
-                    onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, mobile: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   />
@@ -1330,7 +1330,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Designation *</label>
                   <select
                     value={formData.designation}
-                    onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, designation: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1350,7 +1350,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Gender *</label>
                   <select
                     value={formData.gender}
-                    onChange={(e) => setFormData({ ...formData, gender: e.target.value as 'male' | 'female' })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, gender: e.target.value as 'male' | 'female' }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1363,10 +1363,10 @@ export default function EmployeesPage() {
                   <select
                     value={formData.locationId}
                     onChange={(e) => {
-                      setFormData({ 
-                        ...formData, 
+                      setFormData(prev => ({ 
+                        ...prev, 
                         locationId: e.target.value
-                      })
+                      }))
                     }}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
@@ -1383,7 +1383,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Shirt Size *</label>
                   <select
                     value={formData.shirtSize}
-                    onChange={(e) => setFormData({ ...formData, shirtSize: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, shirtSize: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1402,7 +1402,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Pant Size *</label>
                   <select
                     value={formData.pantSize}
-                    onChange={(e) => setFormData({ ...formData, pantSize: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, pantSize: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1421,7 +1421,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Shoe Size *</label>
                   <select
                     value={formData.shoeSize}
-                    onChange={(e) => setFormData({ ...formData, shoeSize: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, shoeSize: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1440,7 +1440,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Dispatch Preference *</label>
                   <select
                     value={formData.dispatchPreference}
-                    onChange={(e) => setFormData({ ...formData, dispatchPreference: e.target.value as 'direct' | 'central' | 'regional' })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, dispatchPreference: e.target.value as 'direct' | 'central' | 'regional' }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1453,7 +1453,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Status *</label>
                   <select
                     value={formData.status}
-                    onChange={(e) => setFormData({ ...formData, status: e.target.value as 'active' | 'inactive' })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value as 'active' | 'inactive' }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   >
@@ -1466,7 +1466,7 @@ export default function EmployeesPage() {
                   <input
                     type="date"
                     value={formData.dateOfJoining}
-                    onChange={(e) => setFormData({ ...formData, dateOfJoining: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, dateOfJoining: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#f76b1c] focus:border-transparent"
                     required
                   />
@@ -1475,7 +1475,7 @@ export default function EmployeesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">Address *</label>
                   <AddressForm
                     value={formData.addressData}
-                    onChange={(address) => setFormData({ ...formData, addressData: address })}
+                    onChange={(address) => setFormData(prev => ({ ...prev, addressData: address }))}
                     required={true}
                     className=""
                   />

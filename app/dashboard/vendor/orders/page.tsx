@@ -692,38 +692,43 @@ export default function VendorOrdersPage() {
     }
   }
 
-  const filteredOrders = orders.filter(order => {
-    const searchLower = searchTerm.toLowerCase()
-    const matchesSearch = (
-      order.id?.toLowerCase().includes(searchLower) ||
-      order.employeeName?.toLowerCase().includes(searchLower) ||
-      order.prNumber?.toLowerCase().includes(searchLower) ||
-      (order.poNumbers && order.poNumbers.some((po: string) => po.toLowerCase().includes(searchLower)))
-    )
-    
-    // Filter by date range if dates are applied
-    if (appliedFromDate || appliedToDate) {
-      const orderDate = order.orderDate ? new Date(order.orderDate) : null
-      if (!orderDate) return false
+  const filteredOrders = useMemo(() => {
+    return orders.filter(order => {
+      const searchLower = searchTerm.toLowerCase()
+      const matchesSearch = (
+        order.id?.toLowerCase().includes(searchLower) ||
+        order.employeeName?.toLowerCase().includes(searchLower) ||
+        order.prNumber?.toLowerCase().includes(searchLower) ||
+        (order.poNumbers && order.poNumbers.some((po: string) => po.toLowerCase().includes(searchLower)))
+      )
       
-      if (appliedFromDate) {
-        const fromDateObj = new Date(appliedFromDate)
-        fromDateObj.setHours(0, 0, 0, 0)
-        if (orderDate < fromDateObj) return false
+      // Filter by date range if dates are applied
+      if (appliedFromDate || appliedToDate) {
+        const orderDate = order.orderDate ? new Date(order.orderDate) : null
+        if (!orderDate) return false
+        
+        if (appliedFromDate) {
+          const fromDateObj = new Date(appliedFromDate)
+          fromDateObj.setHours(0, 0, 0, 0)
+          if (orderDate < fromDateObj) return false
+        }
+        
+        if (appliedToDate) {
+          const toDateObj = new Date(appliedToDate)
+          toDateObj.setHours(23, 59, 59, 999)
+          if (orderDate > toDateObj) return false
+        }
       }
       
-      if (appliedToDate) {
-        const toDateObj = new Date(appliedToDate)
-        toDateObj.setHours(23, 59, 59, 999)
-        if (orderDate > toDateObj) return false
-      }
-    }
-    
-    return matchesSearch
-  })
+      return matchesSearch
+    })
+  }, [orders, searchTerm, appliedFromDate, appliedToDate])
 
   // Group filtered orders by PO and merge into unified sorted list
-  const { unifiedItems } = groupOrdersByPO(filteredOrders)
+  const unifiedItems = useMemo(
+    () => groupOrdersByPO(filteredOrders).unifiedItems,
+    [filteredOrders]
+  )
 
   // Check serviceability for AUTOMATIC mode
   const checkServiceability = async (sourcePincode: string, destinationPincode: string, courierCode: string, providerCode?: string) => {

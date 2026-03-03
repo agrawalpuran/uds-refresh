@@ -1627,17 +1627,14 @@ export default function ReportsPage() {
   // SECTION 3: OPERATIONAL HEALTH
   // ============================================================================
 
-  // Order Funnel Data WITH CONVERSION PERCENTAGES
+  // Order Funnel Data WITH CONVERSION PERCENTAGES (single-pass count for performance)
   const orderFunnelData = useMemo(() => {
-    const statusCounts = {
-      created: filteredOrdersByTimeRange.length,
-      approved: filteredOrdersByTimeRange.filter(o => 
-        ['Awaiting fulfilment', 'Dispatched', 'Delivered'].includes(o.status)
-      ).length,
-      dispatched: filteredOrdersByTimeRange.filter(o => 
-        ['Dispatched', 'Delivered'].includes(o.status)
-      ).length,
-      delivered: filteredOrdersByTimeRange.filter(o => o.status === 'Delivered').length
+    const statusCounts = { created: 0, approved: 0, dispatched: 0, delivered: 0 }
+    for (const o of filteredOrdersByTimeRange) {
+      statusCounts.created += 1
+      if (['Awaiting fulfilment', 'Dispatched', 'Delivered'].includes(o.status)) statusCounts.approved += 1
+      if (['Dispatched', 'Delivered'].includes(o.status)) statusCounts.dispatched += 1
+      if (o.status === 'Delivered') statusCounts.delivered += 1
     }
 
     // Calculate conversion rates between stages
@@ -2158,7 +2155,7 @@ export default function ReportsPage() {
           {[
             {
               title: 'Total Spend',
-              value: formatCurrency(filteredOrdersByTimeRange.reduce((sum, o) => sum + calculateOrderTotal(o), 0)),
+              value: formatCurrency(executiveKPIs.totalSpend.current),
               trend: executiveKPIs.totalSpend.trend,
               trendLabel: 'vs last month',
               icon: IndianRupee,
@@ -2167,7 +2164,7 @@ export default function ReportsPage() {
             },
             {
               title: 'Total Orders',
-              value: filteredOrdersByTimeRange.length.toLocaleString(),
+              value: executiveKPIs.totalOrders.current.toLocaleString(),
               trend: executiveKPIs.totalOrders.trend,
               trendLabel: 'vs last month',
               icon: Package,
@@ -2176,7 +2173,7 @@ export default function ReportsPage() {
             },
             {
               title: 'Avg Order Value',
-              value: formatCurrency(filteredOrdersByTimeRange.length > 0 ? filteredOrdersByTimeRange.reduce((sum, o) => sum + calculateOrderTotal(o), 0) / filteredOrdersByTimeRange.length : 0),
+              value: formatCurrency(executiveKPIs.avgOrderValue.current),
               trend: executiveKPIs.avgOrderValue.trend,
               trendLabel: 'vs last month',
               icon: BarChart3,

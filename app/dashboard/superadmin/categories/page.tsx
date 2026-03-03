@@ -178,7 +178,7 @@ export default function SuperAdminCategoriesPage() {
                 <input
                   type="text"
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                   className="w-full px-3 py-2 border rounded-lg"
                   placeholder="e.g., Shirt, Pant, Shoe"
                 />
@@ -188,7 +188,7 @@ export default function SuperAdminCategoriesPage() {
                   type="checkbox"
                   id="isSystemCategory"
                   checked={formData.isSystemCategory}
-                  onChange={(e) => setFormData({ ...formData, isSystemCategory: e.target.checked })}
+                  onChange={(e) => setFormData(prev => ({ ...prev, isSystemCategory: e.target.checked }))}
                   className="w-4 h-4"
                 />
                 <label htmlFor="isSystemCategory" className="text-sm">
@@ -243,7 +243,7 @@ export default function SuperAdminCategoriesPage() {
                             <input
                               type="text"
                               value={formData.name}
-                              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                              onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                               className="px-2 py-1 border rounded"
                             />
                           ) : (

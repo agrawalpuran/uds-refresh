@@ -628,7 +628,7 @@ export default function DesignationEligibilityPage() {
                 </label>
                 <select
                   value={formData.designation}
-                  onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
+                  onChange={(e) => setFormData(prev => ({ ...prev, designation: e.target.value }))}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
                   disabled={!!editingId}
                 >
@@ -659,13 +659,13 @@ export default function DesignationEligibilityPage() {
                   value={formData.gender}
                   onChange={(e) => {
                 const newGender = e.target.value as 'male' | 'female'
-                setFormData({ 
-                  ...formData, 
+                setFormData(prev => ({ 
+                  ...prev, 
                   gender: newGender,
                       // Clear selections when gender changes
                       selectedSubcategories: [],
                       subcategoryQuantities: {},
-                })
+                }))
               }}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white"
                 >
@@ -812,7 +812,7 @@ export default function DesignationEligibilityPage() {
                     type="checkbox"
                     id="refreshEligibility"
                     checked={formData.refreshEligibility}
-                    onChange={(e) => setFormData({ ...formData, refreshEligibility: e.target.checked })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, refreshEligibility: e.target.checked }))}
                     className="mt-1 w-5 h-5 text-primary-500 rounded focus:ring-primary-500"
                   />
                   <div className="flex-1">

@@ -298,7 +298,7 @@ export default function CompanySubcategoriesPage() {
                 ) : (
                   <select
                     value={formData.parentCategoryId}
-                    onChange={(e) => setFormData({ ...formData, parentCategoryId: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, parentCategoryId: e.target.value }))}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:outline-none"
                     disabled={!!editingId}
                     required
@@ -317,7 +317,7 @@ export default function CompanySubcategoriesPage() {
                 <input
                   type="text"
                   value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                   className="w-full px-3 py-2 border rounded-lg"
                   placeholder="e.g., Managers Full Shirt, Managers Half Shirt"
                 />
@@ -420,7 +420,7 @@ export default function CompanySubcategoriesPage() {
                                     <input
                                       type="text"
                                       value={formData.name}
-                                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                                      onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                                       className="px-2 py-1 border rounded"
                                     />
                                   ) : (

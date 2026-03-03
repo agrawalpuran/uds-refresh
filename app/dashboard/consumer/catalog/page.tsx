@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import { Search, ShoppingCart, Plus, Minus, AlertCircle, Package, RefreshCw, Ruler } from 'lucide-react'
 import { getProductsForDesignation, getEmployeeByEmail, getConsumedEligibility, getCompanyById, isCompanyAdmin, getLocationByAdminEmail, getBranchByAdminEmail, Uniform } from '@/lib/data-mongodb'
@@ -476,24 +476,26 @@ export default function ConsumerCatalogPage() {
     setSelectedSizes(autoSizes)
   }, [uniforms, currentEmployee])
 
-  const filteredUniforms = uniforms.filter(uniform => {
-    const matchesSearch = uniform.name.toLowerCase().includes(searchTerm.toLowerCase())
-    
-    // Gender filtering: Use employee's gender from profile (not user-selected filter)
-    // Backend already filters by employee gender + unisex, but we double-check here for UI consistency
-    // Show products that match employee's gender OR are unisex
-    let matchesGender = true
-    if (currentEmployee?.gender) {
-      const employeeGender = currentEmployee.gender.toLowerCase()
-      const productGender = uniform.gender?.toLowerCase() || 'unisex'
-      // Show if product matches employee gender OR is unisex
-      matchesGender = productGender === employeeGender || productGender === 'unisex'
-    }
-    // If no employee gender, show all (shouldn't happen, but handle gracefully)
-    
-    const matchesCategory = filterCategory === 'all' || uniform.category === filterCategory
-    return matchesSearch && matchesGender && matchesCategory
-  })
+  const filteredUniforms = useMemo(() => {
+    return uniforms.filter(uniform => {
+      const matchesSearch = uniform.name.toLowerCase().includes(searchTerm.toLowerCase())
+      
+      // Gender filtering: Use employee's gender from profile (not user-selected filter)
+      // Backend already filters by employee gender + unisex, but we double-check here for UI consistency
+      // Show products that match employee's gender OR are unisex
+      let matchesGender = true
+      if (currentEmployee?.gender) {
+        const employeeGender = currentEmployee.gender.toLowerCase()
+        const productGender = uniform.gender?.toLowerCase() || 'unisex'
+        // Show if product matches employee gender OR is unisex
+        matchesGender = productGender === employeeGender || productGender === 'unisex'
+      }
+      // If no employee gender, show all (shouldn't happen, but handle gracefully)
+      
+      const matchesCategory = filterCategory === 'all' || uniform.category === filterCategory
+      return matchesSearch && matchesGender && matchesCategory
+    })
+  }, [uniforms, searchTerm, currentEmployee?.gender, filterCategory])
 
   // CRITICAL FIX: Use useCallback to ensure function uses latest state values
   // But actually, since this is called during render, it will always use latest state
@@ -733,18 +735,18 @@ export default function ConsumerCatalogPage() {
     }
   }
 
-  const handleSizeChange = (uniformId: string, size: string) => {
+  const handleSizeChange = useCallback((uniformId: string, size: string) => {
     setSelectedSizes(prev => ({ ...prev, [uniformId]: size }))
     // If item is already in cart, update the size
-    if (cart[uniformId]) {
-      setCart(prev => ({
-        ...prev,
-        [uniformId]: { ...prev[uniformId], size }
-      }))
-    }
-  }
+    setCart(prev => {
+      if (prev[uniformId]) {
+        return { ...prev, [uniformId]: { ...prev[uniformId], size } }
+      }
+      return prev
+    })
+  }, [])
 
-  const handleCheckout = () => {
+  const handleCheckout = useCallback(() => {
     if (Object.keys(cart).length === 0) {
       alert('Your cart is empty')
       return
@@ -828,7 +830,7 @@ export default function ConsumerCatalogPage() {
       console.error('Error saving order data:', error)
       alert('Error processing checkout. Please try again.')
     }
-  }
+  }, [cart, uniforms, company?.allowPersonalPayments, mtmSelections, mtmMeasurements, mtmAvailability, router])
 
   const getCartTotalItems = () => {
     return Object.values(cart).reduce((sum, item) => sum + item.quantity, 0)

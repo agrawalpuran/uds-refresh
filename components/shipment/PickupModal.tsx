@@ -201,7 +201,7 @@ export default function PickupModal({ isOpen, onClose, onSuccess, shipmentId, is
             <input
               type="text"
               value={formData.contactName}
-              onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
+              onChange={(e) => setFormData(prev => ({ ...prev, contactName: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               required
             />
@@ -217,7 +217,7 @@ export default function PickupModal({ isOpen, onClose, onSuccess, shipmentId, is
             <input
               type="tel"
               value={formData.contactPhone}
-              onChange={(e) => setFormData({ ...formData, contactPhone: e.target.value })}
+              onChange={(e) => setFormData(prev => ({ ...prev, contactPhone: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               placeholder="10-digit phone number"
               required
@@ -234,7 +234,7 @@ export default function PickupModal({ isOpen, onClose, onSuccess, shipmentId, is
             <input
               type="date"
               value={formData.pickupDate}
-              onChange={(e) => setFormData({ ...formData, pickupDate: e.target.value })}
+              onChange={(e) => setFormData(prev => ({ ...prev, pickupDate: e.target.value }))}
               min={new Date().toISOString().split('T')[0]}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               required
@@ -250,7 +250,7 @@ export default function PickupModal({ isOpen, onClose, onSuccess, shipmentId, is
             </label>
             <select
               value={formData.pickupTimeSlot}
-              onChange={(e) => setFormData({ ...formData, pickupTimeSlot: e.target.value })}
+              onChange={(e) => setFormData(prev => ({ ...prev, pickupTimeSlot: e.target.value }))}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             >
               <option value="10:00-13:00">10:00 AM - 1:00 PM</option>

@@ -428,7 +428,7 @@ export default function BranchesPage() {
                   <input
                     type="text"
                     value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 outline-none"
                     style={{ 
                       '--tw-ring-color': companyPrimaryColor || '#f76b1c',
@@ -455,7 +455,7 @@ export default function BranchesPage() {
                     <input
                       type="text"
                       value={formData.phone}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 outline-none"
                     />
                   </div>
@@ -464,7 +464,7 @@ export default function BranchesPage() {
                     <input
                       type="email"
                       value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
                       className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 outline-none"
                     />
                   </div>
@@ -475,7 +475,7 @@ export default function BranchesPage() {
                   <input
                     type="text"
                     value={formData.adminId}
-                    onChange={(e) => setFormData({ ...formData, adminId: e.target.value })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, adminId: e.target.value }))}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 outline-none"
                     placeholder="Optional - 6-digit employee ID"
                   />
@@ -486,7 +486,7 @@ export default function BranchesPage() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
                   <select
                     value={formData.status}
-                    onChange={(e) => setFormData({ ...formData, status: e.target.value as 'active' | 'inactive' })}
+                    onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value as 'active' | 'inactive' }))}
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 outline-none"
                   >
                     <option value="active">Active</option>

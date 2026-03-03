@@ -1119,6 +1119,11 @@ export default function CompanyOrdersPage() {
     })
   }, [companyOrders, searchQuery, activeTab, locationFilter])
 
+  // Footer total value (avoid recalculating on every render)
+  const footerTotalValue = useMemo(() => {
+    return filteredGroupedOrders.reduce((sum, order) => sum + (order.combinedTotal || 0), 0)
+  }, [filteredGroupedOrders])
+
   // Refresh orders, GRNs, and Invoices after workflow action
   const refreshOrders = useCallback(async () => {
     try {
@@ -1707,7 +1712,7 @@ export default function CompanyOrdersPage() {
             </p>
             <p>
               Total Value: <span className="font-semibold text-gray-900">
-                ₹{filteredGroupedOrders.reduce((sum, order) => sum + (order.combinedTotal || 0), 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                ₹{footerTotalValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
               </span>
             </p>
           </div>

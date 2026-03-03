@@ -7,8 +7,6 @@ import {
   LayoutDashboard, Package, Users, FileText, BarChart3, 
   Settings, LogOut, MapPin, ShoppingCart, Upload, Shield, Warehouse, MessageSquare, Menu, X, RefreshCw, Layers, Tag, Link2, ChevronDown, ChevronRight, Truck, Plus, Building2, Scissors
 } from 'lucide-react'
-import { getVendorById, getCompanyById, getEmployeeByEmail } from '@/lib/data'
-import { getCompanyById as getCompanyByIdAPI, getBranchByAdminEmail, getCompanyByAdminEmail, getLocationByAdminEmail, getEmployeeByEmail as getEmployeeByEmailAPI, getVendorById as getVendorByIdAPI } from '@/lib/data-mongodb'
 import Image from 'next/image'
 import { useSession, signOut } from 'next-auth/react'
 
@@ -100,132 +98,36 @@ export default function DashboardLayout({ children, actorType }: DashboardLayout
       return
     }
 
-    const userEmail = session.user.email
-    const sessionCompanyId = session.user.companyId
-    const sessionVendorId = session.user.vendorId
+    let cancelled = false
 
-    if (actorType === 'consumer') {
-      if (userEmail) {
-        Promise.all([
-          getLocationByAdminEmail(userEmail),
-          getEmployeeByEmailAPI(userEmail)
-        ]).then(async ([location, employee]) => {
-          setIsLocationAdmin(!!location)
-          
-          if (employee) {
-            setCurrentEmployee(employee)
-            const companyId = typeof employee.companyId === 'object' && employee.companyId?.id 
-              ? employee.companyId.id 
-              : employee.companyId || sessionCompanyId
-            if (companyId) {
-              getCompanyByIdAPI(companyId)
-                .then(company => {
-                  if (company) {
-                    setCurrentCompany(company)
-                    if (location && company.allowLocationAdminViewFeedback) {
-                      setCanLocationAdminViewFeedback(true)
-                    } else {
-                      setCanLocationAdminViewFeedback(false)
-                    }
-                  } else {
-                    const mockCompany = getCompanyById(companyId)
-                    setCurrentCompany(mockCompany || null)
-                    setCanLocationAdminViewFeedback(false)
-                  }
-                })
-                .catch(() => {
-                  const mockCompany = companyId ? getCompanyById(companyId) : null
-                  setCurrentCompany(mockCompany || null)
-                  setCanLocationAdminViewFeedback(false)
-                })
-            }
-          } else {
-            console.warn('[DashboardLayout] Consumer: Employee not found for email:', userEmail)
-            setCurrentEmployee(null)
-            setCurrentCompany(null)
-            setCanLocationAdminViewFeedback(false)
-          }
-        })
-        .catch((error) => {
-          console.error('[DashboardLayout] Consumer: Error fetching employee data:', error)
-          setCurrentEmployee(null)
-          setCurrentCompany(null)
-          setCanLocationAdminViewFeedback(false)
-        })
-      }
-    } else if (actorType === 'company') {
-      const companyId = sessionCompanyId
-      
-      if (userEmail) {
-        Promise.all([
-          getBranchByAdminEmail(userEmail),
-          getLocationByAdminEmail(userEmail),
-          getCompanyByAdminEmail(userEmail)
-        ]).then(([branch, location, company]) => {
-          setIsBranchAdmin(!!branch)
-          setIsLocationAdmin(!!location)
-          setIsCompanyAdmin(!!company)
-          setCurrentLocation(location)
-          
-          const targetCompanyId = branch?.companyId?.id || branch?.companyId || location?.companyId?.id || location?.companyId || companyId || company?.id
-          
-          if (targetCompanyId) {
-            getCompanyByIdAPI(targetCompanyId)
-              .then(companyData => {
-                if (companyData) {
-                  setCurrentCompany(companyData)
-                } else {
-                  console.warn('[DashboardLayout] Company: Company not found for ID:', targetCompanyId)
-                  setCurrentCompany(null)
-                }
-              })
-              .catch((error) => {
-                console.error('[DashboardLayout] Company: Error fetching company data:', error)
-                setCurrentCompany(null)
-              })
-          } else {
-            console.warn('[DashboardLayout] Company: No company ID found')
-            setCurrentCompany(null)
-          }
-        }).catch((error) => {
-          console.error('[DashboardLayout] Company: Error checking admin status:', error)
-          if (companyId) {
-            getCompanyByIdAPI(companyId)
-              .then(company => {
-                if (company) {
-                  setCurrentCompany(company)
-                } else {
-                  setCurrentCompany(null)
-                }
-              })
-              .catch(() => setCurrentCompany(null))
-          } else {
-            setCurrentCompany(null)
-          }
-        })
-      } else if (companyId) {
-        getCompanyByIdAPI(companyId)
-          .then(company => setCurrentCompany(company || null))
-          .catch(() => setCurrentCompany(null))
-      }
-    } else if (actorType === 'vendor') {
-      const vendorId = sessionVendorId
-      if (vendorId) {
-        getVendorByIdAPI(vendorId)
-          .then(vendor => {
-            if (vendor) {
-              setCurrentVendor(vendor)
-            } else {
-              const mockVendor = getVendorById(vendorId)
-              setCurrentVendor(mockVendor || null)
-            }
-          })
-          .catch((error) => {
-            console.error('[DashboardLayout] Vendor: Error fetching vendor data:', error)
-            setCurrentVendor(null)
-          })
+    const loadContext = async () => {
+      try {
+        const res = await fetch(`/api/auth/dashboard-context?actorType=${actorType}`)
+        if (!res.ok || cancelled) return
+
+        const data = await res.json()
+        if (cancelled) return
+
+        if (data.employee) setCurrentEmployee(data.employee)
+        if (data.company) setCurrentCompany(data.company)
+        if (data.vendor) setCurrentVendor(data.vendor)
+        if (data.location) setCurrentLocation(data.location)
+
+        if (data.roles) {
+          setIsBranchAdmin(data.roles.isBranchAdmin ?? false)
+          setIsLocationAdmin(data.roles.isLocationAdmin ?? false)
+          setIsCompanyAdmin(data.roles.isCompanyAdmin ?? false)
+        }
+
+        setCanLocationAdminViewFeedback(data.canLocationAdminViewFeedback ?? false)
+      } catch (error) {
+        console.error('[DashboardLayout] Error loading context:', error)
       }
     }
+
+    loadContext()
+
+    return () => { cancelled = true }
   }, [actorType, router, session, sessionStatus])
 
   // Fetch approval counts when company/vendor/location is loaded

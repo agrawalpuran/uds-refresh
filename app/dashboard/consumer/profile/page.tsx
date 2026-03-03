@@ -591,7 +591,7 @@ export default function ConsumerProfilePage() {
                       <input
                         type="tel"
                         value={formData.mobile}
-                        onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
+                        onChange={(e) => setFormData(prev => ({ ...prev, mobile: e.target.value }))}
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
                         placeholder="+91-9876543210"
                         disabled={saving}
@@ -605,7 +605,7 @@ export default function ConsumerProfilePage() {
                       </label>
                       <AddressForm
                         value={formData.addressData}
-                        onChange={(address) => setFormData({ ...formData, addressData: address })}
+                        onChange={(address) => setFormData(prev => ({ ...prev, addressData: address }))}
                         required={true}
                         showCountry={true}
                         disabled={saving}
@@ -621,7 +621,7 @@ export default function ConsumerProfilePage() {
                           <input
                             type="text"
                             value={formData.shirtSize}
-                            onChange={(e) => setFormData({ ...formData, shirtSize: e.target.value })}
+                            onChange={(e) => setFormData(prev => ({ ...prev, shirtSize: e.target.value }))}
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
                             placeholder="e.g., M, L, XL"
                             disabled={saving}
@@ -632,7 +632,7 @@ export default function ConsumerProfilePage() {
                           <input
                             type="text"
                             value={formData.pantSize}
-                            onChange={(e) => setFormData({ ...formData, pantSize: e.target.value })}
+                            onChange={(e) => setFormData(prev => ({ ...prev, pantSize: e.target.value }))}
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
                             placeholder="e.g., 30, 32, 34"
                             disabled={saving}
@@ -643,7 +643,7 @@ export default function ConsumerProfilePage() {
                           <input
                             type="text"
                             value={formData.shoeSize}
-                            onChange={(e) => setFormData({ ...formData, shoeSize: e.target.value })}
+                            onChange={(e) => setFormData(prev => ({ ...prev, shoeSize: e.target.value }))}
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
                             placeholder="e.g., 8, 9, 10"
                             disabled={saving}

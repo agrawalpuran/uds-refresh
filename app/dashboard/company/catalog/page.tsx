@@ -152,24 +152,6 @@ export default function CatalogPage() {
     
     loadData()
   }, [])
-  
-  useEffect(() => {
-    const loadProducts = async () => {
-      if (selectedCompanyId) {
-        try {
-          setLoading(true)
-          const products = await getProductsByCompany(selectedCompanyId)
-          setUniforms(products)
-        } catch (error) {
-          console.error('Error loading products:', error)
-        } finally {
-          setLoading(false)
-        }
-      }
-    }
-    
-    loadProducts()
-  }, [selectedCompanyId])
 
   const filteredUniforms = uniforms.filter(uniform => {
     const matchesSearch = uniform.name.toLowerCase().includes(searchTerm.toLowerCase()) ||

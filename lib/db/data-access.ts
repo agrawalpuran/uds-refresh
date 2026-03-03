@@ -158,6 +158,77 @@ async function withTransaction<T>(
   }
 }
 
+// =============================================================================
+// ATOMIC ID GENERATOR
+// =============================================================================
+// Uses a `counters` collection with findOneAndUpdate + $inc to guarantee
+// unique sequential IDs without the loop-based findOne race condition.
+async function getNextId(
+  counterKey: string,
+  minVal: number,
+  maxVal: number,
+  padLength: number = 6
+): Promise<string> {
+  const db = mongoose.connection.db
+  if (!db) throw new Error('Database not connected')
+
+  const result = await db.collection('counters').findOneAndUpdate(
+    { _id: counterKey as any },
+    { $inc: { seq: 1 } },
+    { upsert: true, returnDocument: 'after' }
+  )
+
+  let seq = result?.seq ?? minVal
+  if (seq < minVal) {
+    await db.collection('counters').updateOne(
+      { _id: counterKey as any },
+      { $set: { seq: minVal } }
+    )
+    seq = minVal
+  }
+  if (seq > maxVal) {
+    throw new Error(`ID range exhausted for ${counterKey} (max ${maxVal})`)
+  }
+  return String(seq).padStart(padLength, '0')
+}
+
+// Bootstrap a counter from existing max ID in a collection (idempotent).
+// Call once on first use; subsequent calls are no-ops if seq already set.
+async function bootstrapCounter(
+  counterKey: string,
+  model: mongoose.Model<any>,
+  minVal: number
+): Promise<void> {
+  const db = mongoose.connection.db
+  if (!db) return
+
+  const existing = await db.collection('counters').findOne({ _id: counterKey as any })
+  if (existing && existing.seq >= minVal) return
+
+  const docs = await model.find({}).sort({ id: -1 }).limit(1).select('id').lean()
+  let maxId = minVal - 1
+  if (docs.length > 0) {
+    const num = parseInt(String(docs[0].id), 10)
+    if (!isNaN(num) && num >= minVal) maxId = num
+  }
+  await db.collection('counters').updateOne(
+    { _id: counterKey as any },
+    { $set: { seq: maxId } },
+    { upsert: true }
+  )
+}
+
+const _bootstrappedCounters = new Set<string>()
+async function ensureCounter(
+  counterKey: string,
+  model: mongoose.Model<any>,
+  minVal: number
+): Promise<void> {
+  if (_bootstrappedCounters.has(counterKey)) return
+  await bootstrapCounter(counterKey, model, minVal)
+  _bootstrappedCounters.add(counterKey)
+}
+
 // Ensure Branch model is registered
 if (!mongoose.models.Branch) {
   require('../models/Branch')
@@ -1272,8 +1343,8 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
 
   console.log(`[getProductsByVendor] ✅ ProductVendor relationships found: ${productVendorLinks.length}`)
   
-  // DEBUG: If no results, log diagnostic info
-  if (productVendorLinks.length === 0) {
+  // DEBUG: If no results, log diagnostic info (dev only - avoids extra DB query in production)
+  if (process.env.NODE_ENV !== 'production' && productVendorLinks.length === 0) {
     console.log(`[getProductsByVendor] ⚠️ No ProductVendor relationships found. Checking database contents...`)
     const allProductVendorLinks = await db.collection('productvendors').find({}).toArray()
     console.log(`[getProductsByVendor] Total ProductVendor links in database: ${allProductVendorLinks.length}`)
@@ -1304,16 +1375,18 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
     // Primary method: Extract product IDs from ProductVendor relationships as STRINGS
     console.log(`[getProductsByVendor] Using ProductVendor relationships (primary method)`)
     
-    // Log all links for debugging
-    console.log(`[getProductsByVendor] ProductVendor links details:`, productVendorLinks.map((link: any, idx: number) => ({
-      index: idx,
-      productId: link.productId,
-      productIdType: typeof link.productId,
-      productIdConstructor: link.productId?.constructor?.name,
-      vendorId: link.vendorId,
-      vendorIdType: typeof link.vendorId,
-      vendorIdConstructor: link.vendorId?.constructor?.name
-    })))
+    // Log all links for debugging (dev only)
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[getProductsByVendor] ProductVendor links details:`, productVendorLinks.map((link: any, idx: number) => ({
+        index: idx,
+        productId: link.productId,
+        productIdType: typeof link.productId,
+        productIdConstructor: link.productId?.constructor?.name,
+        vendorId: link.vendorId,
+        vendorIdType: typeof link.vendorId,
+        vendorIdConstructor: link.vendorId?.constructor?.name
+      })))
+    }
     
     productStringIds = productVendorLinks
       .map((link: any, index: number) => {
@@ -1356,14 +1429,16 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
     console.log(`[getProductsByVendor] ⚠️ Returning empty array - vendor must have products assigned by Super Admin`)
     console.log(`[getProductsByVendor] ⚠️ NOT using fallback to inventory/orders (would violate access control)`)
     
-    // Log diagnostic info but DO NOT use it for fallback
-    const inventoryCount = await VendorInventory.countDocuments({ vendorId: vendorIdStr })
-    const orderCount = await Order.countDocuments({ vendorId: vendorIdStr })
-    console.log(`[getProductsByVendor] Diagnostic (for reference only, NOT used):`, {
-      inventoryRecords: inventoryCount,
-      ordersWithVendor: orderCount,
-      note: 'These are NOT used as fallback - ProductVendor relationships are required'
-    })
+    // Log diagnostic info but DO NOT use it for fallback (dev only - avoids extra DB queries in production)
+    if (process.env.NODE_ENV !== 'production') {
+      const inventoryCount = await VendorInventory.countDocuments({ vendorId: vendorIdStr })
+      const orderCount = await Order.countDocuments({ vendorId: vendorIdStr })
+      console.log(`[getProductsByVendor] Diagnostic (for reference only, NOT used):`, {
+        inventoryRecords: inventoryCount,
+        ordersWithVendor: orderCount,
+        note: 'These are NOT used as fallback - ProductVendor relationships are required'
+      })
+    }
     
     // Return empty array - vendor has no assigned products
     return []
@@ -1372,10 +1447,12 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
   // STEP 3: Validate we have products
   if (productStringIds.length === 0) {
     console.error(`[getProductsByVendor] ❌ CRITICAL: No products found for vendor ${vendorName} (${vendorIdStr})`)
-    console.error(`[getProductsByVendor] Diagnostic info:`)
-    console.error(`  - ProductVendor relationships: ${productVendorLinks.length}`)
-    console.error(`  - Inventory records: ${await VendorInventory.countDocuments({ vendorId: vendorIdStr })}`)
-    console.error(`  - Orders with vendor: ${await Order.countDocuments({ vendorId: vendorIdStr })}`)
+    if (process.env.NODE_ENV !== 'production') {
+      console.error(`[getProductsByVendor] Diagnostic info:`)
+      console.error(`  - ProductVendor relationships: ${productVendorLinks.length}`)
+      console.error(`  - Inventory records: ${await VendorInventory.countDocuments({ vendorId: vendorIdStr })}`)
+      console.error(`  - Orders with vendor: ${await Order.countDocuments({ vendorId: vendorIdStr })}`)
+    }
     console.error(`[getProductsByVendor] This vendor has no products linked via any method.`)
     return []
   }
@@ -1421,8 +1498,8 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
     }
   }
   
-  // DIAGNOSTIC: If query returned 0, try batch fallback
-  if (products.length === 0 && productStringIds.length > 0) {
+  // DIAGNOSTIC: If query returned 0, try batch fallback (dev only - avoids extra DB query in production)
+  if (process.env.NODE_ENV !== 'production' && products.length === 0 && productStringIds.length > 0) {
     console.log(`[getProductsByVendor] DIAGNOSTIC: Query returned 0. Trying batch query by string ids...`)
     const fallbackProducts = await Uniform.find({ id: { $in: productStringIds } }).lean()
     for (const fp of fallbackProducts) {
@@ -1437,30 +1514,37 @@ export async function getProductsByVendor(vendorId: string): Promise<any[]> {
   if (products.length === 0) {
     console.warn(`[getProductsByVendor] ⚠️ No products found by string id. Checking if products exist in database...`)
     
-    // Get all products to see what's available
-    const allProducts = await Uniform.find({}).select('id name').limit(10).lean()
-    console.log(`[getProductsByVendor] Sample products in database:`, allProducts.map((p: any) => ({
-      id: p.id,
-      name: p.name
-    })))
-    
-    // Try to find products by matching string IDs
-    const matchingProducts = allProducts.filter((p: any) => {
-      const pIdStr = typeof p.id === 'string' ? p.id : String(p.id || '')
-      return productStringIds.includes(pIdStr)
-    })
+    // Get all products to see what's available (diagnostic - dev only to avoid extra DB query in production)
+    let allProducts: any[]
+    let matchingProducts: any[]
+    if (process.env.NODE_ENV !== 'production') {
+      allProducts = await Uniform.find({}).select('id name').limit(10).lean()
+      console.log(`[getProductsByVendor] Sample products in database:`, allProducts.map((p: any) => ({
+        id: p.id,
+        name: p.name
+      })))
+      matchingProducts = allProducts.filter((p: any) => {
+        const pIdStr = typeof p.id === 'string' ? p.id : String(p.id || '')
+        return productStringIds.includes(pIdStr)
+      })
+    } else {
+      allProducts = []
+      matchingProducts = []
+    }
     
     if (matchingProducts.length > 0) {
       console.log(`[getProductsByVendor] Found ${matchingProducts.length} products by string comparison`)
       
-      // 🔍 DIAGNOSTIC: Log the matching products
-      console.log(`[getProductsByVendor] 🔍 DIAGNOSTIC: Matching products details:`)
-      matchingProducts.forEach((p: any, idx: number) => {
-        console.log(`[getProductsByVendor]   matchingProducts[${idx}]:`, {
-          id: p.id,
-          name: p.name
+      // 🔍 DIAGNOSTIC: Log the matching products (dev only)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[getProductsByVendor] 🔍 DIAGNOSTIC: Matching products details:`)
+        matchingProducts.forEach((p: any, idx: number) => {
+          console.log(`[getProductsByVendor]   matchingProducts[${idx}]:`, {
+            id: p.id,
+            name: p.name
+          })
         })
-      })
+      }
       
       // Extract string IDs from matching products
       const matchingProductIds = matchingProducts.map((p: any) => {
@@ -1881,38 +1965,9 @@ export async function createProduct(productData: {
 }): Promise<any> {
   await connectDB()
   
-  // Generate unique 6-digit numeric product ID (starting from 200001)
-  const existingProducts = await Uniform.find({})
-    .sort({ id: -1 })
-    .limit(1)
-    .lean()
-  
-  let nextProductId = 200001 // Start from 200001
-  if (existingProducts.length > 0) {
-    const lastId = existingProducts[0].id
-    if (/^[A-Za-z0-9_-]{1,50}$/.test(String(lastId))) {
-      const lastIdNum = parseInt(String(lastId), 10)
-      if (lastIdNum >= 200001 && lastIdNum < 300000) {
-        nextProductId = lastIdNum + 1
-      }
-    }
-  }
-  
-  let productId = String(nextProductId).padStart(6, '0')
-  
-  // Check if this ID already exists (safety check)
-    const existingProduct = await Uniform.findOne({ id: productId })
-  if (existingProduct) {
-    // Find next available ID
-    for (let i = nextProductId + 1; i < 300000; i++) {
-      const testId = String(i).padStart(6, '0')
-      const exists = await Uniform.findOne({ id: testId })
-      if (!exists) {
-        productId = testId
-        break
-      }
-    }
-  }
+  // Generate unique 6-digit numeric product ID (atomic counter, range 200001-299999)
+  await ensureCounter('productId', Uniform, 200001)
+  const productId = await getNextId('productId', 200001, 299999, 6)
   
   // Check if SKU already exists
   const existingBySku = await Uniform.findOne({ sku: productData.sku })
@@ -1965,8 +2020,9 @@ export async function createProduct(productData: {
   }
   
   // ============================================================
-  // FORENSIC DIAGNOSTIC: STEP 3 - INSPECT ACTUAL PAYLOAD
+  // FORENSIC DIAGNOSTIC: STEP 3 - INSPECT ACTUAL PAYLOAD (dev only)
   // ============================================================
+  if (process.env.NODE_ENV !== 'production') {
   console.log('\n╔════════════════════════════════════════════════════════════╗')
   console.log('║  FORENSIC: PRODUCT PAYLOAD INSPECTION                     ║')
   console.log('╚════════════════════════════════════════════════════════════╝')
@@ -2071,45 +2127,52 @@ export async function createProduct(productData: {
     if (check.isFinite !== undefined) console.log(`    Is Finite: ${check.isFinite}`)
     console.log(`    ✅ Status: ${status === true ? 'PASS' : status === false ? '❌ FAIL' : status}`)
   })
+  }
   
   // ============================================================
   // FORENSIC DIAGNOSTIC: STEP 6 - FORCE ERROR SURFACING
   // ============================================================
-  console.log('\n[FORENSIC] Attempting Uniform.create()...')
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('\n[FORENSIC] Attempting Uniform.create()...')
+  }
   let newProduct
   try {
     newProduct = await Uniform.create(productDataToCreate)
-    console.log('[FORENSIC] ✅ Uniform.create() succeeded')
-    console.log('[FORENSIC] Created product object:')
-    console.log(JSON.stringify(newProduct.toObject(), null, 2))
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[FORENSIC] ✅ Uniform.create() succeeded')
+      console.log('[FORENSIC] Created product object:')
+      console.log(JSON.stringify(newProduct.toObject(), null, 2))
+    }
   } catch (err: any) {
-    console.error('\n╔════════════════════════════════════════════════════════════╗')
-    console.error('║  ❌ UNIFORM SAVE FAILED - VALIDATION ERROR                ║')
-    console.error('╚════════════════════════════════════════════════════════════╝')
-    console.error(`[FORENSIC] Error Name: ${err.name}`)
-    console.error(`[FORENSIC] Error Message: ${err.message}`)
-    console.error(`[FORENSIC] Error Code: ${err.code || 'N/A'}`)
-    if (err.errors) {
-      console.error('[FORENSIC] Validation Errors:')
-      Object.keys(err.errors).forEach(key => {
-        const error = err.errors[key]
-        console.error(`  ${key}:`)
-        console.error(`    Kind: ${error.kind}`)
-        console.error(`    Path: ${error.path}`)
-        console.error(`    Value: ${JSON.stringify(error.value)}`)
-        console.error(`    Message: ${error.message}`)
-      })
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('\n╔════════════════════════════════════════════════════════════╗')
+      console.error('║  ❌ UNIFORM SAVE FAILED - VALIDATION ERROR                ║')
+      console.error('╚════════════════════════════════════════════════════════════╝')
+      console.error(`[FORENSIC] Error Name: ${err.name}`)
+      console.error(`[FORENSIC] Error Message: ${err.message}`)
+      console.error(`[FORENSIC] Error Code: ${err.code || 'N/A'}`)
+      if (err.errors) {
+        console.error('[FORENSIC] Validation Errors:')
+        Object.keys(err.errors).forEach(key => {
+          const error = err.errors[key]
+          console.error(`  ${key}:`)
+          console.error(`    Kind: ${error.kind}`)
+          console.error(`    Path: ${error.path}`)
+          console.error(`    Value: ${JSON.stringify(error.value)}`)
+          console.error(`    Message: ${error.message}`)
+        })
+      }
+      if (err.keyPattern) {
+        console.error('[FORENSIC] Duplicate Key Pattern:')
+        console.error(JSON.stringify(err.keyPattern, null, 2))
+      }
+      if (err.keyValue) {
+        console.error('[FORENSIC] Duplicate Key Value:')
+        console.error(JSON.stringify(err.keyValue, null, 2))
+      }
+      console.error('[FORENSIC] Full Error Stack:')
+      console.error(err.stack)
     }
-    if (err.keyPattern) {
-      console.error('[FORENSIC] Duplicate Key Pattern:')
-      console.error(JSON.stringify(err.keyPattern, null, 2))
-    }
-    if (err.keyValue) {
-      console.error('[FORENSIC] Duplicate Key Value:')
-      console.error(JSON.stringify(err.keyValue, null, 2))
-    }
-    console.error('[FORENSIC] Full Error Stack:')
-    console.error(err.stack)
     throw err
   }
   
@@ -2502,45 +2565,9 @@ export async function createVendor(vendorData: {
   
   // Generate next 6-digit numeric vendor ID
   // Find the highest existing vendor ID
-  const existingVendors = await Vendor.find({})
-    .sort({ id: -1 })
-    .limit(1)
-    .lean()
-  
-  let nextVendorId = 100001 // Start from 100001
-  if (existingVendors.length > 0) {
-    const lastId = existingVendors[0].id
-    // Extract numeric part if it's already numeric
-    if (/^[A-Za-z0-9_-]{1,50}$/.test(lastId)) {
-      const lastIdNum = parseInt(lastId, 10)
-      nextVendorId = lastIdNum + 1
-    } else {
-      // If old format exists, start from 100001
-      nextVendorId = 100001
-    }
-  }
-  
-  // Ensure it's 6 digits
-  let vendorId = String(nextVendorId).padStart(6, '0')
-  
-  // Check if this ID already exists (shouldn't happen, but safety check)
-  const existingById = await Vendor.findOne({ id: vendorId })
-  if (existingById) {
-    // Find next available ID
-    let foundId = false
-    for (let i = nextVendorId + 1; i < 999999; i++) {
-      const testId = String(i).padStart(6, '0')
-      const exists = await Vendor.findOne({ id: testId })
-      if (!exists) {
-        vendorId = testId
-        foundId = true
-        break
-      }
-    }
-    if (!foundId) {
-      throw new Error('Unable to generate unique vendor ID')
-    }
-  }
+  // Generate unique 6-digit numeric vendor ID (atomic counter, range 100001-999998)
+  await ensureCounter('vendorId', Vendor, 100001)
+  const vendorId = await getNextId('vendorId', 100001, 999998, 6)
   
   const vendorDataToCreate: any = {
     id: vendorId,
@@ -2758,38 +2785,9 @@ export async function createCompany(companyData: {
     throw new Error(`Company with name already exists: ${companyData.name}`)
   }
   
-  // Generate next 6-digit numeric company ID (starting from 100001)
-  const existingCompanies = await Company.find({})
-    .sort({ id: -1 })
-    .limit(1)
-    .lean()
-  
-  let nextCompanyId = 100001 // Start from 100001
-  if (existingCompanies.length > 0) {
-    const lastId = existingCompanies[0].id
-    if (/^[A-Za-z0-9_-]{1,50}$/.test(String(lastId))) {
-      const lastIdNum = parseInt(String(lastId), 10)
-      if (lastIdNum >= 100001 && lastIdNum < 200000) {
-        nextCompanyId = lastIdNum + 1
-      }
-    }
-  }
-  
-  let companyId = String(nextCompanyId).padStart(6, '0')
-  
-  // Check if this ID already exists (safety check)
-  const existingById = await Company.findOne({ id: companyId })
-  if (existingById) {
-    // Find next available ID
-    for (let i = nextCompanyId + 1; i < 200000; i++) {
-      const testId = String(i).padStart(6, '0')
-      const exists = await Company.findOne({ id: testId })
-      if (!exists) {
-        companyId = testId
-        break
-      }
-    }
-  }
+  // Generate unique 6-digit numeric company ID (atomic counter, range 100001-199999)
+  await ensureCounter('companyId', Company, 100001)
+  const companyId = await getNextId('companyId', 100001, 199999, 6)
   
   const companyDataToCreate: any = {
     id: companyId,
@@ -2883,38 +2881,9 @@ export async function createLocation(locationData: {
     throw new Error(`Location with name "${locationName}" already exists for this company`)
   }
   
-  // Generate next 6-digit numeric location ID (starting from 400001)
-  const existingLocations = await Location.find({})
-    .sort({ id: -1 })
-    .limit(1)
-    .lean()
-  
-  let nextLocationId = 400001 // Start from 400001
-  if (existingLocations.length > 0) {
-    const lastId = existingLocations[0].id
-    if (/^[A-Za-z0-9_-]{1,50}$/.test(String(lastId))) {
-      const lastIdNum = parseInt(String(lastId), 10)
-      if (lastIdNum >= 400001 && lastIdNum < 500000) {
-        nextLocationId = lastIdNum + 1
-      }
-    }
-  }
-  
-  let locationId = String(nextLocationId).padStart(6, '0')
-  
-  // Check if this ID already exists (safety check)
-  const existingById = await Location.findOne({ id: locationId })
-  if (existingById) {
-    // Find next available ID
-    for (let i = nextLocationId + 1; i < 500000; i++) {
-      const testId = String(i).padStart(6, '0')
-      const exists = await Location.findOne({ id: testId })
-      if (!exists) {
-        locationId = testId
-        break
-      }
-    }
-  }
+  // Generate unique 6-digit numeric location ID (atomic counter, range 400001-499999)
+  await ensureCounter('locationId', Location, 400001)
+  const locationId = await getNextId('locationId', 400001, 499999, 6)
   
   // Create location with structured address fields
   const locationDataToCreate: any = {
@@ -3962,36 +3931,9 @@ export async function createBranch(branchData: {
     }
   }
   
-  // Generate next location ID (format: LOC-XXXXXX)
-  // Find highest existing location ID number
-  const existingLocations = await Location.find({})
-    .sort({ id: -1 })
-    .limit(10)
-    .lean()
-  
-  let nextIdNum = 200001 // Start from 200001 for branch-created locations
-  for (const loc of existingLocations) {
-    const idStr = String(loc.id || '')
-    // Try to extract numeric part from various formats
-    const numMatch = idStr.match(/(\d+)$/)
-    if (numMatch) {
-      const num = parseInt(numMatch[1], 10)
-      if (num >= nextIdNum) {
-        nextIdNum = num + 1
-      }
-    }
-  }
-  
-  // Generate ID - use simple numeric format for consistency
-  let locationId = String(nextIdNum)
-  
-  // Check if this ID already exists (safety check)
-  let existingById = await Location.findOne({ id: locationId })
-  while (existingById && nextIdNum < 999999) {
-    nextIdNum++
-    locationId = String(nextIdNum)
-    existingById = await Location.findOne({ id: locationId })
-  }
+  // Generate unique location ID for branch (atomic counter, shares range with locations)
+  await ensureCounter('locationId', Location, 400001)
+  const locationId = await getNextId('locationId', 400001, 499999, 6)
   
   // Create location with structured address fields
   const locationDataToCreate: any = {
@@ -5382,12 +5324,23 @@ export async function setCompanyAdmin(companyId: string, employeeId: string): Pr
 
 // ========== EMPLOYEE FUNCTIONS ==========
 
-export async function getAllEmployees(): Promise<any[]> {
+export async function getAllEmployees(pagination?: { page: number; pageSize: number }): Promise<any> {
   await connectDB()
   
+  const page = pagination?.page ?? 1
+  const pageSize = pagination?.pageSize ?? 1000
+
+  let total: number | undefined
+  if (pagination) {
+    total = await Employee.countDocuments({})
+  }
+
   const employees = await Employee.find()
+    .select('id employeeId firstName lastName email emailHash companyId locationId designation gender dateOfJoining status createdAt updatedAt')
     .populate('companyId', 'id name')
     .populate('locationId', 'id name address city state pincode')
+    .skip((page - 1) * pageSize)
+    .limit(pageSize)
     .lean()
 
   // CRITICAL FIX: Manually populate locationId since it's stored as string ID, not ObjectId
@@ -5435,7 +5388,11 @@ export async function getAllEmployees(): Promise<any[]> {
     return e
   })
 
-  return decryptedEmployees.map((e: any) => toPlainObject(e))
+  const result = decryptedEmployees.map((e: any) => toPlainObject(e))
+  if (pagination) {
+    return { data: result, total, page, pageSize }
+  }
+  return result
 }
 
 export async function getEmployeeByEmail(email: string): Promise<any | null> {
@@ -6123,6 +6080,7 @@ export async function getEmployeesByCompany(companyId: string, _userEmail?: stri
 
   console.log(`[getEmployeesByCompany] Querying employees with companyId: ${company.id} (string ID)`)
   let employeeQuery = Employee.find(filter)
+    .select('id employeeId firstName lastName email emailHash companyId locationId designation gender dateOfJoining status createdAt updatedAt')
     .populate('companyId', 'id name')
     .populate('locationId', 'id name address city state pincode')
     .populate('addressId')
@@ -7341,17 +7299,32 @@ export async function getVendorForProductCompany(productId: string, companyId: s
 
 // ========== ORDER FUNCTIONS ==========
 
-export async function getAllOrders(): Promise<any[]> {
+export async function getAllOrders(pagination?: { page: number; pageSize: number }): Promise<any> {
   await connectDB()
   
+  const page = pagination?.page ?? 1
+  const pageSize = pagination?.pageSize ?? 500
+
+  let total: number | undefined
+  if (pagination) {
+    total = await Order.countDocuments({})
+  }
+
   const orders = await Order.find()
+    .select('id parentOrderId status orderType orderDate employeeId companyId vendorId items total grandTotal shippingCharges discount paymentMethod paymentStatus deliveryAddress createdAt updatedAt prId poId subOrderIds')
     .populate('employeeId', 'id firstName lastName email')
     .populate('companyId', 'id name')
     .populate('items.uniformId', 'id name')
     .sort({ orderDate: -1 })
+    .skip((page - 1) * pageSize)
+    .limit(pageSize)
     .lean()
 
-  return orders.map((o: any) => toPlainObject(o))
+  const result = orders.map((o: any) => toPlainObject(o))
+  if (pagination) {
+    return { data: result, total, page, pageSize }
+  }
+  return result
 }
 
 export async function getOrdersByCompany(companyId: string, pagination?: { page: number; pageSize: number }): Promise<any> {
@@ -7366,7 +7339,9 @@ export async function getOrdersByCompany(companyId: string, pagination?: { page:
     total = await Order.countDocuments(query)
   }
 
-  let orderQuery = Order.find(query).sort({ orderDate: -1 })
+  let orderQuery = Order.find(query)
+    .select('id parentOrderId status orderType orderDate employeeId companyId vendorId items total grandTotal shippingCharges discount paymentMethod paymentStatus deliveryAddress createdAt updatedAt prId poId subOrderIds')
+    .sort({ orderDate: -1 })
   if (pagination) {
     const skip = (pagination.page - 1) * pagination.pageSize
     orderQuery = orderQuery.skip(skip).limit(pagination.pageSize)
@@ -7631,9 +7606,11 @@ export async function getOrdersByLocation(locationId: string): Promise<any[]> {
     return []
   }
 
-  // Find orders for these employees using string IDs
+  // Find orders for these employees using string IDs (capped at 1000 most recent)
   const orders = await Order.find({ employeeId: { $in: employeeStringIds } })
+    .select('id parentOrderId status orderType orderDate employeeId companyId vendorId items total grandTotal shippingCharges discount paymentMethod paymentStatus deliveryAddress createdAt updatedAt prId poId subOrderIds')
     .sort({ orderDate: -1 })
+    .limit(1000)
     .lean()
 
   // CRITICAL FIX: vendorId is now a 6-digit numeric string, not an ObjectId reference
@@ -25877,6 +25854,7 @@ export async function getGRNsByVendor(vendorId: string): Promise<any[]> {
   // CRITICAL: Use .lean() to get all fields (no .select() to ensure all fields are returned)
   // This ensures grnStatus, approvedBy, approvedAt, and all other fields are included
   const grns = await GRN.find({ vendorId: vendorId, grnRaisedByVendor: true })
+    .select('id grnId vendorId companyId items grnDate grnNumber status grnStatus grnRaisedByVendor linkedPOId acknowledgedBy approvedBy createdAt updatedAt')
     .sort({ createdAt: -1 })
     .lean()
   
@@ -25958,6 +25936,7 @@ export async function getGRNsRaisedByVendors(companyId?: string): Promise<any[]>
   }
   
   const grns = await GRN.find(query)
+    .select('id grnId vendorId companyId items grnDate grnNumber status grnStatus grnRaisedByVendor linkedPOId acknowledgedBy approvedBy createdAt updatedAt')
     .sort({ createdAt: -1 })
     .lean()
   
@@ -26024,6 +26003,7 @@ export async function getGRNsPendingAcknowledgment(companyId?: string): Promise<
   }
   
   const grns = await GRN.find(query)
+    .select('id grnId vendorId companyId items grnDate grnNumber status grnStatus grnRaisedByVendor linkedPOId acknowledgedBy approvedBy createdAt updatedAt')
     .sort({ createdAt: -1 })
     .lean()
   
@@ -26527,6 +26507,7 @@ export async function getInvoicesByVendor(vendorId: string): Promise<any[]> {
   await connectDB()
   
   const invoices = await Invoice.find({ vendorId: vendorId })
+    .select('id invoiceId vendorId companyId items invoiceDate invoiceNumber amount totalAmount tax invoiceStatus status paymentStatus approvedBy createdAt updatedAt linkedGRNId linkedPOId')
     .sort({ invoiceDate: -1, createdAt: -1 })
     .lean()
   
@@ -26598,6 +26579,7 @@ export async function getInvoicesForCompany(companyId?: string): Promise<any[]> 
   }
   
   const invoices = await Invoice.find(query)
+    .select('id invoiceId vendorId companyId items invoiceDate invoiceNumber amount totalAmount tax invoiceStatus status paymentStatus approvedBy createdAt updatedAt linkedGRNId linkedPOId')
     .sort({ invoiceDate: -1, createdAt: -1 })
     .lean()
   
