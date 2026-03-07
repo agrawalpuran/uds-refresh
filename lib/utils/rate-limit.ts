@@ -71,8 +71,8 @@ export function rateLimit(
 
 /** Pre-configured tiers */
 export const RATE_LIMITS = {
-  /** Auth endpoints (login, OTP) — strict to prevent brute-force */
-  AUTH: { limit: 10, windowMs: 60_000 },
+  /** Auth POST endpoints (login, OTP) — strict to prevent brute-force */
+  AUTH: { limit: 20, windowMs: 60_000 },
   /** Write/mutation endpoints (POST, PUT, PATCH, DELETE) */
   WRITE: { limit: 30, windowMs: 60_000 },
   /** Read endpoints (GET) */

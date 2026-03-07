@@ -12,8 +12,14 @@ function getClientIp(req: any): string {
 }
 
 function getRateLimitTier(pathname: string, method: string) {
-  if (pathname.startsWith('/api/auth') || pathname.startsWith('/login')) {
+  if (pathname.startsWith('/api/auth')) {
+    // Only rate-limit auth mutations (send-otp, callback). Session/CSRF/providers
+    // GETs fire automatically and would starve the budget for actual logins.
+    if (method === 'GET' || method === 'HEAD') return RATE_LIMITS.READ
     return RATE_LIMITS.AUTH
+  }
+  if (pathname.startsWith('/login')) {
+    return RATE_LIMITS.READ
   }
   if (pathname.startsWith('/api/admin') || pathname.startsWith('/api/superadmin')) {
     return RATE_LIMITS.ADMIN
@@ -32,7 +38,7 @@ export default auth((req) => {
   if (pathname.startsWith('/api/')) {
     const ip = getClientIp(req)
     const tier = getRateLimitTier(pathname, method)
-    const tierKey = pathname.startsWith('/api/auth') ? 'auth'
+    const tierKey = pathname.startsWith('/api/auth') && method !== 'GET' && method !== 'HEAD' ? 'auth'
       : pathname.startsWith('/api/admin') || pathname.startsWith('/api/superadmin') ? 'admin'
       : method !== 'GET' ? 'write' : 'read'
     const key = `${ip}:${tierKey}`
